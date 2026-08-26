@@ -1,0 +1,21 @@
+{
+  "task_name": "fixture-task",
+  "agent_result": {
+    "n_input_tokens": 1800,
+    "n_output_tokens": 80,
+    "n_cache_tokens": 400,
+    "cost_usd": 0.05,
+    "peak_context_tokens": 1000,
+    "summarization_count": 0
+  },
+  "agent_execution": {
+    "started_at": "2026-08-25T10:00:00+00:00",
+    "finished_at": "2026-08-25T10:02:30+00:00"
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 1.0
+    }
+  },
+  "exception_info": {}
+}

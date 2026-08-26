@@ -1,0 +1,12 @@
+{"type": "session", "version": 3, "id": "sess-abc", "cwd": "/app"}
+{"type": "agent_start"}
+{"type": "turn_start"}
+{"type": "message_update", "message": {"role": "assistant", "content": [{"type": "text", "text": "par"}]}}
+{"type": "turn_end", "message": {"role": "assistant", "model": "gpt-5.6-luna", "timestamp": 1723660000000, "content": [{"type": "thinking", "thinking": "inspect first"}, {"type": "text", "text": "Listing files."}, {"type": "toolCall", "id": "call-1", "name": "bash", "arguments": {"command": "ls -la"}}], "usage": {"input": 1000, "output": 50, "cacheRead": 400, "cacheWrite": 0, "reasoning": 20, "cost": {"total": 0.03}}}, "toolResults": [{"role": "toolResult", "toolCallId": "call-1", "toolName": "bash", "content": [{"type": "text", "text": "file1.py"}], "isError": false}]}
+{"type": "tool_execution_start", "toolName": "read", "args": {"path": "a.go", "offset": 1, "limit": 100}}
+{"type": "tool_execution_start", "toolName": "read", "args": {"path": "a.go", "offset": 50, "limit": 100}}
+{"type": "tool_execution_start", "toolName": "read", "args": {"path": "b.go"}}
+{"type": "tool_execution_end"}
+{"type": "compaction_end"}
+{"type": "turn_end", "message": {"role": "assistant", "model": "gpt-5.6-luna", "timestamp": 1723660010000, "content": [{"type": "text", "text": "Done."}], "usage": {"input": 800, "output": 30, "cacheRead": 0, "cacheWrite": 10, "reasoning": 0, "cost": {"total": 0.02}}}, "toolResults": []}
+{"type": "agent_end"}

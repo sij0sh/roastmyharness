@@ -1,0 +1,32 @@
+# Example: pinned npm package variant (installed in-container during setup).
+schema_version = 1
+name = "contextmode-smoke"
+pi_version = "0.84.3"
+thinking = "high"
+
+[model]
+id = "gpt-5.6-luna"
+provider = "openai-codex"
+auth = "codex"
+
+[tasks]
+path = "~/datasets/my-tasks"
+
+[concurrency]
+per_variant = 1
+global_max = 2
+
+[control]
+enabled = true
+
+[[variants]]
+id = "contextmode"
+egress_urls = [
+  "https://github.com",
+  "https://objects.githubusercontent.com",
+  "https://nodejs.org",
+]
+
+[[variants.extensions]]
+kind = "npm"
+package = "context-mode@1.0.169"   # exact pins only

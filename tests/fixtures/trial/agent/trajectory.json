@@ -1,0 +1,85 @@
+{
+  "schema_version": "ATIF-v1.7",
+  "session_id": "sess-abc",
+  "agent": {
+    "name": "pi",
+    "version": "0.84.3",
+    "model_name": "gpt-5.6-luna",
+    "extra": {
+      "variant": "bare"
+    }
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "source": "user",
+      "message": "fix the bug"
+    },
+    {
+      "step_id": 2,
+      "timestamp": "2024-08-14T18:26:40+00:00",
+      "source": "agent",
+      "model_name": "gpt-5.6-luna",
+      "message": "Listing files.",
+      "reasoning_content": "inspect first",
+      "tool_calls": [
+        {
+          "tool_call_id": "call-1",
+          "function_name": "bash",
+          "arguments": {
+            "command": "ls -la"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "content": "file1.py",
+            "extra": {
+              "tool": "bash",
+              "is_error": false
+            }
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 1000,
+        "completion_tokens": 50,
+        "cached_tokens": 400,
+        "cost_usd": 0.03,
+        "extra": {
+          "reasoning_tokens": 20
+        }
+      }
+    },
+    {
+      "step_id": 3,
+      "timestamp": "2024-08-14T18:26:50+00:00",
+      "source": "agent",
+      "model_name": "gpt-5.6-luna",
+      "message": "Done.",
+      "metrics": {
+        "prompt_tokens": 800,
+        "completion_tokens": 30,
+        "cost_usd": 0.02,
+        "extra": {
+          "reasoning_tokens": 0,
+          "cache_write_tokens": 10
+        }
+      }
+    }
+  ],
+  "notes": "pi coding agent, variant=bare; converted from pi JSON-mode event stream (turn_end events).",
+  "final_metrics": {
+    "total_prompt_tokens": 1800,
+    "total_completion_tokens": 80,
+    "total_cached_tokens": 400,
+    "total_cost_usd": 0.05,
+    "total_steps": 2,
+    "extra": {
+      "peak_context_tokens": 1000,
+      "summarization_count": 1,
+      "pi_variant": "bare"
+    }
+  }
+}

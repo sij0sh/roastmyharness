@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "roast-my-harness"
+version = "0.1.0"
+description = "Terminal tool that compares Pi extensions and skills on identical Pier tasks"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "RoastMyHarness" }]
+requires-python = ">=3.12"
+dependencies = [
+    "platformdirs>=4.3",
+    "pydantic>=2.9",
+    "tomlkit>=0.13",
+    "typer>=0.15",
+]
+
+[project.scripts]
+roast-my-harness = "roast_my_harness.cli:main"
+
+[dependency-groups]
+dev = [
+    "datacurve-pier>=0.3,<0.4",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/roast_my_harness"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = [".pi-files"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/roast_my_harness/cli.py" = ["B008"]

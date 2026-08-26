@@ -1,0 +1,34 @@
+schema_version = 1
+name = "local-extension"
+pi_version = "0.84.3"
+thinking = "high"
+
+[model]
+id = "gpt-5.6-luna"
+provider = "openai-codex"
+auth = "codex"
+
+[tasks]
+path = "~/datasets/my-tasks"
+include = ["*"]
+exclude = []
+
+[concurrency]
+per_variant = 2
+global_max = 6
+
+[control]
+enabled = true
+reuse = "never"
+
+[[variants]]
+id = "my-ext"
+name = "My extension"
+
+[[variants.extensions]]
+kind = "local"
+path = "~/my-extensions/my-extension"
+entry = "src/index.ts"
+
+[variants.env]
+MY_EXTENSION_SETTING = "2"
