@@ -9,7 +9,11 @@ Pier tasks. Successor to the DSE-tests script harness.
 - Runs one Pier job per variant with the same model, thinking level, and
   fairness flags (`-nc --no-skills --no-prompt-templates --no-themes`).
 - Headless progress: `status <id>` prints the live matrix and totals.
-- Ctrl-C leaves completed trials resumable; `resume` runs only missing cells.
+- Ctrl-C or SIGTERM leaves completed trials resumable; `resume` runs only
+  missing cells.
+- Run, resume, and report take an exclusive per-experiment lock. `status` is
+  read-only and can observe a running experiment.
+- Writes structured redacted diagnostics to `<run>/logs/run.jsonl`.
 - Writes `summary.csv` (DSE-tests-compatible schema), `summary.json`, and
   `report.md` automatically on completion.
 - Reuses Pi's Codex OAuth from `~/.pi/agent/auth.json` (staged per job,
@@ -30,7 +34,8 @@ adapter).
     rm -rf ~/.cache/roast-my-harness         # cached Pi homes
     
 Run outputs live under the data dir unless `ROAST_MY_HARNESS_RUNS_DIR`
-is set. The tool stores no credentials of its own; it reuses
+is set. Set `ROAST_MY_HARNESS_DEBUG=1` to re-raise an unexpected CLI
+exception with its traceback. The tool stores no credentials of its own; it reuses
 `~/.pi/agent/auth.json`, which belongs to Pi and is not removed here.
 
 ## Quick start

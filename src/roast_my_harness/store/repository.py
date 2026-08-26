@@ -122,7 +122,12 @@ class Repository:
         resolved: bool | None, exception_type: str | None,
         metrics: dict | None, finished_at: str | None = None,
     ) -> str:
-        trial_id = str(uuid.uuid4())
+        existing = self.conn.execute(
+            "SELECT id FROM trials WHERE experiment_id=? AND variant_id=? "
+            "AND task_id=? AND attempt=?",
+            (experiment_id, variant_id, task_id, attempt),
+        ).fetchone()
+        trial_id = str(existing["id"]) if existing else str(uuid.uuid4())
         with self.conn:
             self.conn.execute(
                 "INSERT INTO trials (id, experiment_id, variant_id, task_id, "
@@ -147,6 +152,38 @@ class Repository:
 
 
     # ------------------------------------------------------ control pool --
+
+    def upsert_reconciled_trial(
+        self, *, experiment_id: str, variant_id: str, task_id: str,
+        status: str, job_path: str | None, reward: float | None,
+        resolved: bool | None, exception_type: str | None,
+        metrics: dict | None, finished_at: str | None = None,
+    ) -> str:
+        """Persist one filesystem attempt without duplicating it on polling."""
+        row = None
+        if job_path is not None:
+            row = self.conn.execute(
+                "SELECT attempt FROM trials WHERE experiment_id=? "
+                "AND variant_id=? AND task_id=? AND job_path=? "
+                "ORDER BY attempt DESC LIMIT 1",
+                (experiment_id, variant_id, task_id, job_path),
+            ).fetchone()
+        attempt = int(row["attempt"]) if row else self.next_attempt(
+            experiment_id, variant_id, task_id
+        )
+        return self.upsert_trial(
+            experiment_id=experiment_id,
+            variant_id=variant_id,
+            task_id=task_id,
+            attempt=attempt,
+            status=status,
+            job_path=job_path,
+            reward=reward,
+            resolved=resolved,
+            exception_type=exception_type,
+            metrics=metrics,
+            finished_at=finished_at,
+        )
 
     def record_control_observation(
         self, cohort_key: str, task_hash: str, trial_id: str,

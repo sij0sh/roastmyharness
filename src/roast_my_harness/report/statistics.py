@@ -43,15 +43,26 @@ def fnum(value) -> float:
 def by_variant(rows: list[dict]) -> dict[str, dict[str, dict]]:
     grouped: dict[str, dict[str, dict]] = defaultdict(dict)
     for row in rows:
-        grouped[row["variant"]][row["task"]] = row
+        variant = row["variant"]
+        task = row["task"]
+        if task in grouped[variant]:
+            raise ValueError(
+                f"duplicate report row for variant={variant!r}, task={task!r}"
+            )
+        grouped[variant][task] = row
     return grouped
+
+
+def resolved_rows(rows: list[dict]) -> list[dict]:
+    """Return agent outcomes, excluding infrastructure-error trials."""
+    return [row for row in rows if not row.get("exception_type")]
 
 
 def paired_flips(
     rows: list[dict],
 ) -> list[tuple[str, str, int, int, int, list[tuple[str, str]]]]:
     """(a, b, both_pass, a_fail_b_pass, b_fail_a_pass, discordant) per pair."""
-    grouped = by_variant(rows)
+    grouped = by_variant(resolved_rows(rows))
     variants = sorted(grouped)
     flips = []
     for i, a in enumerate(variants):

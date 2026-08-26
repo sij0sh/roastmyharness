@@ -18,6 +18,7 @@ class Cell:
     reward: float
     job_path: str
     finished_at: str | None
+    exception_type: str | None = None
 
 
 def _mtime(path: Path) -> float:
@@ -60,23 +61,39 @@ def reconcile_variant(
                     break
             else:
                 continue
-        exception = (result.get("exception_info") or {}).get("exception_type")
+        exception_info = result.get("exception_info") or {}
+        if not isinstance(exception_info, dict):
+            exception_info = {}
+        exception = exception_info.get("exception_type") or exception_info.get("type")
         if exception:
             status = "error"
             reward = 0.0
         else:
             verifier = result.get("verifier_result") or {}
-            reward = verifier.get("rewards", {}).get("reward")
+            if not isinstance(verifier, dict):
+                verifier = {}
+            reward_map = verifier.get("rewards")
+            if not isinstance(reward_map, dict):
+                reward_map = {}
+            reward = reward_map.get("reward")
             if reward is None:
                 reward_path = trial_dir / "verifier" / "reward.json"
                 if reward_path.is_file():
                     try:
-                        reward = json.loads(reward_path.read_text()).get("reward")
+                        reward_data = json.loads(reward_path.read_text())
+                        reward = (
+                            reward_data.get("reward")
+                            if isinstance(reward_data, dict)
+                            else None
+                        )
                     except (json.JSONDecodeError, OSError):
                         reward = None
             if reward is None:
                 continue  # incomplete, not terminal
-            reward = float(reward)
+            try:
+                reward = float(reward)
+            except (TypeError, ValueError):
+                continue
             status = "pass" if reward >= PASS_THRESHOLD else "fail"
         timing = (result.get("agent_execution") or {})
         finished = timing.get("finished_at")
@@ -90,6 +107,7 @@ def reconcile_variant(
             or datetime.fromtimestamp(
                 _mtime(result_path), tz=UTC
             ).isoformat(),
+            exception_type=str(exception) if exception else None,
         )
         stamp = _mtime(result_path)
         if task_id not in cells or stamp >= cells[task_id][0]:

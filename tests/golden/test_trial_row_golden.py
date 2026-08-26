@@ -2,11 +2,63 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from roast_my_harness.telemetry.result import trial_row
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
+
+
+def test_exception_row_is_not_resolved(tmp_path: Path):
+    trial = tmp_path / "trial"
+    (trial / "agent").mkdir(parents=True)
+    (trial / "verifier").mkdir()
+    result = {
+        "task_name": "timeout",
+        "verifier_result": {"rewards": {"reward": 1.0}},
+        "exception_info": {"exception_type": "AgentTimeoutError"},
+    }
+    path = trial / "result.json"
+    path.write_text(json.dumps(result))
+    row = trial_row(path, variant="a")
+    assert row["resolved"] == 0
+    assert row["exception_type"] == "AgentTimeoutError"
+
+
+def test_invalid_reward_is_skipped(tmp_path: Path):
+    trial = tmp_path / "trial"
+    (trial / "agent").mkdir(parents=True)
+    (trial / "verifier").mkdir()
+    path = trial / "result.json"
+    path.write_text(
+        json.dumps(
+            {
+                "task_name": "bad",
+                "verifier_result": {"rewards": {"reward": "not-a-number"}},
+                "exception_info": {},
+            }
+        )
+    )
+    assert trial_row(path, variant="a") is None
+
+
+def test_exception_reward_is_zeroed(tmp_path: Path):
+    trial = tmp_path / "trial"
+    (trial / "agent").mkdir(parents=True)
+    (trial / "verifier").mkdir()
+    path = trial / "result.json"
+    path.write_text(
+        json.dumps(
+            {
+                "task_name": "bad",
+                "verifier_result": {"rewards": {"reward": 1.0}},
+                "exception_info": {"exception_type": "AgentTimeoutError"},
+            }
+        )
+    )
+    row = trial_row(path, variant="a")
+    assert row["reward"] == 0.0
 
 
 def test_fixture_row_values():

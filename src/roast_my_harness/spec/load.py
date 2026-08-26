@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import tomllib
@@ -36,7 +35,7 @@ def _resolve_model(spec: ExperimentSpec) -> ExperimentSpec:
     if block is None:
         return spec
     block_json = json.dumps(block, sort_keys=True, separators=(",", ":"))
-    sha = hashlib.sha256(block_json.encode("utf-8")).hexdigest()
+    sha = auth_service.provider_block_hash(block)
     names = sorted(set(re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", block_json)))
     return spec.model_copy(
         update={

@@ -8,7 +8,12 @@ import pytest
 
 from roast_my_harness.errors import SpecError
 from roast_my_harness.spec.load import load_experiment
-from roast_my_harness.spec.models import ExperimentSpec, NpmExtension, VariantSpec
+from roast_my_harness.spec.models import (
+    ExperimentSpec,
+    NpmExtension,
+    NpmPiInstall,
+    VariantSpec,
+)
 
 MINIMAL = """
 schema_version = 1
@@ -72,6 +77,24 @@ id = "Bad Id!"
 """))
 
 
+def test_pi_version_rejects_shell_syntax(tmp_path: Path):
+    with pytest.raises(SpecError):
+        load_experiment(
+            write(
+                tmp_path,
+                """
+schema_version = 1
+name = "x"
+pi_version = "0.84.3; echo leaked"
+[tasks]
+path = "."
+[[variants]]
+id = "a"
+""",
+            )
+        )
+
+
 def test_needs_at_least_one_arm(tmp_path: Path):
     with pytest.raises(SpecError, match="at least one"):
         load_experiment(write(tmp_path, """
@@ -88,6 +111,16 @@ def test_npm_requires_exact_pin():
         NpmExtension(kind="npm", package="context-mode")
     with pytest.raises(ValueError):
         NpmExtension(kind="npm", package="context-mode@^1.0.0")
+    with pytest.raises(ValueError):
+        NpmExtension(kind="npm", package="context-mode@1.0.0; echo leaked")
+
+
+def test_npm_setup_requires_exact_pin():
+    assert NpmPiInstall(
+        handler="npm_pi_install", package="@scope/package@1.2.3"
+    ).package
+    with pytest.raises(ValueError):
+        NpmPiInstall(handler="npm_pi_install", package="package@latest")
 
 
 def test_paths_resolve_against_spec_dir(tmp_path: Path):

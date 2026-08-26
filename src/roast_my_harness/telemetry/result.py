@@ -44,19 +44,33 @@ def trial_row(result_path: Path, variant: str) -> dict[str, Any] | None:
     trial_dir = result_path.parent
     rewards: dict = {}
     verifier = result.get("verifier_result") or {}
-    if verifier.get("rewards"):
-        rewards = {str(k): v for k, v in verifier["rewards"].items()}
+    if not isinstance(verifier, dict):
+        verifier = {}
+    reward_map = verifier.get("rewards")
+    if isinstance(reward_map, dict):
+        rewards = {str(k): v for k, v in reward_map.items()}
     reward_file = trial_dir / "verifier" / "reward.json"
     if reward_file.is_file():
         try:
-            rewards.update(
-                {str(k): v for k, v in json.loads(reward_file.read_text()).items()}
-            )
+            file_rewards = json.loads(reward_file.read_text())
+            if isinstance(file_rewards, dict):
+                rewards.update({str(k): v for k, v in file_rewards.items()})
         except (json.JSONDecodeError, OSError):
             pass
 
-    reward = float(rewards.get("reward", 0) or 0)
-    resolved = reward >= 0.999
+    exception_info = result.get("exception_info") or {}
+    if not isinstance(exception_info, dict):
+        exception_info = {}
+    exception_type = exception_info.get("exception_type") or exception_info.get("type", "")
+    try:
+        reward = float(rewards.get("reward", 0) or 0)
+    except (TypeError, ValueError):
+        if not exception_type:
+            return None
+        reward = 0.0
+    if exception_type:
+        reward = 0.0
+    resolved = not exception_type and reward >= 0.999
 
     agent = result.get("agent_result") or {}
     timing = result.get("agent_execution") or {}
@@ -83,9 +97,7 @@ def trial_row(result_path: Path, variant: str) -> dict[str, Any] | None:
         "resolved": int(resolved),
         "reward": reward,
         "rewards": json.dumps(rewards, sort_keys=True) if rewards else "",
-        "exception_type": (result.get("exception_info") or {}).get(
-            "exception_type", ""
-        ),
+        "exception_type": exception_type,
         "input_tokens": agent.get("n_input_tokens", ""),
         "output_tokens": agent.get("n_output_tokens", ""),
         "cache_tokens": agent.get("n_cache_tokens", ""),

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from roast_my_harness.report.statistics import (
     deterministic_seed,
     paired_flips,
     rate_ci,
+    resolved_rows,
 )
 
 
@@ -23,6 +26,28 @@ def test_rate_ci_deterministic():
     assert a == b
     mean, lo, hi = a
     assert lo <= mean <= hi
+
+
+def test_duplicate_report_rows_are_rejected():
+    rows = [
+        {"variant": "a", "task": "t1", "resolved": 1},
+        {"variant": "a", "task": "t1", "resolved": 0},
+    ]
+    with pytest.raises(ValueError, match="duplicate report row"):
+        paired_flips(rows)
+
+
+def test_resolved_rows_excludes_infrastructure_errors():
+    rows = [
+        {"variant": "a", "task": "t1", "resolved": 0},
+        {
+            "variant": "a",
+            "task": "t2",
+            "resolved": 0,
+            "exception_type": "AgentTimeoutError",
+        },
+    ]
+    assert [row["task"] for row in resolved_rows(rows)] == ["t1"]
 
 
 def test_paired_flips_counts():

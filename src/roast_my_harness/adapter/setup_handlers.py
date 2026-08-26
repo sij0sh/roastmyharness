@@ -7,6 +7,8 @@ task starts.
 
 from __future__ import annotations
 
+import re
+import shlex
 import shutil
 from typing import Any
 
@@ -29,8 +31,10 @@ async def npm_pi_install(agent, environment, step: dict[str, Any]) -> None:
     invalidate the variant.
     """
     package = step.get("package") or ""
-    if not package or "@" not in package:
-        raise ValueError(f"npm_pi_install requires an exact package pin, got {package!r}")
+    if not _safe_npm_pin(package):
+        raise ValueError(
+            f"npm_pi_install requires an exact package pin, got {package!r}"
+        )
     agent.logger.info(f"installing pi package {package}")
     npm_root = f"{REMOTE_HOME}/npm"
     await agent.exec_as_root(
@@ -38,7 +42,7 @@ async def npm_pi_install(agent, environment, step: dict[str, Any]) -> None:
         command=(
             "set -e; "
             f"export PI_CODING_AGENT_DIR={REMOTE_HOME}; "
-            f"pi install npm:{package} "
+            f"pi install npm:{shlex.quote(package)} "
             f"&& test -d {npm_root} "
             f"&& node --version"
         ),
@@ -52,19 +56,24 @@ async def install_binary(agent, environment, step: dict[str, Any]) -> None:
     destination = step.get("destination") or "/usr/local/bin"
     if not source:
         raise ValueError("install_binary requires source")
+    if not _safe_remote_directory(destination):
+        raise ValueError(f"install_binary destination is unsafe: {destination!r}")
+    name = source.rsplit("/", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z0-9_.+-]+", name):
+        raise ValueError(f"install_binary source name is unsafe: {name!r}")
+    target = f"{destination}/{name}"
+    verify = step.get("verify") or target
+    if not _safe_command_path(verify):
+        raise ValueError(f"install_binary verify command is unsafe: {verify!r}")
     remote_tmp = f"{REMOTE_TMP}/roast-my-harness-binary"
     await environment.upload_file(source, remote_tmp)
-    name = destination.rsplit("/", 1)[-1]
-    verify = step.get("verify") or f"{destination}/{name}".replace(
-        f"{destination}/{name}", name
-    )
     await agent.exec_as_root(
         environment,
         command=(
             "set -e; "
-            f"install -m 0755 {remote_tmp} {destination}/{name} "
-            f"&& rm -f {remote_tmp} "
-            f"&& {verify} --version"
+            f"install -m 0755 {shlex.quote(remote_tmp)} {shlex.quote(target)} "
+            f"&& rm -f {shlex.quote(remote_tmp)} "
+            f"&& {shlex.quote(verify)} --version"
         ),
     )
 
@@ -127,6 +136,29 @@ async def codegraph_index(agent, environment, step: dict[str, Any]) -> None:
             "&& echo '.codegraph/' >> /app/.git/info/exclude"
         ),
         cwd="/app",
+    )
+
+
+def _safe_npm_pin(package: str) -> bool:
+    name, separator, version = package.rpartition("@")
+    return bool(
+        separator
+        and re.fullmatch(r"@?[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)?", name)
+        and re.fullmatch(r"\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.-]+)*", version)
+    )
+
+
+def _safe_remote_directory(path: str) -> bool:
+    return bool(
+        re.fullmatch(r"/[A-Za-z0-9._/-]+", path)
+        and ".." not in path.split("/")
+    )
+
+
+def _safe_command_path(path: str) -> bool:
+    return bool(
+        re.fullmatch(r"[A-Za-z0-9_./+-]+", path)
+        and ".." not in path.split("/")
     )
 
 

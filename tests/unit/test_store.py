@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from roast_my_harness.errors import RunBusyError
 from roast_my_harness.store.database import connect
+from roast_my_harness.store.locking import ExperimentLock
 from roast_my_harness.store.migrations import MIGRATIONS, apply_migrations
 from roast_my_harness.store.repository import Repository
 
@@ -46,6 +50,49 @@ def test_experiment_lifecycle(tmp_path: Path):
     row = repo.get_experiment("e1")
     assert row["status"] == "DRAFT"
     repo.close()
+
+
+def test_reconciled_trial_is_idempotent(tmp_path: Path):
+    repo = Repository(tmp_path / "t.db")
+    repo.create_experiment(
+        experiment_id="e", name="n", spec={}, spec_hash="h", run_dir="/tmp",
+    )
+    first = repo.upsert_reconciled_trial(
+        experiment_id="e",
+        variant_id="a",
+        task_id="t1",
+        status="pass",
+        job_path="/run/jobs/a/t1__1",
+        reward=1.0,
+        resolved=True,
+        exception_type=None,
+        metrics=None,
+    )
+    second = repo.upsert_reconciled_trial(
+        experiment_id="e",
+        variant_id="a",
+        task_id="t1",
+        status="fail",
+        job_path="/run/jobs/a/t1__1",
+        reward=0.5,
+        resolved=False,
+        exception_type=None,
+        metrics=None,
+    )
+    rows = repo.conn.execute("SELECT * FROM trials").fetchall()
+    assert second == first
+    assert len(rows) == 1
+    assert rows[0]["status"] == "fail"
+    assert rows[0]["attempt"] == 1
+    repo.close()
+
+
+def test_experiment_lock_is_exclusive(tmp_path: Path):
+    run_dir = tmp_path / "run"
+    with ExperimentLock(run_dir):
+        with pytest.raises(RunBusyError, match="experiment is busy"):
+            with ExperimentLock(run_dir):
+                pass
 
 
 def test_control_pool_roundtrip(tmp_path: Path):

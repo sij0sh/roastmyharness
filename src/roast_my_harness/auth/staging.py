@@ -21,9 +21,9 @@ from roast_my_harness.auth.service import (
     provider_credential,
 )
 from roast_my_harness.errors import AuthError
+from roast_my_harness.files import atomic_write_text
+from roast_my_harness.observability import contains_secret
 from roast_my_harness.spec.models import ExperimentSpec
-
-SECRET_PREFIXES = ("sk-", "Bearer ")
 
 
 def stage_home(
@@ -59,7 +59,9 @@ def _stage_model(spec: ExperimentSpec, dest: Path) -> None:
             raise AuthError("provider 'custom' requires models_json")
         if not model.models_json.is_file():
             raise AuthError(f"models.json missing: {model.models_json}")
-        shutil.copy2(model.models_json, dest / "models.json")
+        models_path = dest / "models.json"
+        shutil.copy2(model.models_json, models_path)
+        os.chmod(models_path, 0o600)
         return
     # Host-configured provider: slice its block from the host models.json
     # and its auth entry when one exists.
@@ -69,8 +71,19 @@ def _stage_model(spec: ExperimentSpec, dest: Path) -> None:
             f"provider '{model.provider}' not in host pi models.json "
             f"({auth_service.pi_models_file()})"
         )
-    (dest / "models.json").write_text(
-        json.dumps({"providers": {model.provider: block}}, indent=2) + "\n"
+    resolved = model.resolved_model
+    if resolved is not None and resolved.provider == model.provider:
+        actual_hash = auth_service.provider_block_hash(block)
+        if actual_hash != resolved.provider_block_sha256:
+            raise AuthError(
+                f"host provider '{model.provider}' changed since the spec was loaded; "
+                "reload the experiment before running or resuming"
+            )
+    models_path = dest / "models.json"
+    atomic_write_text(
+        models_path,
+        json.dumps({"providers": {model.provider: block}}, indent=2) + "\n",
+        mode=0o600,
     )
     entry = provider_credential(model.provider)
     if entry is not None:
@@ -86,8 +99,11 @@ def _write_auth_entry(dest: Path, provider: str, entry: dict) -> None:
         except json.JSONDecodeError:
             existing = {}
     existing[provider] = entry
-    auth_path.write_text(json.dumps(existing) + "\n")
-    os.chmod(auth_path, 0o600)
+    atomic_write_text(
+        auth_path,
+        json.dumps(existing) + "\n",
+        mode=0o600,
+    )
 
 
 def force_remove(path: Path) -> None:
@@ -111,16 +127,21 @@ def _make_writable(root: Path) -> None:
 
 
 def scan_for_secrets(run_dir: Path) -> list[str]:
-    """Scan run artifacts for known credential prefixes. Report paths only."""
+    """Scan every regular run artifact for known credential prefixes."""
     hits: list[str] = []
     if not run_dir.is_dir():
         return hits
-    for path in run_dir.rglob("*.log"):
+    for path in sorted(run_dir.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
         try:
-            text = path.read_text(errors="ignore")
+            data = path.read_bytes()
         except OSError:
             continue
-        if any(prefix in text for prefix in SECRET_PREFIXES):
+        if 0 in data[:4096]:
+            continue
+        text = data.decode(errors="ignore")
+        if contains_secret(text):
             hits.append(str(path))
     return hits
 

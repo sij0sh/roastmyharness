@@ -22,6 +22,7 @@ class VariantProcess:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         log_file = self.log_path.open("ab")
         try:
+            os.chmod(self.log_path, 0o600)
             self.proc = await asyncio.create_subprocess_exec(
                 *self.argv,
                 stdout=log_file,

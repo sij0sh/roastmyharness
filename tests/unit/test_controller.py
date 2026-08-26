@@ -61,6 +61,21 @@ def test_prepare_and_snapshot(tmp_path: Path):
     staged_auth = tmp_path / "run" / "staging" / "a" / "auth.json"
     assert staged_auth.is_file()  # codex default staged per job
 
+    observer = ExperimentController(
+        spec, exp_id, tmp_path / "run", repo, None
+    )
+    observer.load_for_observation()
+    assert observer.state == "READY"
+    assert set(observer.jobs) == {"control", "a"}
+    extra = tmp_path / "dataset" / "t3"
+    extra.mkdir()
+    (extra / "task.toml").write_text('schema_version = "1.3"\n')
+    (extra / "instruction.md").write_text("task t3\n")
+    assert observer.snapshot()["tasks"] == ["t1", "t2"]
+    (extra / "task.toml").unlink()
+    (extra / "instruction.md").unlink()
+    extra.rmdir()
+
     snap = controller.snapshot()
     assert snap["tasks"] == ["t1", "t2"]
     assert snap["matrix"]["a"] == {"t1": ".", "t2": "."}

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from roast_my_harness.adapter.command import (
     build_run_command,
     skill_flags,
@@ -32,5 +30,16 @@ def test_run_command_shape():
     assert "'fix the bug; now'" in command
     assert "2>/logs/agent/pi-stderr.log" in command
     assert "> /logs/agent/pi-event-times.log" in command
+
+
+def test_run_command_quotes_extra_flags():
+    command = build_run_command(
+        model="openai-codex/model",
+        instruction="work",
+        thinking=None,
+        skill_paths=[],
+        extra_flags=["--name=one; echo leaked"],
+    )
+    assert "'--name=one; echo leaked'" in command
 
 

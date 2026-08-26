@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import shlex
 
 REMOTE_HOME = "/opt/pi-home"
@@ -51,7 +50,7 @@ def build_run_command(
         parts.append(flags)
     parts.append(f"--session-dir /logs/agent/{SESSIONS_DIR}")
     for flag in extra_flags:
-        parts.append(flag)
+        parts.append(shlex.quote(flag))
     parts.append(shlex.quote(instruction))
     parts.append("</dev/null")
     parts.append(f"2>/logs/agent/{STDERR_FILENAME}")

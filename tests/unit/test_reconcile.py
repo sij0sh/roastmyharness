@@ -30,6 +30,7 @@ def test_pass_fail_error(tmp_path: Path):
     assert cells["t1"].status == "pass"
     assert cells["t2"].status == "fail"
     assert cells["t3"].status == "error"
+    assert cells["t3"].exception_type == "AgentTimeoutError"
 
 
 def test_job_level_result_ignored(tmp_path: Path):

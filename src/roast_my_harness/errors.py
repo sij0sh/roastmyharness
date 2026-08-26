@@ -21,3 +21,10 @@ class AuthError(RoastMyHarnessError):
 
 class PierError(RoastMyHarnessError):
     """Pier executable lookup, launch, or execution failed."""
+
+
+class RunBusyError(RoastMyHarnessError):
+    """Another process owns the requested experiment run."""
+
+    def __init__(self, lock_path):
+        super().__init__(f"experiment is busy; lock held at {lock_path}")

@@ -6,6 +6,7 @@ import random
 from pathlib import Path
 from typing import Any
 
+from roast_my_harness.files import atomic_write_text
 from roast_my_harness.report.collect import collect_rows
 from roast_my_harness.report.statistics import (
     by_variant,
@@ -13,6 +14,7 @@ from roast_my_harness.report.statistics import (
     fnum,
     paired_flips,
     rate_ci,
+    resolved_rows,
 )
 
 
@@ -59,23 +61,30 @@ def generate_report(
     lines.append("|---|---|---|---|---|---|---|---|---|")
     for v in variants:
         tasks = list(grouped[v].values())
-        outcomes = [int(t["resolved"]) for t in tasks]
+        valid_tasks = resolved_rows(tasks)
+        outcomes = [int(t["resolved"]) for t in valid_tasks]
         mean, lo, hi = rate_ci(outcomes, rng)
-        n = len(tasks) or 1
-        toks_in = sum(fnum(t["input_tokens"]) for t in tasks) / n
-        toks_out = sum(fnum(t["output_tokens"]) for t in tasks) / n
-        toks_cached = sum(fnum(t.get("cache_tokens", "")) for t in tasks) / n
-        cost = sum(fnum(t["cost_usd"]) for t in tasks) / n
-        wall = sum(fnum(t["wall_sec"]) for t in tasks) / n
+        n = len(valid_tasks) or 1
+        toks_in = sum(fnum(t["input_tokens"]) for t in valid_tasks) / n
+        toks_out = sum(fnum(t["output_tokens"]) for t in valid_tasks) / n
+        toks_cached = sum(fnum(t.get("cache_tokens", "")) for t in valid_tasks) / n
+        cost = sum(fnum(t["cost_usd"]) for t in valid_tasks) / n
+        wall = sum(fnum(t["wall_sec"]) for t in valid_tasks) / n
         lines.append(
-            f"| {v} | {sum(outcomes)}/{len(tasks)} | {100 * mean:.1f}% | "
+            f"| {v} | {sum(outcomes)}/{len(outcomes)} | {100 * mean:.1f}% | "
             f"[{100 * lo:.1f}, {100 * hi:.1f}] | {toks_in / 1000:.0f}k | "
             f"{toks_out / 1000:.0f}k | {toks_cached / 1000:.0f}k | ${cost:.2f} | "
             f"{wall / 60:.0f}m |"
         )
     lines.append("")
+    reuse = provenance.get("control_reuse") or {}
+    if reuse.get("enabled") and reuse.get("total_reused"):
+        lines.append(
+            "Control resolve rates use fresh current-run trials only. "
+            "Historic control observations are disclosed separately below."
+        )
+        lines.append("")
 
-    # 4-5. Paired flips and discordant tasks.
     flips = paired_flips(rows)
     if flips:
         lines.append("## Paired flips\n")
@@ -227,5 +236,5 @@ def generate_report(
     )
 
     out = run_dir / "report.md"
-    out.write_text("\n".join(lines) + "\n")
+    atomic_write_text(out, "\n".join(lines) + "\n")
     return out

@@ -19,7 +19,9 @@ from typing import Any
 from roast_my_harness import ADAPTER_PROTOCOL_VERSION, __version__
 from roast_my_harness.auth import staging
 from roast_my_harness.errors import PierError
+from roast_my_harness.files import atomic_write_text
 from roast_my_harness.homes.builder import build_home
+from roast_my_harness.observability import RunLogger
 from roast_my_harness.paths import homes_cache_dir
 from roast_my_harness.report import collect as report_collect
 from roast_my_harness.report import exports as report_exports
@@ -72,7 +74,8 @@ class ExperimentController:
         self.jobs: dict[str, VariantJob] = {}
         self.cells: dict[str, dict[str, Cell]] = {}
         self._cancel_event = asyncio.Event()
-        
+        self._logger = RunLogger(self.run_dir / "logs" / "run.jsonl", experiment_id)
+
         self._control_hash: str | None = None
         self._cohort_keys: dict[str, str] = {}  
         self._task_hashes: dict[str, str] = {}  
@@ -80,11 +83,14 @@ class ExperimentController:
         self._reuse_enabled = True  
         self._reuse_accepted: bool | None = None  
         self._sentinel_verdict: dict | None = None
-        self._own_trial_ids: set[str] = set()  
+        self._own_trial_ids: set[str] = set()
+        self._observed_reused_tasks: set[str] = set()
+        self._observed_task_ids: list[str] | None = None
 
     # ------------------------------------------------------------ events --
 
     def _progress(self, message: str) -> None:
+        self._logger.emit("progress", state=self.state, message=message)
         if self.progress is not None:
             self.progress(message)
 
@@ -99,6 +105,7 @@ class ExperimentController:
         """Idempotent: create run dir, records, homes, staged credentials."""
         self._set_state("VALIDATING")
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        staging.force_remove(self.run_dir / "staging")
         if spec_path is not None:
             target = self.run_dir / "experiment.toml"
             if not target.exists():
@@ -148,6 +155,48 @@ class ExperimentController:
         self._write_manifest(tasks)
         self._plan_control_reuse(tasks)
         self._set_state("READY")
+
+    def load_for_observation(self) -> None:
+        """Load an existing run without rebuilding homes or changing state."""
+        row = self.store.get_experiment(self.experiment_id)
+        if row is None:
+            raise PierError(f"unknown experiment {self.experiment_id}")
+        self.state = str(row["status"])
+        self.jobs = {
+            variant.id: VariantJob(
+                variant_id=variant.id,
+                home=Path(),
+                staged=self.run_dir / "staging" / variant.id,
+                manifest_path=self.run_dir / "staging" / variant.id / "variant.json",
+            )
+            for variant in self.spec.arms()
+        }
+        manifest_path = self.run_dir / "manifest.json"
+        if manifest_path.is_file():
+            try:
+                manifest = json.loads(manifest_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                manifest = {}
+            if not isinstance(manifest, dict):
+                manifest = {}
+            task_map = manifest.get("tasks") or {}
+            if isinstance(task_map, dict):
+                self._observed_task_ids = list(task_map)
+            reuse = manifest.get("control_reuse") or {}
+            if isinstance(reuse, dict) and reuse.get("accepted") is True:
+                self._observed_reused_tasks = set(reuse.get("reused_tasks", []))
+
+    def cleanup_staging(self) -> None:
+        """Remove all staged homes, including partially prepared variants."""
+        staging.force_remove(self.run_dir / "staging")
+
+    def _task_ids(self) -> list[str]:
+        if self._observed_task_ids is not None:
+            return list(self._observed_task_ids)
+        tasks = discover_tasks(
+            self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
+        )
+        return [task.task_id for task in tasks]
 
     def _plan_control_reuse(self, tasks) -> None:
         """Compute cohort keys and the reuse plan for an enabled control."""
@@ -202,6 +251,7 @@ class ExperimentController:
             "model": self.spec.model.model_dump(mode="json"),
             "thinking": self.spec.thinking,
             "created_at": datetime.now(UTC).isoformat(),
+            "tasks_path": str(self.spec.tasks.path),
             "tasks": {t.task_id: compute_task_hash(t.path) for t in tasks},
             "variants": {
                 v.variant_id: {
@@ -211,11 +261,10 @@ class ExperimentController:
                 for v in self.jobs.values()
             },
         }
-        (self.run_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2) + "\n"
+        atomic_write_text(
+            self.run_dir / "manifest.json",
+            json.dumps(manifest, indent=2) + "\n",
         )
-
-    # -------------------------------------------------------------- run ---
 
     async def run(self) -> str:
         """Execute until COMPLETE, CANCELLED, or FAILED. Returns final state."""
@@ -294,7 +343,9 @@ class ExperimentController:
             message = "\n".join(lines)
             if self.ask is None:
                 self._reuse_enabled = False
-                self._progress("control reuse disabled (non-interactive); all control tasks run fresh")
+                self._progress(
+                    "control reuse disabled (non-interactive); all control tasks run fresh"
+                )
             elif self.ask(message):
                 self._progress("control reuse accepted; sentinel subset runs fresh")
             else:
@@ -414,24 +465,28 @@ class ExperimentController:
                 key = (variant_id, task_id)
                 if previous.get(key) == cell.status:
                     continue
-                attempt = self.store.next_attempt(
-                    self.experiment_id, variant_id, task_id
-                )
-                trial_id = self.store.upsert_trial(
+                trial_id = self.store.upsert_reconciled_trial(
                     experiment_id=self.experiment_id,
                     variant_id=variant_id,
                     task_id=task_id,
-                    attempt=attempt,
                     status=cell.status,
                     job_path=cell.job_path,
                     reward=cell.reward,
-                    resolved=cell.status == "pass",
-                    exception_type=None,
+                    resolved=None if cell.status == "error" else cell.status == "pass",
+                    exception_type=cell.exception_type,
                     metrics=None,
                     finished_at=cell.finished_at,
                 )
                 self._own_trial_ids.add(trial_id)
                 self._record_control_observation(variant_id, task_id, cell, trial_id)
+                self._logger.emit(
+                    "trial",
+                    variant=variant_id,
+                    task=task_id,
+                    status=cell.status,
+                    reward=cell.reward,
+                    exception_type=cell.exception_type,
+                )
                 self._progress(
                     f"{variant_id}/{task_id}: {cell.status}"
                     + (f" reward={cell.reward}" if cell.status != "error" else "")
@@ -447,10 +502,7 @@ class ExperimentController:
                 self._progress(f"{job.variant_id} exited rc={code}")
 
     def _refresh_cells(self) -> None:
-        tasks = discover_tasks(
-            self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
-        )
-        known = {t.task_id for t in tasks}
+        known = set(self._task_ids())
         for variant_id in self.jobs:
             self.cells[variant_id] = reconcile_variant(
                 variant_id, self.run_dir / "jobs" / variant_id, known
@@ -487,8 +539,10 @@ class ExperimentController:
         await process_mod.cancel_all(procs)
         self._refresh_cells()
         self._record_all_cells()
-        for job in self.jobs.values():
-            staging.force_remove(job.staged)  # plan sec 10: no credentials remain
+        self.cleanup_staging()
+        leaks = staging.scan_for_secrets(self.run_dir)
+        if leaks:
+            self._logger.emit("secret_scan", hits=leaks)
         self._set_state(final_state)
 
     # --------------------------------------------------------- finalize --
@@ -497,9 +551,9 @@ class ExperimentController:
         self._set_state("FINALIZING")
         self._refresh_cells()
         self._record_all_cells()
-        leaks = staging.scan_for_secrets(self.run_dir / "logs")
-        provenance = self._provenance(leaks)
+        self.cleanup_staging()
         rows = report_collect.collect_rows(self.run_dir / "jobs")
+        provenance = self._provenance([])
         csv = report_exports.write_summary_csv(self.run_dir, rows)
         report_exports.write_summary_json(self.run_dir, rows, provenance)
         report = report_markdown.generate_report(
@@ -508,27 +562,32 @@ class ExperimentController:
             provenance=provenance,
             rows=rows,
         )
-        for job in self.jobs.values():
-            staging.force_remove(job.staged)
+        leaks = staging.scan_for_secrets(self.run_dir)
+        if leaks:
+            self._logger.emit("secret_scan", hits=leaks)
+            provenance = self._provenance(leaks)
+            report_exports.write_summary_json(self.run_dir, rows, provenance)
+            report = report_markdown.generate_report(
+                self.run_dir,
+                experiment_id=self.experiment_id,
+                provenance=provenance,
+                rows=rows,
+            )
         self._set_state("COMPLETE")
         self._progress(f"reports written: {csv}, {report}")
 
     def _record_all_cells(self) -> None:
         for variant_id, cells in self.cells.items():
             for task_id, cell in cells.items():
-                attempt = self.store.next_attempt(
-                    self.experiment_id, variant_id, task_id
-                )
-                trial_id = self.store.upsert_trial(
+                trial_id = self.store.upsert_reconciled_trial(
                     experiment_id=self.experiment_id,
                     variant_id=variant_id,
                     task_id=task_id,
-                    attempt=attempt,
                     status=cell.status,
                     job_path=cell.job_path,
                     reward=cell.reward,
-                    resolved=cell.status == "pass",
-                    exception_type=None,
+                    resolved=None if cell.status == "error" else cell.status == "pass",
+                    exception_type=cell.exception_type,
                     metrics=None,
                     finished_at=cell.finished_at,
                 )
@@ -544,6 +603,7 @@ class ExperimentController:
             except json.JSONDecodeError:
                 manifest = {}
         manifest["finished_at"] = datetime.now(UTC).isoformat()
+        manifest["secret_scan_scope"] = "all regular run artifacts after staging cleanup"
         manifest["secret_scan_hits"] = secret_hits
         manifest["control_reuse"] = self.reuse_summary()
         manifest["reused_control_observations"] = self.reuse_summary().get(
@@ -551,8 +611,9 @@ class ExperimentController:
         )
         # Persist the merged manifest so `report <id>` reproduces this
         # provenance (and the control-reuse disclosure) byte for byte.
-        (self.run_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2) + "\n"
+        atomic_write_text(
+            self.run_dir / "manifest.json",
+            json.dumps(manifest, indent=2) + "\n",
         )
         return manifest
 
@@ -584,12 +645,20 @@ class ExperimentController:
             summary["sentinel"] = self._sentinel_verdict
         return summary
 
-    def _fail(self, error: Exception) -> None:
+    def fail_setup(self, error: Exception) -> None:
+        """Record a preparation failure and remove partial staged homes."""
+        self._logger.emit(
+            "error",
+            exception_type=type(error).__name__,
+            message=str(error),
+        )
+        self.state = "FAILED"
         self.store.set_status(self.experiment_id, "FAILED", finished=True)
         self._progress("state: FAILED")
-        # Plan sec 10: no staged credential survives any terminal failure.
-        for job in self.jobs.values():
-            staging.force_remove(job.staged)
+        self.cleanup_staging()
+
+    def _fail(self, error: Exception) -> None:
+        self.fail_setup(error)
         raise PierError(str(error)) from error
 
     # ------------------------------------------------------------- env ---
@@ -611,10 +680,7 @@ class ExperimentController:
     def snapshot(self) -> dict[str, Any]:
         """Current matrix + aggregates for the CLI. Cheap to poll."""
         self._refresh_cells()
-        tasks = discover_tasks(
-            self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
-        )
-        all_ids = [t.task_id for t in tasks]
+        all_ids = self._task_ids()
         matrix: dict[str, dict[str, str]] = {}
         held = self._held_tasks() if self._held_controls_pending() else set()
         reused = self._reused_tasks()
@@ -637,7 +703,9 @@ class ExperimentController:
 
     def _reused_tasks(self) -> set[str]:
         """Control tasks covered by accepted history after the sentinel gate."""
-        if self._reuse_plan is None or self._reuse_accepted is not True:
+        if self._reuse_plan is None:
+            return self._observed_reused_tasks
+        if self._reuse_accepted is not True:
             return set()
         return {
             task_id

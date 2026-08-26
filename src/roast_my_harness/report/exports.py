@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 from pathlib import Path
 from typing import Any
 
+from roast_my_harness.files import atomic_write_text
 from roast_my_harness.report.collect import collect_rows
 from roast_my_harness.telemetry.result import COLUMNS
 
@@ -15,10 +17,13 @@ def write_summary_csv(run_dir: Path, rows: list[dict[str, Any]] | None = None) -
     rows = rows if rows is not None else collect_rows(run_dir)
     out = run_dir / "summary.csv"
     extra = [k for k in rows[0] if k not in COLUMNS] if rows else []
-    with out.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=COLUMNS + extra, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(
+        buffer, fieldnames=COLUMNS + extra, extrasaction="ignore"
+    )
+    writer.writeheader()
+    writer.writerows(rows)
+    atomic_write_text(out, buffer.getvalue())
     return out
 
 
@@ -34,5 +39,5 @@ def write_summary_json(
         "trials": rows,
     }
     out = run_dir / "summary.json"
-    out.write_text(json.dumps(payload, indent=2, default=str) + "\n")
+    atomic_write_text(out, json.dumps(payload, indent=2, default=str) + "\n")
     return out

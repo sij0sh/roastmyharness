@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -16,9 +17,11 @@ from roast_my_harness.errors import RoastMyHarnessError
 from roast_my_harness.paths import database_path, run_dir
 from roast_my_harness.runner import preflight
 from roast_my_harness.runner.controller import ExperimentController
+from roast_my_harness.runner.signals import install_cancel_handlers
 from roast_my_harness.spec.hashes import spec_hash as compute_spec_hash
 from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
+from roast_my_harness.store.locking import ExperimentLock
 from roast_my_harness.store.repository import Repository
 
 app = typer.Typer(
@@ -39,7 +42,8 @@ thinking = "high"          # off | minimal | low | medium | high | xhigh | max
 
 [model]
 id = "gpt-5.6-luna"
-provider = "openai-codex"  # any host pi models.json provider, or "custom" with provider_id + models_json
+provider = "openai-codex"
+
 
 [tasks]
 path = "/path/to/task-dataset"   # dir of task dirs, each with task.toml
@@ -161,28 +165,33 @@ def run(
     experiment_id = make_experiment_id(spec.name, compute_spec_hash(spec))
     repo = _repo()
     controller = ExperimentController(
-        spec, experiment_id, run_dir(experiment_id), repo,
+        spec,
+        experiment_id,
+        run_dir(experiment_id),
+        repo,
         progress=_print_progress,
         ask=_ask_reuse if (sys.stdin.isatty() and not yes) else None,
     )
-    controller.prepare(spec_path)
-    controller.enforce_reuse_policy(
-        interactive=sys.stdin.isatty() and not yes
-    )
-
-    loop = asyncio.new_event_loop()
-    main_task = loop.create_task(controller.run())
-
-    def _sigint(*_args: Any) -> None:
-        controller.request_cancel()
-
-    import signal
-
-    loop.add_signal_handler(signal.SIGINT, _sigint)
-    try:
-        final = loop.run_until_complete(main_task)
-    finally:
-        loop.close()
+    with ExperimentLock(controller.run_dir):
+        loop = asyncio.new_event_loop()
+        cleanup = install_cancel_handlers(loop, controller.request_cancel)
+        try:
+            try:
+                controller.prepare(spec_path)
+                controller.enforce_reuse_policy(
+                    interactive=sys.stdin.isatty() and not yes
+                )
+            except Exception as error:
+                controller.fail_setup(error)
+                raise
+            except BaseException:
+                controller.cleanup_staging()
+                raise
+            main_task = loop.create_task(controller.run())
+            final = loop.run_until_complete(main_task)
+        finally:
+            cleanup()
+            loop.close()
     typer.secho(f"experiment {experiment_id}: {final}", fg=typer.colors.GREEN)
 
 
@@ -204,16 +213,28 @@ def resume(
     controller = ExperimentController(
         spec, experiment_id, Path(row["run_dir"]), repo, _print_progress
     )
-    controller.prepare()
-    asyncio.run(_run_with_cancel(controller))
+    with ExperimentLock(controller.run_dir):
+        asyncio.run(_run_with_cancel(controller, prepare=True))
 
 
-async def _run_with_cancel(controller: ExperimentController) -> None:
-    import signal
-
+async def _run_with_cancel(
+    controller: ExperimentController, *, prepare: bool = False
+) -> None:
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGINT, controller.request_cancel)
-    await controller.run()
+    cleanup = install_cancel_handlers(loop, controller.request_cancel)
+    try:
+        if prepare:
+            try:
+                controller.prepare()
+            except Exception as error:
+                controller.fail_setup(error)
+                raise
+            except BaseException:
+                controller.cleanup_staging()
+                raise
+        await controller.run()
+    finally:
+        cleanup()
 
 
 # ----------------------------------------------------------------- status --
@@ -235,7 +256,7 @@ def status(
     controller = ExperimentController(
         spec, experiment_id, Path(row["run_dir"]), repo, None
     )
-    controller.prepare()
+    controller.load_for_observation()
     snap = controller.snapshot()
     if json_output:
         print(json.dumps(snap, indent=2))
@@ -263,31 +284,38 @@ def report(experiment_id: str = typer.Argument(...)) -> None:
     if row is None:
         typer.secho(f"unknown experiment {experiment_id}", fg=typer.colors.RED)
         raise typer.Exit(1)
+    from roast_my_harness.auth import staging
     from roast_my_harness.report import collect as report_collect
     from roast_my_harness.report import exports as report_exports
     from roast_my_harness.report import markdown as report_markdown
 
     rd = Path(row["run_dir"])
-    rows = report_collect.collect_rows(rd / "jobs")
-    if not rows:
-        typer.secho("no completed trials to report", fg=typer.colors.RED)
-        raise typer.Exit(1)
-    provenance: dict[str, Any] = {
-        "experiment_id": experiment_id, "spec_hash": row["spec_hash"]
-    }
-    manifest_path = rd / "manifest.json"
-    if manifest_path.is_file():
-        try:
-            loaded = json.loads(manifest_path.read_text())
-        except json.JSONDecodeError:
-            loaded = None
-        if isinstance(loaded, dict):
-            provenance = loaded  # full provenance incl. control_reuse disclosure
-    csv = report_exports.write_summary_csv(rd, rows)
-    report_exports.write_summary_json(rd, rows, provenance)
-    out = report_markdown.generate_report(
-        rd, experiment_id=experiment_id, provenance=provenance, rows=rows
-    )
+    with ExperimentLock(rd):
+        rows = report_collect.collect_rows(rd / "jobs")
+        if not rows:
+            typer.secho("no completed trials to report", fg=typer.colors.RED)
+            raise typer.Exit(1)
+        provenance: dict[str, Any] = {
+            "experiment_id": experiment_id,
+            "spec_hash": row["spec_hash"],
+        }
+        manifest_path = rd / "manifest.json"
+        if manifest_path.is_file():
+            try:
+                loaded = json.loads(manifest_path.read_text())
+            except json.JSONDecodeError:
+                loaded = None
+            if isinstance(loaded, dict):
+                provenance = loaded
+        provenance["secret_scan_scope"] = (
+            "all regular run artifacts after staging cleanup"
+        )
+        provenance["secret_scan_hits"] = staging.scan_for_secrets(rd)
+        csv = report_exports.write_summary_csv(rd, rows)
+        report_exports.write_summary_json(rd, rows, provenance)
+        out = report_markdown.generate_report(
+            rd, experiment_id=experiment_id, provenance=provenance, rows=rows
+        )
     typer.secho(f"wrote {csv} and {out}", fg=typer.colors.GREEN)
 
 
@@ -354,7 +382,7 @@ def auth_logout(
     if not yes and not typer.confirm("Remove codex credential from pi auth file?"):
         raise typer.Exit(0)
     del data[auth_service.CODEX_PROVIDER]
-    auth_service.pi_auth_file().write_text(json.dumps(data, indent=2) + "\n")
+    auth_service.write_auth_file(data)
     typer.echo("removed")
 
 
@@ -405,6 +433,14 @@ def main() -> None:
         app()
     except RoastMyHarnessError as e:
         typer.secho(f"error: {e}", fg=typer.colors.RED)
+        raise SystemExit(1) from e
+    except Exception as e:
+        if os.environ.get("ROAST_MY_HARNESS_DEBUG"):
+            raise
+        typer.secho(
+            f"error: unexpected {type(e).__name__}: {e}",
+            fg=typer.colors.RED,
+        )
         raise SystemExit(1) from e
 
 

@@ -69,7 +69,11 @@ class NpmExtension(BaseModel):
     @classmethod
     def _exact_version(cls, value: str) -> str:
         name, sep, version = value.rpartition("@")
-        if not sep or not name or not re.fullmatch(r"\d+\.\d+\.\d+.*", version):
+        if not (
+            sep
+            and re.fullmatch(r"@?[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)?", name)
+            and re.fullmatch(r"\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.-]+)*", version)
+        ):
             raise ValueError(
                 f"npm package must pin an exact version, got {value!r} "
                 "(expected name@x.y.z)"
@@ -89,6 +93,20 @@ class SkillSpec(BaseModel):
 class NpmPiInstall(BaseModel):
     handler: Literal["npm_pi_install"]
     package: str
+
+    @field_validator("package")
+    @classmethod
+    def _exact_version(cls, value: str) -> str:
+        name, separator, version = value.rpartition("@")
+        if not (
+            separator
+            and re.fullmatch(r"@?[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)?", name)
+            and re.fullmatch(r"\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.-]+)*", version)
+        ):
+            raise ValueError(
+                f"npm_pi_install requires an exact package pin, got {value!r}"
+            )
+        return value
 
 
 class InstallBinary(BaseModel):
@@ -170,6 +188,13 @@ class ExperimentSpec(BaseModel):
     control: ControlSpec | None = None
     variants: list[VariantSpec] = Field(default_factory=list)
     concurrency: ConcurrencySpec = Field(default_factory=ConcurrencySpec)
+
+    @field_validator("pi_version")
+    @classmethod
+    def _safe_pi_version(cls, value: str) -> str:
+        if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", value):
+            raise ValueError(f"pi_version must be an exact npm version, got {value!r}")
+        return value
 
     @field_validator("schema_version")
     @classmethod

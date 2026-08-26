@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from roast_my_harness.errors import AuthError
+from roast_my_harness.files import atomic_write_text
 
 CODEX_PROVIDER = "openai-codex"
 
@@ -36,6 +38,15 @@ def load_auth_file() -> dict[str, Any]:
     if not isinstance(data, dict):
         raise AuthError(f"pi auth file {path} is not a JSON object")
     return data
+
+
+def write_auth_file(data: dict[str, Any]) -> None:
+    """Atomically write Pi's shared auth file with owner-only permissions."""
+    atomic_write_text(
+        pi_auth_file(),
+        json.dumps(data, indent=2) + "\n",
+        mode=0o600,
+    )
 
 
 def codex_credential() -> dict[str, Any] | None:
@@ -93,6 +104,12 @@ def load_host_models() -> dict[str, Any]:
     if not isinstance(providers, dict):
         raise AuthError(f"pi models file {path} has no providers object")
     return providers
+
+
+def provider_block_hash(block: dict[str, Any]) -> str:
+    """Hash a host provider block for experiment reproducibility."""
+    payload = json.dumps(block, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def host_provider_block(provider: str) -> dict[str, Any] | None:

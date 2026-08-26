@@ -6,6 +6,20 @@ Simplification pass (complexity audit 20260826184821-a3fbe704, Tiers 0-1).
 
 ### Fixed
 
+- CI now runs locked dependency checks, Ruff, tests with a 70% coverage gate,
+  and a wheel build.
+- Run, resume, and report now use an exclusive per-experiment lock, while
+  status observes existing jobs without rebuilding homes or changing state.
+- SIGINT and SIGTERM share the graceful cancellation path, with a portable
+  fallback for event loops that do not support `add_signal_handler`.
+- Reconciled filesystem attempts update their existing trial row instead of
+  creating duplicates on every poll or finalization.
+- Auth-file updates and report artifacts use atomic replacement, and run
+  diagnostics are structured JSONL with credential redaction.
+- Run-artifact secret scanning covers every regular text-like artifact rather
+  than log files only.
+- Shell-sensitive setup inputs now require safe paths or exact package/version
+  pins before they reach in-container root commands.
 - `PiAgent.network_allowlist` no longer raises `NameError` for the default
   `openai-codex` provider (regression in the host-model commit that removed
   `_BUILTIN_PI_PROVIDERS`); covered by new adapter tests.

@@ -14,10 +14,10 @@ def collect_rows(jobs_root: Path) -> list[dict[str, Any]]:
     jobs_root is `<run>/jobs` for roast-my-harness runs, or a legacy DSE
     `results-*` directory (same <variant>/<timestamp>/<trial> layout).
     """
-    rows: list[dict[str, Any]] = []
+    selected: dict[tuple[str, str], tuple[int, dict[str, Any]]] = {}
     jobs = jobs_root
     if not jobs.is_dir():
-        return rows
+        return []
     for variant_dir in sorted(jobs.iterdir()):
         if not variant_dir.is_dir():
             continue
@@ -25,6 +25,19 @@ def collect_rows(jobs_root: Path) -> list[dict[str, Any]]:
             if not is_trial_dir(result_path.parent):
                 continue
             row = trial_row(result_path, variant_dir.name)
-            if row:
-                rows.append(row)
-    return rows
+            if not row:
+                continue
+            task_id = str(row.get("task") or result_path.parent.name)
+            try:
+                stamp = result_path.stat().st_mtime_ns
+            except OSError:
+                stamp = 0
+            key = (variant_dir.name, task_id)
+            if key not in selected or stamp >= selected[key][0]:
+                selected[key] = (stamp, row)
+    return [
+        row
+        for _, row in sorted(selected.values(), key=lambda item: (
+            item[1]["variant"], item[1]["task"]
+        ))
+    ]

@@ -10,6 +10,7 @@ import pytest
 
 from roast_my_harness.auth import service as auth_service
 from roast_my_harness.auth import staging
+from roast_my_harness.errors import AuthError
 from roast_my_harness.runner import preflight
 from roast_my_harness.spec.hashes import spec_hash
 from roast_my_harness.spec.load import load_experiment
@@ -96,7 +97,7 @@ def test_custom_provider_still_works(tmp_path: Path):
 
 
 def test_custom_still_requires_fields():
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         ModelSpec(provider="custom")
 
 
@@ -143,6 +144,7 @@ def test_stage_home_slices_host_provider(host_pi, tmp_path: Path):
     staged = json.loads((dest / "models.json").read_text())
     assert list(staged["providers"]) == ["z-ai-openai"]
     assert staged["providers"]["z-ai-openai"]["apiKey"] == "$ZAI_TEST_KEY"
+    assert (os.stat(dest / "models.json").st_mode & 0o777) == 0o600
 
     staged_auth = json.loads((dest / "auth.json").read_text())
     assert "z-ai-openai" in staged_auth
@@ -150,6 +152,35 @@ def test_stage_home_slices_host_provider(host_pi, tmp_path: Path):
 
     assert not (cached / "models.json").exists()
     assert not (cached / "auth.json").exists()
+
+
+def test_stage_home_rejects_host_provider_drift(host_pi, tmp_path: Path):
+    toml = f"""
+schema_version = 1
+name = "drift"
+[model]
+id = "glm-5.3"
+provider = "z-ai-openai"
+[tasks]
+path = "{tmp_path}"
+[[variants]]
+id = "a"
+"""
+    spec_path = tmp_path / "drift.toml"
+    spec_path.write_text(toml)
+    spec = load_experiment(spec_path)
+    changed = dict(HOST_MODELS)
+    changed["providers"] = dict(HOST_MODELS["providers"])
+    changed["providers"]["z-ai-openai"] = {
+        **HOST_MODELS["providers"]["z-ai-openai"],
+        "models": [{"id": "glm-5.4"}],
+    }
+    (host_pi / "models.json").write_text(json.dumps(changed))
+    cached = tmp_path / "cached"
+    (cached / "extensions").mkdir(parents=True)
+    (cached / "variant.json").write_text("{}")
+    with pytest.raises(AuthError, match="changed since the spec was loaded"):
+        staging.stage_home(cached, tmp_path / "staged", spec)
 
 
 def test_stage_home_host_provider_without_auth_entry(
@@ -165,6 +196,7 @@ def test_stage_home_host_provider_without_auth_entry(
     )
     dest = staging.stage_home(cached, tmp_path / "staged", spec)
     assert (dest / "models.json").is_file()
+    assert (os.stat(dest / "models.json").st_mode & 0o777) == 0o600
     assert not (dest / "auth.json").exists()
 
 

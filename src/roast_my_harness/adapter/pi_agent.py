@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -60,6 +61,8 @@ def load_variant_manifest(path: str) -> dict[str, Any]:
         manifest = json.loads(manifest_path.read_text())
     except json.JSONDecodeError as e:
         raise ValueError(f"corrupt variant manifest {manifest_path}: {e}") from e
+    if not isinstance(manifest, dict):
+        raise ValueError(f"variant manifest {manifest_path} must be a JSON object")
     required = ("variant_id", "variant_hash", "pi_version", "model_id")
     missing = [key for key in required if key not in manifest]
     if missing:
@@ -67,6 +70,17 @@ def load_variant_manifest(path: str) -> dict[str, Any]:
             f"variant manifest {manifest_path} missing keys: {', '.join(missing)}"
         )
     return manifest
+
+
+_PI_VERSION_RE = re.compile(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?")
+
+
+def _validate_pi_version(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _PI_VERSION_RE.fullmatch(value):
+        raise ValueError(f"unsafe pi_version in adapter manifest: {value!r}")
+    return value
 
 
 class PiAgent(BaseInstalledAgent):
@@ -91,7 +105,9 @@ class PiAgent(BaseInstalledAgent):
         self._manifest = load_variant_manifest(variant_manifest)
         self._manifest_path = Path(variant_manifest).resolve()
         self._thinking = thinking
-        self._pi_version = pi_version or self._manifest.get("pi_version")
+        self._pi_version = _validate_pi_version(
+            pi_version if pi_version is not None else self._manifest.get("pi_version")
+        )
         self._instruction: str | None = None
         self._validate_model()
 
@@ -195,14 +211,17 @@ class PiAgent(BaseInstalledAgent):
     # ---------------------------------------------------------- install ---
 
     def install_spec(self) -> AgentInstallSpec:
-        version_spec = f"@{self._pi_version}" if self._pi_version else ""
+        package = PI_PACKAGE
+        if self._pi_version:
+            package += f"@{self._pi_version}"
+        package = shlex.quote(package)
         root_run = (
             "set -e; "
             "if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; "
             "then node --version; "
             "else apt-get update && apt-get install -y nodejs npm; fi"
         )
-        agent_run = f"set -e; npm install -g {PI_PACKAGE}{version_spec} && pi --version"
+        agent_run = f"set -e; npm install -g {package} && pi --version"
         return AgentInstallSpec(
             agent_name=self.name(),
             version=self._pi_version,
