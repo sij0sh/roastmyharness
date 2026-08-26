@@ -10,8 +10,6 @@ from pathlib import Path
 
 from roast_my_harness import __version__
 from roast_my_harness.auth import service as auth_service
-from roast_my_harness.homes.builder import build_home
-from roast_my_harness.paths import homes_cache_dir
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.spec.models import ExperimentSpec
 from roast_my_harness.tasks.discover import discover_tasks
@@ -205,16 +203,6 @@ def _disk(spec: ExperimentSpec) -> CheckResult:
         return _fail("disk", f"{free_gb:.1f} GB free, need {MIN_FREE_GB}")
     return _ok("disk", f"{free_gb:.0f} GB free")
 
-
-def homes_for_experiment(
-    spec: ExperimentSpec, allow_unsafe: bool = False
-) -> dict[str, Path]:
-    """Build every arm's home; returns variant id -> home path."""
-    root = homes_cache_dir()
-    return {
-        variant.id: build_home(variant, spec, root, allow_unsafe).path
-        for variant in spec.arms()
-    }
 
 
 def format_table(results: list[CheckResult]) -> str:

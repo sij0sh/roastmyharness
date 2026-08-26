@@ -31,7 +31,6 @@ class ModelSpec(BaseModel):
     provider: str = "openai-codex"
     provider_id: str | None = None
     models_json: Path | None = None
-    auth: Literal["codex", "api_key"] = "codex"
     resolved_model: ResolvedModelSpec | None = None
 
     def full_id(self) -> str:
@@ -49,8 +48,6 @@ class ModelSpec(BaseModel):
                 raise ValueError("provider 'custom' requires provider_id")
             if not self.models_json:
                 raise ValueError("provider 'custom' requires models_json")
-        if self.provider == "openai-codex" and self.auth != "codex":
-            raise ValueError("provider 'openai-codex' requires auth = 'codex'")
         return self
 
 
@@ -160,11 +157,6 @@ class ControlSpec(BaseModel):
 
 class ConcurrencySpec(BaseModel):
     per_variant: int = 2
-    global_max: int = 6
-
-
-class OutputSpec(BaseModel):
-    budget_usd: float | None = None
 
 
 class ExperimentSpec(BaseModel):
@@ -178,7 +170,6 @@ class ExperimentSpec(BaseModel):
     control: ControlSpec | None = None
     variants: list[VariantSpec] = Field(default_factory=list)
     concurrency: ConcurrencySpec = Field(default_factory=ConcurrencySpec)
-    output: OutputSpec = Field(default_factory=OutputSpec)
 
     @field_validator("schema_version")
     @classmethod

@@ -5,18 +5,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from platformdirs import user_cache_dir, user_config_dir, user_data_dir
+from platformdirs import user_cache_dir, user_data_dir
 
 APP_NAME = "roast-my-harness"
 RUNS_DIR_ENV = "ROAST_MY_HARNESS_RUNS_DIR"
-
-
-def config_dir() -> Path:
-    return Path(user_config_dir(APP_NAME))
-
-
-def config_file() -> Path:
-    return config_dir() / "config.toml"
 
 
 def data_dir() -> Path:

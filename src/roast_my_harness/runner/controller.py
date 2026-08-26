@@ -34,86 +34,11 @@ from roast_my_harness.store.controls import ReuseDecision
 from roast_my_harness.store.repository import Repository
 from roast_my_harness.tasks.discover import discover_tasks
 from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
-from roast_my_harness.telemetry.parser import IncrementalTracker
 
 POLL_INTERVAL_SEC = 2.0
 
-EventCallback = Callable[[Any], None]
-
-
-# ------------------------------------------------------------- events -----
-
-@dataclass(frozen=True)
-class ExperimentStateChanged:
-    experiment_id: str
-    state: str
-
-
-@dataclass(frozen=True)
-class VariantStarted:
-    experiment_id: str
-    variant_id: str
-    task_count: int
-
-
-@dataclass(frozen=True)
-class VariantExited:
-    experiment_id: str
-    variant_id: str
-    returncode: int | None
-
-
-@dataclass(frozen=True)
-class TrialDiscovered:
-    experiment_id: str
-    variant_id: str
-    task_id: str
-
-
-@dataclass(frozen=True)
-class TrialMetricsUpdated:
-    experiment_id: str
-    variant_id: str
-    task_id: str
-    metrics: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class TrialCompleted:
-    experiment_id: str
-    variant_id: str
-    task_id: str
-    status: str
-    reward: float
-
-
-@dataclass(frozen=True)
-class TrialFailed:
-    experiment_id: str
-    variant_id: str
-    task_id: str
-    exception_type: str
-
-
-@dataclass(frozen=True)
-class BudgetWarning:
-    experiment_id: str
-    spent_usd: float
-    budget_usd: float
-
-
-@dataclass(frozen=True)
-class ReportWritten:
-    experiment_id: str
-    paths: list[str]
-
-
-@dataclass(frozen=True)
-class _AskReusePrompt:
-    """Ask-mode reuse confirmation payload; the CLI renders and answers."""
-
-    experiment_id: str
-    message: str
+ProgressCallback = Callable[[str], None]
+AskCallback = Callable[[str], bool]
 
 
 # ---------------------------------------------------------- controller ----
@@ -134,17 +59,18 @@ class ExperimentController:
         experiment_id: str,
         run_dir: Path,
         store: Repository,
-        on_event: EventCallback | None = None,
+        progress: ProgressCallback | None = None,
+        ask: AskCallback | None = None,
     ):
         self.spec = spec
         self.experiment_id = experiment_id
         self.run_dir = run_dir
         self.store = store
-        self.on_event = on_event
+        self.progress = progress
+        self.ask = ask
         self.state = "DRAFT"
         self.jobs: dict[str, VariantJob] = {}
         self.cells: dict[str, dict[str, Cell]] = {}
-        self._tracker = IncrementalTracker()
         self._cancel_event = asyncio.Event()
         
         self._control_hash: str | None = None
@@ -158,14 +84,14 @@ class ExperimentController:
 
     # ------------------------------------------------------------ events --
 
-    def emit(self, event: Any) -> None:
-        if self.on_event is not None:
-            self.on_event(event)
+    def _progress(self, message: str) -> None:
+        if self.progress is not None:
+            self.progress(message)
 
     def _set_state(self, state: str) -> None:
         self.state = state
         self.store.set_status(self.experiment_id, state, started=state == "RUNNING")
-        self.emit(ExperimentStateChanged(self.experiment_id, state))
+        self._progress(f"state: {state}")
 
     # --------------------------------------------------------- prepare ----
 
@@ -365,7 +291,15 @@ class ExperimentController:
                 span = f" {lo[:10]}..{hi[:10]}" if lo else ""
                 lines.append(f"  {task}: {counts.get(task, 0)} observations{span}")
             lines.append("(a sentinel subset still runs fresh to detect drift)")
-            self.emit(_AskReusePrompt(self.experiment_id, "\n".join(lines)))
+            message = "\n".join(lines)
+            if self.ask is None:
+                self._reuse_enabled = False
+                self._progress("control reuse disabled (non-interactive); all control tasks run fresh")
+            elif self.ask(message):
+                self._progress("control reuse accepted; sentinel subset runs fresh")
+            else:
+                self._reuse_enabled = False
+                self._progress("control reuse disabled; all control tasks run fresh")
             return True
         return True
 
@@ -435,9 +369,7 @@ class ExperimentController:
             )
             log = self.run_dir / "logs" / f"{job.variant_id}.log"
             job.proc = process_mod.VariantProcess(job.variant_id, argv, log)
-            self.emit(
-                VariantStarted(self.experiment_id, job.variant_id, len(missing))
-            )
+            self._progress(f"launch {job.variant_id}: {len(missing)} task(s)")
 
     def _held_tasks(self) -> set[str]:
         """Control tasks whose history satisfies reuse while the sentinel gate
@@ -500,33 +432,19 @@ class ExperimentController:
                 )
                 self._own_trial_ids.add(trial_id)
                 self._record_control_observation(variant_id, task_id, cell, trial_id)
-                if cell.status == "error":
-                    self.emit(
-                        TrialFailed(self.experiment_id, variant_id, task_id, "error")
-                    )
-                else:
-                    self.emit(
-                        TrialCompleted(
-                            self.experiment_id, variant_id, task_id,
-                            cell.status, cell.reward,
-                        )
-                    )
-                self.emit(
-                    TrialDiscovered(self.experiment_id, variant_id, task_id)
+                self._progress(
+                    f"{variant_id}/{task_id}: {cell.status}"
+                    + (f" reward={cell.reward}" if cell.status != "error" else "")
                 )
-        self._check_budget()
+
         for job in self.jobs.values():
             proc = job.proc
             if proc is not None and not proc.running and not getattr(
                 proc, "_exit_emitted", False
             ):
                 proc._exit_emitted = True  # type: ignore[attr-defined]
-                self.emit(
-                    VariantExited(
-                        self.experiment_id, job.variant_id,
-                        proc.proc.returncode if proc.proc else None,
-                    )
-                )
+                code = proc.proc.returncode if proc.proc else None
+                self._progress(f"{job.variant_id} exited rc={code}")
 
     def _refresh_cells(self) -> None:
         tasks = discover_tasks(
@@ -557,16 +475,6 @@ class ExperimentController:
             source=f"experiment:{self.experiment_id}",
         )
 
-    def _check_budget(self) -> None:
-        budget = self.spec.output.budget_usd
-        if budget is None:
-            return
-        rows = report_collect.collect_rows(self.run_dir / "jobs")
-        spent = sum(
-            float(r.get("cost_usd") or 0) for r in rows
-        )
-        if spent > budget:
-            self.emit(BudgetWarning(self.experiment_id, spent, budget))
 
     # ----------------------------------------------------------- cancel --
 
@@ -603,9 +511,7 @@ class ExperimentController:
         for job in self.jobs.values():
             staging.force_remove(job.staged)
         self._set_state("COMPLETE")
-        self.emit(
-            ReportWritten(self.experiment_id, [str(csv), str(report)])
-        )
+        self._progress(f"reports written: {csv}, {report}")
 
     def _record_all_cells(self) -> None:
         for variant_id, cells in self.cells.items():
@@ -680,7 +586,7 @@ class ExperimentController:
 
     def _fail(self, error: Exception) -> None:
         self.store.set_status(self.experiment_id, "FAILED", finished=True)
-        self.emit(ExperimentStateChanged(self.experiment_id, "FAILED"))
+        self._progress("state: FAILED")
         # Plan sec 10: no staged credential survives any terminal failure.
         for job in self.jobs.values():
             staging.force_remove(job.staged)

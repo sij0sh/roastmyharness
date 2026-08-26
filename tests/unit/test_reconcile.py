@@ -55,3 +55,23 @@ def test_missing_tasks(tmp_path: Path):
     make_trial(tmp_path / "jobs", "a", "t1")
     cells = reconcile_variant("a", tmp_path / "jobs" / "a", {"t1", "t2", "t3"})
     assert missing_tasks(cells, ["t1", "t2", "t3"]) == ["t2", "t3"]
+
+
+def test_reward_json_fallback_preserved(tmp_path: Path):
+    """Regression (RP2): reward.json reward must survive into the cell.
+
+    result.json carries no verifier reward; the fallback file does. The
+    old code recomputed reward from result.json afterwards and recorded 0.0.
+    """
+    trial = make_trial(tmp_path / "jobs", "a", "t1", reward=None)
+    (trial / "verifier" / "reward.json").write_text(json.dumps({"reward": 0.75}))
+    cells = reconcile_variant("a", tmp_path / "jobs" / "a", {"t1"})
+    assert cells["t1"].status == "fail"
+    assert cells["t1"].reward == 0.75
+
+
+def test_error_cell_reward_zero(tmp_path: Path):
+    make_trial(tmp_path / "jobs", "a", "t9", exception="AgentTimeoutError")
+    cells = reconcile_variant("a", tmp_path / "jobs" / "a", {"t9"})
+    assert cells["t9"].status == "error"
+    assert cells["t9"].reward == 0.0

@@ -10,7 +10,6 @@ Kwargs (``--ak key=value``):
     variant_manifest  absolute host path to the staged home's variant.json
     thinking          pi --thinking level (default: high)
     pi_version        npm version of @earendil-works/pi-coding-agent
-    extra_flags_json  JSON array of verbatim extra pi flags
 """
 
 from __future__ import annotations
@@ -39,6 +38,8 @@ from roast_my_harness.adapter.atif import write_trajectory
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
 DEFAULT_PI_NPM_VERSION = "0.84.3"
 
+
+_BUILTIN_PI_PROVIDERS = {"openai-codex"}
 _BUILTIN_PI_URLS = {
     "https://chatgpt.com/backend-api",
     "https://auth.openai.com",
@@ -59,7 +60,7 @@ def load_variant_manifest(path: str) -> dict[str, Any]:
         manifest = json.loads(manifest_path.read_text())
     except json.JSONDecodeError as e:
         raise ValueError(f"corrupt variant manifest {manifest_path}: {e}") from e
-    required = ("variant_id", "variant_hash", "pi_version", "model_id", "auth")
+    required = ("variant_id", "variant_hash", "pi_version", "model_id")
     missing = [key for key in required if key not in manifest]
     if missing:
         raise ValueError(
@@ -79,7 +80,6 @@ class PiAgent(BaseInstalledAgent):
         variant_manifest: str | None = None,
         thinking: str | None = "high",
         pi_version: str | None = DEFAULT_PI_NPM_VERSION,
-        extra_flags_json: str | None = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -92,7 +92,6 @@ class PiAgent(BaseInstalledAgent):
         self._manifest_path = Path(variant_manifest).resolve()
         self._thinking = thinking
         self._pi_version = pi_version or self._manifest.get("pi_version")
-        self._extra_flags = cmd.parse_extra_flags_json(extra_flags_json)
         self._instruction: str | None = None
         self._validate_model()
 
@@ -273,9 +272,7 @@ class PiAgent(BaseInstalledAgent):
         run_env = dict(_BASE_RUN_ENV)
         run_env.update(self._referenced_env_vars())
         run_env.update(self._manifest.get("env") or {})
-        extra_flags = list(self._manifest.get("pi_flags") or []) + list(
-            self._extra_flags
-        )
+        extra_flags = list(self._manifest.get("pi_flags") or [])
         skills = [s.get("path", "") for s in self._manifest.get("skills") or []]
         command = cmd.build_run_command(
             model=self.model_name or "",

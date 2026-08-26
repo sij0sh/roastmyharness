@@ -101,9 +101,8 @@ def test_cache_hit_on_rebuild(tmp_path: Path):
     spec = spec_for(tmp_path, [VariantSpec(id="a")])
     homes = tmp_path / "homes"
     first = build_home(spec.variants[0], spec, homes)
-    assert not first.cached
     second = build_home(spec.variants[0], spec, homes)
-    assert second.cached
+    assert first.path == second.path
     assert first.variant_hash == second.variant_hash
 
 
@@ -120,7 +119,7 @@ def test_cache_invalidated_by_source_change(tmp_path: Path):
     (src / "src" / "index.ts").write_text("changed")
     second = build_home(spec.variants[0], spec, homes)
     assert second.variant_hash != first.variant_hash
-    assert not second.cached
+    assert second.path != first.path
 
 
 def test_instruction_file_leak_rejected(tmp_path: Path):

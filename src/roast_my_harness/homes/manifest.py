@@ -29,7 +29,6 @@ class VariantManifest(BaseModel):
     variant_hash: str
     pi_version: str
     model_id: str  # complete provider/model string
-    auth: str  # codex | api_key
     extensions: list[ManifestExtension] = Field(default_factory=list)
     skills: list[ManifestSkill] = Field(default_factory=list)
     npm_packages: list[str] = Field(default_factory=list)

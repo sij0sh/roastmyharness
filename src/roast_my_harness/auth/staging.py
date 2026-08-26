@@ -13,9 +13,13 @@ import shutil
 import stat
 from pathlib import Path
 
-from roast_my_harness import __version__
 from roast_my_harness.auth import service as auth_service
-from roast_my_harness.auth.service import CODEX_PROVIDER, codex_credential, host_provider_block, provider_credential
+from roast_my_harness.auth.service import (
+    CODEX_PROVIDER,
+    codex_credential,
+    host_provider_block,
+    provider_credential,
+)
 from roast_my_harness.errors import AuthError
 from roast_my_harness.spec.models import ExperimentSpec
 
@@ -120,6 +124,3 @@ def scan_for_secrets(run_dir: Path) -> list[str]:
             hits.append(str(path))
     return hits
 
-
-def staging_note() -> str:
-    return f"roast-my-harness {__version__}: staging is per-job; discard after run"

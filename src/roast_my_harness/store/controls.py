@@ -111,20 +111,6 @@ def sentinel_sample(
     return picked
 
 
-def binomial_two_sided(k: int, n: int, p: float = 0.5) -> float:
-    """Exact two-sided binomial p-value (small n only; sum the tail)."""
-    if n <= 0:
-        return 1.0
-
-    def pmf(successes: int) -> float:
-        coeff = 1.0
-        for j in range(successes):
-            coeff = coeff * (n - j) / (j + 1)
-        return coeff * (p**successes) * ((1 - p) ** (n - successes))
-
-    observed = pmf(k)
-    return min(1.0, sum(pmf(i) for i in range(n + 1) if pmf(i) <= observed + 1e-12))
-
 
 def sentinel_verdict(
     *,

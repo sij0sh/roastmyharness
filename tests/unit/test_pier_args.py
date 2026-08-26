@@ -26,7 +26,6 @@ def test_build_run_args(monkeypatch, tmp_path: Path):
         pi_version="0.84.3",
         n_concurrent=2,
         include_tasks=["t1", "t2"],
-        agent_env={"FOO": "BAR"},
     )
     assert args[0] == "pier"
     assert args[1] == "run"
@@ -37,6 +36,5 @@ def test_build_run_args(monkeypatch, tmp_path: Path):
     assert "pi_version=0.84.3" in args
     assert "openai-codex/gpt-5.6-luna" in args
     assert "--yes" in args
-    assert "FOO=BAR" in args
     joined = " ".join(args)
     assert "|" not in joined and ";" not in joined and "&&" not in joined

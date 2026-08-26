@@ -75,8 +75,6 @@ def build_run_args(
     pi_version: str,
     n_concurrent: int,
     include_tasks: list[str] | None = None,
-    agent_env: dict[str, str] | None = None,
-    extra_args: list[str] | None = None,
 ) -> list[str]:
     """Build the `pier run` argv for one variant job."""
     args = [
@@ -96,7 +94,4 @@ def build_run_args(
         "--job-name", job_name,
         "--yes",
     ]
-    for key, value in (agent_env or {}).items():
-        args += ["--ae", f"{key}={value}"]
-    args += list(extra_args or [])
     return args

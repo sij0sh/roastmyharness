@@ -63,6 +63,7 @@ def reconcile_variant(
         exception = (result.get("exception_info") or {}).get("exception_type")
         if exception:
             status = "error"
+            reward = 0.0
         else:
             verifier = result.get("verifier_result") or {}
             reward = verifier.get("rewards", {}).get("reward")
@@ -77,10 +78,6 @@ def reconcile_variant(
                 continue  # incomplete, not terminal
             reward = float(reward)
             status = "pass" if reward >= PASS_THRESHOLD else "fail"
-        reward = float(
-            (result.get("verifier_result") or {}).get("rewards", {}).get("reward")
-            or 0.0
-        )
         timing = (result.get("agent_execution") or {})
         finished = timing.get("finished_at")
         cell = Cell(

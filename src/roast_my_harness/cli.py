@@ -40,7 +40,6 @@ thinking = "high"          # off | minimal | low | medium | high | xhigh | max
 [model]
 id = "gpt-5.6-luna"
 provider = "openai-codex"  # any host pi models.json provider, or "custom" with provider_id + models_json
-auth = "codex"
 
 [tasks]
 path = "/path/to/task-dataset"   # dir of task dirs, each with task.toml
@@ -49,7 +48,6 @@ exclude = []
 
 [concurrency]
 per_variant = 2
-global_max = 6
 
 [control]
 enabled = true                  # bare Pi control arm
@@ -84,32 +82,15 @@ def _repo() -> Repository:
     return Repository(database_path())
 
 
-def _print_event(event: Any) -> None:
-    name = type(event).__name__
-    if name.startswith("_"):
-        return
-    details = {
-        k: getattr(event, k)
-        for k in event.__dataclass_fields__
-        if k != "experiment_id"
-    }
-    print(f"[{name}] {details}", file=sys.stderr)
+def _print_progress(message: str) -> None:
+    """Plain stderr progress line (states, launches, per-trial outcomes)."""
+    print(f"[roast] {message}", file=sys.stderr)
 
 
-def _make_ask_handler(controller: ExperimentController) -> Any:
+def _ask_reuse(message: str) -> bool:
     """Interactive ask-mode prompt for control reuse (plan section 16)."""
-
-    def on_event(event: Any) -> None:
-        if type(event).__name__ != "_AskReusePrompt":
-            _print_event(event)
-            return
-        typer.echo(event.message)
-        answer = typer.confirm("Reuse this historic control pool?")
-        if not answer:
-            controller._reuse_enabled = False
-            typer.echo("control reuse disabled; all control tasks run fresh")
-
-    return on_event
+    typer.echo(message)
+    return typer.confirm("Reuse this historic control pool?")
 
 
 # ------------------------------------------------------------------ init --
@@ -179,8 +160,11 @@ def run(
             raise typer.Exit(0)
     experiment_id = make_experiment_id(spec.name, compute_spec_hash(spec))
     repo = _repo()
-    controller = ExperimentController(spec, experiment_id, run_dir(experiment_id), repo, None)
-    controller.on_event = _make_ask_handler(controller)
+    controller = ExperimentController(
+        spec, experiment_id, run_dir(experiment_id), repo,
+        progress=_print_progress,
+        ask=_ask_reuse if (sys.stdin.isatty() and not yes) else None,
+    )
     controller.prepare(spec_path)
     controller.enforce_reuse_policy(
         interactive=sys.stdin.isatty() and not yes
@@ -218,7 +202,7 @@ def resume(
 
     spec = ExperimentSpec.model_validate(json.loads(row["spec_json"]))
     controller = ExperimentController(
-        spec, experiment_id, Path(row["run_dir"]), repo, _print_event
+        spec, experiment_id, Path(row["run_dir"]), repo, _print_progress
     )
     controller.prepare()
     asyncio.run(_run_with_cancel(controller))

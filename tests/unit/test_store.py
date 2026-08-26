@@ -37,9 +37,11 @@ def test_experiment_lifecycle(tmp_path: Path):
         status="fail", job_path="/x", reward=0.0, resolved=False,
         exception_type=None, metrics=None,
     )
-    trials = repo.trials("e1")
-    assert len(trials) == 1
-    assert trials[0]["status"] == "fail"
+    rows = repo.conn.execute(
+        "SELECT * FROM trials WHERE experiment_id=?", ("e1",)
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "fail"
     assert repo.next_attempt("e1", "control", "t1") == 2
     row = repo.get_experiment("e1")
     assert row["status"] == "DRAFT"

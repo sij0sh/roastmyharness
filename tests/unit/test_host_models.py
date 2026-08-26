@@ -77,12 +77,11 @@ def test_codex_default_unchanged():
     m = ModelSpec()
     assert m.provider == "openai-codex"
     assert m.id == "gpt-5.6-luna"
-    assert m.auth == "codex"
     assert m.full_id() == "openai-codex/gpt-5.6-luna"
 
 
 def test_host_provider_full_id():
-    m = ModelSpec(id="glm-5.3", provider="z-ai-openai", auth="api_key")
+    m = ModelSpec(id="glm-5.3", provider="z-ai-openai")
     assert m.full_id() == "z-ai-openai/glm-5.3"
 
 
@@ -92,14 +91,13 @@ def test_custom_provider_still_works(tmp_path: Path):
         provider="custom",
         provider_id="my-prov",
         models_json=tmp_path / "m.json",
-        auth="api_key",
     )
     assert m.full_id() == "my-prov/my-model"
 
 
 def test_custom_still_requires_fields():
     with pytest.raises(Exception):
-        ModelSpec(provider="custom", auth="api_key")
+        ModelSpec(provider="custom")
 
 
 # ------------------------------------------------------------- service --
@@ -138,7 +136,7 @@ def test_stage_home_slices_host_provider(host_pi, tmp_path: Path):
     (cached / "extensions").mkdir(parents=True)
     (cached / "variant.json").write_text("{}")
     spec = _spec(
-        ModelSpec(id="glm-5.3", provider="z-ai-openai", auth="api_key")
+        ModelSpec(id="glm-5.3", provider="z-ai-openai")
     )
     dest = staging.stage_home(cached, tmp_path / "staged", spec)
 
@@ -163,7 +161,7 @@ def test_stage_home_host_provider_without_auth_entry(
     (cached / "extensions").mkdir(parents=True)
     (cached / "variant.json").write_text("{}")
     spec = _spec(
-        ModelSpec(id="glm-5.3", provider="z-ai-openai", auth="api_key")
+        ModelSpec(id="glm-5.3", provider="z-ai-openai")
     )
     dest = staging.stage_home(cached, tmp_path / "staged", spec)
     assert (dest / "models.json").is_file()
@@ -175,7 +173,7 @@ def test_stage_home_unknown_provider_fails(host_pi, tmp_path: Path):
     (cached / "extensions").mkdir(parents=True)
     (cached / "variant.json").write_text("{}")
     spec = _spec(
-        ModelSpec(id="x", provider="mystery", auth="api_key")
+        ModelSpec(id="x", provider="mystery")
     )
     with pytest.raises(Exception, match="not in host pi models.json"):
         staging.stage_home(cached, tmp_path / "staged", spec)
@@ -249,7 +247,7 @@ id = "a"
 
 def test_spec_hash_covers_host_drift(host_pi, tmp_path: Path):
     spec = _spec(
-        ModelSpec(id="glm-5.3", provider="z-ai-openai", auth="api_key")
+        ModelSpec(id="glm-5.3", provider="z-ai-openai")
     )
     drifted = spec.model_copy(
         update={
@@ -273,14 +271,14 @@ def test_spec_hash_covers_host_drift(host_pi, tmp_path: Path):
 def test_preflight_host_provider_passes(host_pi, monkeypatch):
     monkeypatch.setenv("ZAI_TEST_KEY", "value")
     spec = _spec(
-        ModelSpec(id="glm-5.3", provider="z-ai-openai", auth="api_key")
+        ModelSpec(id="glm-5.3", provider="z-ai-openai")
     )
     (r,) = preflight._auth(spec)
     assert r.status == "pass", r.detail
 
 
 def test_preflight_unknown_provider_fails(host_pi):
-    spec = _spec(ModelSpec(id="x", provider="mystery", auth="api_key"))
+    spec = _spec(ModelSpec(id="x", provider="mystery"))
     (r,) = preflight._auth(spec)
     assert r.status == "fail"
     assert "not in host pi models.json" in r.detail
@@ -288,7 +286,7 @@ def test_preflight_unknown_provider_fails(host_pi):
 
 def test_preflight_unknown_model_id_fails(host_pi):
     spec = _spec(
-        ModelSpec(id="bogus", provider="z-ai-openai", auth="api_key")
+        ModelSpec(id="bogus", provider="z-ai-openai")
     )
     (r,) = preflight._auth(spec)
     assert r.status == "fail"
@@ -297,7 +295,7 @@ def test_preflight_unknown_model_id_fails(host_pi):
 
 def test_preflight_command_keys_rejected(host_pi, monkeypatch):
     monkeypatch.setenv("ZAI_TEST_KEY", "value")
-    spec = _spec(ModelSpec(id="m1", provider="cmd-prov", auth="api_key"))
+    spec = _spec(ModelSpec(id="m1", provider="cmd-prov"))
     (r,) = preflight._auth(spec)
     assert r.status == "fail"
     assert "!command" in r.detail
@@ -306,7 +304,7 @@ def test_preflight_command_keys_rejected(host_pi, monkeypatch):
 def test_preflight_unset_env_fails(host_pi, monkeypatch):
     monkeypatch.delenv("ZAI_TEST_KEY", raising=False)
     spec = _spec(
-        ModelSpec(id="glm-5.3", provider="z-ai-openai", auth="api_key")
+        ModelSpec(id="glm-5.3", provider="z-ai-openai")
     )
     (r,) = preflight._auth(spec)
     assert r.status == "fail"

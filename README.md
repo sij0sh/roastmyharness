@@ -28,8 +28,7 @@ adapter).
     uv tool uninstall roast-my-harness
     rm -rf ~/.local/share/roast-my-harness   # database + run outputs
     rm -rf ~/.cache/roast-my-harness         # cached Pi homes
-    rm -f  ~/.config/roast-my-harness/config.toml
-
+    
 Run outputs live under the data dir unless `ROAST_MY_HARNESS_RUNS_DIR`
 is set. The tool stores no credentials of its own; it reuses
 `~/.pi/agent/auth.json`, which belongs to Pi and is not removed here.

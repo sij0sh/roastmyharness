@@ -33,7 +33,6 @@ class HomeBuild:
     path: Path  # cached, immutable home directory
     manifest: VariantManifest
     variant_hash: str
-    cached: bool
 
 
 def _extension_name(ext: LocalExtension, index: int) -> str:
@@ -80,7 +79,7 @@ def build_home(
             manifest = VariantManifest.model_validate(
                 json.loads((home / "variant.json").read_text())
             )
-            return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash, cached=True)
+            return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash)
         shutil.rmtree(home, ignore_errors=True)
 
     _validate_sources(variant, allow_unsafe_source)
@@ -144,7 +143,6 @@ def build_home(
             variant_hash=v_hash,
             pi_version=spec.pi_version,
             model_id=spec.model.full_id(),
-            auth=spec.model.auth,
             extensions=manifest_exts,
             skills=skills,
             npm_packages=npm_packages,
@@ -179,7 +177,7 @@ def build_home(
         shutil.rmtree(tmp, ignore_errors=True)
         raise
 
-    return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash, cached=False)
+    return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash)
 
 
 def _setup_args(step) -> dict[str, str]:

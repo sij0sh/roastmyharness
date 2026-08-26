@@ -6,7 +6,6 @@ thinking = "high"
 [model]
 id = "gpt-5.6-luna"
 provider = "openai-codex"
-auth = "codex"
 
 [tasks]
 path = "~/datasets/my-tasks"
@@ -15,7 +14,6 @@ exclude = []
 
 [concurrency]
 per_variant = 2
-global_max = 6
 
 [control]
 enabled = true

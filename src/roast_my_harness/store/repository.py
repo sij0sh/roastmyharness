@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -146,11 +145,6 @@ class Repository:
             )
         return trial_id
 
-    def trials(self, experiment_id: str) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "SELECT * FROM trials WHERE experiment_id=? ORDER BY variant_id, "
-            "task_id, attempt", (experiment_id,)
-        ).fetchall()
 
     # ------------------------------------------------------ control pool --
 
@@ -181,29 +175,4 @@ class Repository:
             query += " AND eligible=1"
         return self.conn.execute(query, (cohort_key, task_hash)).fetchall()
 
-    def control_pools(
-        self, cohort_key: str, task_hashes: list[str]
-    ) -> dict[str, list[sqlite3.Row]]:
-        """Eligible observations per task hash, in one query."""
-        if not task_hashes:
-            return {}
-        placeholders = ",".join("?" for _ in task_hashes)
-        rows = self.conn.execute(
-            "SELECT * FROM control_observations "
-            f"WHERE cohort_key=? AND task_hash IN ({placeholders}) "
-            "AND eligible=1",
-            [cohort_key, *task_hashes],
-        ).fetchall()
-        pools: dict[str, list[sqlite3.Row]] = {h: [] for h in task_hashes}
-        for row in rows:
-            pools[row["task_hash"]].append(row)
-        return pools
 
-
-@dataclass(frozen=True)
-class Cell:
-    variant_id: str
-    task_id: str
-    status: str  # pass | fail | error | incomplete
-    reward: float | None
-    job_path: str | None

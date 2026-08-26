@@ -6,7 +6,6 @@ import pytest
 
 from roast_my_harness.adapter.command import (
     build_run_command,
-    parse_extra_flags_json,
     skill_flags,
 )
 
@@ -35,11 +34,3 @@ def test_run_command_shape():
     assert "> /logs/agent/pi-event-times.log" in command
 
 
-def test_extra_flags_json():
-    assert parse_extra_flags_json(None) == []
-    assert parse_extra_flags_json("") == []
-    assert parse_extra_flags_json('["--x", "--y 1"]') == ["--x", "--y 1"]
-    with pytest.raises(ValueError):
-        parse_extra_flags_json('{"a":1}')
-    with pytest.raises(ValueError):
-        parse_extra_flags_json("not json")

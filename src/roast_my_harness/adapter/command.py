@@ -60,15 +60,3 @@ def build_run_command(
     parts.append(f"> /logs/agent/{EVENT_TIMES_FILENAME}")
     return " ".join(parts)
 
-
-def parse_extra_flags_json(raw: str | None) -> list[str]:
-    """extra_flags_json kwarg: a JSON array of verbatim pi flags."""
-    if not raw:
-        return []
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"extra_flags_json is not valid JSON: {e}") from e
-    if not isinstance(value, list) or not all(isinstance(f, str) for f in value):
-        raise ValueError("extra_flags_json must be a JSON array of strings")
-    return value

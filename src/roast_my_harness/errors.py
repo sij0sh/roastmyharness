@@ -19,17 +19,5 @@ class AuthError(RoastMyHarnessError):
     """Credential detection, validation, or staging failed."""
 
 
-class PreflightError(RoastMyHarnessError):
-    """A blocking preflight check failed."""
-
-
 class PierError(RoastMyHarnessError):
     """Pier executable lookup, launch, or execution failed."""
-
-
-class ReconcileError(RoastMyHarnessError):
-    """Result reconciliation failed."""
-
-
-class ReportError(RoastMyHarnessError):
-    """Report generation failed."""

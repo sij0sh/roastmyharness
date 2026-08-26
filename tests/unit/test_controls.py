@@ -5,7 +5,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from roast_my_harness.store.controls import (
-    binomial_two_sided,
     observations_within_age,
     plan_reuse,
     sentinel_sample,
@@ -82,12 +81,6 @@ def test_sentinel_sample_deterministic_and_bounded():
     assert set(a) <= set(tasks)
     assert sentinel_sample(tasks, 0, 1) == []
 
-
-def test_binomial_two_sided_bounds():
-    assert binomial_two_sided(0, 0) == 1.0
-    assert 0.0 <= binomial_two_sided(0, 4) <= 1.0
-    
-    assert binomial_two_sided(4, 4) < 0.2
 
 
 def test_sentinel_verdict_rejects_full_disagreement():
