@@ -39,7 +39,7 @@ thinking = "high"          # off | minimal | low | medium | high | xhigh | max
 
 [model]
 id = "gpt-5.6-luna"
-provider = "openai-codex"  # or "custom" with provider_id + models_json
+provider = "openai-codex"  # any host pi models.json provider, or "custom" with provider_id + models_json
 auth = "codex"
 
 [tasks]

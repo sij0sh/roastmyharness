@@ -2,14 +2,55 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import tomllib
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from roast_my_harness.errors import SpecError
-from roast_my_harness.spec.models import ExperimentSpec
+from roast_my_harness.spec.models import ExperimentSpec, ResolvedModelSpec
 from roast_my_harness.spec.normalize import absolute
+
+
+def _resolve_model(spec: ExperimentSpec) -> ExperimentSpec:
+    """Materialize host model config into the spec.
+
+    For a provider defined in the host pi models.json, record the
+    provider block's hash and its env-var references so spec_hash
+    covers host configuration drift. Codex and custom providers are
+    already fully explicit in the spec and need no resolution.
+    """
+    model = spec.model
+    if model.provider in ("openai-codex", "custom"):
+        return spec
+    try:
+        from roast_my_harness.auth import service as auth_service
+
+        block = auth_service.host_provider_block(model.provider)
+    except Exception:
+        # Host config unreadable here; preflight reports it with detail.
+        return spec
+    if block is None:
+        return spec
+    block_json = json.dumps(block, sort_keys=True, separators=(",", ":"))
+    sha = hashlib.sha256(block_json.encode("utf-8")).hexdigest()
+    names = sorted(set(re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", block_json)))
+    return spec.model_copy(
+        update={
+            "model": model.model_copy(
+                update={
+                    "resolved_model": ResolvedModelSpec(
+                        provider=model.provider,
+                        provider_block_sha256=sha,
+                        env_vars=names,
+                    )
+                }
+            )
+        }
+    )
 
 
 def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
@@ -50,7 +91,8 @@ def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
         v_updates.update(extensions=exts, skills=skills, setup=setups)
         variants.append(variant.model_copy(update=v_updates))
     updates["variants"] = variants
-    return spec.model_copy(update=updates)
+    resolved = spec.model_copy(update=updates)
+    return _resolve_model(resolved)
 
 
 def load_experiment(path: Path) -> ExperimentSpec:

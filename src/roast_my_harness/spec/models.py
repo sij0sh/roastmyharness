@@ -17,20 +17,30 @@ _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
+class ResolvedModelSpec(BaseModel):
+    """Host-config materialization: what actually runs, recorded at load
+    time so spec_hash covers host configuration drift."""
+
+    provider: str
+    provider_block_sha256: str
+    env_vars: list[str] = Field(default_factory=list)
+
+
 class ModelSpec(BaseModel):
     id: str = "gpt-5.6-luna"
-    provider: Literal["openai-codex", "custom"] = "openai-codex"
+    provider: str = "openai-codex"
     provider_id: str | None = None
     models_json: Path | None = None
     auth: Literal["codex", "api_key"] = "codex"
+    resolved_model: ResolvedModelSpec | None = None
 
     def full_id(self) -> str:
         """The complete provider/model string used for Pier's --model."""
-        if self.provider == "openai-codex":
-            return f"openai-codex/{self.id}"
-        if not self.provider_id:
-            raise ValueError("custom provider requires provider_id")
-        return f"{self.provider_id}/{self.id}"
+        if self.provider == "custom":
+            if not self.provider_id:
+                raise ValueError("custom provider requires provider_id")
+            return f"{self.provider_id}/{self.id}"
+        return f"{self.provider}/{self.id}"
 
     @model_validator(mode="after")
     def _require_custom_fields(self) -> ModelSpec:

@@ -61,6 +61,13 @@ See `examples/` and `roast-my-harness init`. Key sections: `[model]`, `[tasks]`,
 local extensions (`kind = "local"`), pinned npm packages (`kind = "npm"`),
 skills, env pins, and typed setup handlers.
 
+`[model] provider` accepts any provider defined in the host pi
+`~/.pi/agent/models.json` (model ids are validated against it), the
+default `openai-codex` (auth via `pi /login codex`), or `custom` with
+`provider_id` + `models_json`. Host providers stage automatically: the
+provider block is sliced per job, referenced env vars must be set, and
+`!command` apiKeys are rejected.
+
 ## Status (build phases)
 
 - Phase 0-3: done (spec, homes, adapter, headless runner, telemetry,

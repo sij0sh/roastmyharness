@@ -39,7 +39,6 @@ from roast_my_harness.adapter.atif import write_trajectory
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
 DEFAULT_PI_NPM_VERSION = "0.84.3"
 
-_BUILTIN_PI_PROVIDERS = {"openai-codex"}
 _BUILTIN_PI_URLS = {
     "https://chatgpt.com/backend-api",
     "https://auth.openai.com",
@@ -123,6 +122,21 @@ class PiAgent(BaseInstalledAgent):
             return None
         return json.loads(path.read_text())
 
+    def _staged_providers(self) -> set[str]:
+        """Providers declared by staged files: models.json blocks and
+        auth.json entries. No hardcoded built-in list."""
+        providers: set[str] = set()
+        config = self._load_models_config()
+        if config is not None:
+            providers.update(config.get("providers", {}).keys())
+        auth_path = self._home_dir / "auth.json"
+        if auth_path.is_file():
+            try:
+                providers.update(json.loads(auth_path.read_text()).keys())
+            except (json.JSONDecodeError, OSError):
+                pass
+        return providers
+
     def _validate_model(self) -> None:
         if not self.model_name or "/" not in self.model_name:
             raise ValueError(
@@ -130,26 +144,27 @@ class PiAgent(BaseInstalledAgent):
                 "'openai-codex/gpt-5.6-luna')"
             )
         provider, model = self.model_name.split("/", 1)
-        if provider in _BUILTIN_PI_PROVIDERS:
+        staged = self._staged_providers()
+        if provider in staged:
+            # Models.json blocks declare their model ids; auth-only
+            # providers rely on pi's own catalog and id validation.
+            config = self._load_models_config()
+            if config is not None and provider in config.get("providers", {}):
+                model_ids = [
+                    m.get("id")
+                    for m in config["providers"][provider].get("models", [])
+                ]
+                if model not in model_ids:
+                    raise ValueError(
+                        f"Model '{model}' not defined for provider '{provider}' "
+                        f"(available: {', '.join(str(i) for i in model_ids)})"
+                    )
             return
-        config = self._load_models_config()
-        if config is None:
-            raise FileNotFoundError(
-                f"custom provider '{provider}' requires a staged models.json in "
-                f"{self._home_dir}"
-            )
-        providers = config.get("providers", {})
-        if provider not in providers:
-            raise ValueError(
-                f"Provider '{provider}' not in staged models.json "
-                f"(available: {', '.join(sorted(providers))})"
-            )
-        model_ids = [m.get("id") for m in providers[provider].get("models", [])]
-        if model not in model_ids:
-            raise ValueError(
-                f"Model '{model}' not defined for provider '{provider}' "
-                f"(available: {', '.join(str(i) for i in model_ids)})"
-            )
+        raise ValueError(
+            f"Provider '{provider}' has neither a staged models.json block "
+            f"nor a staged auth entry in {self._home_dir}; host-side "
+            f"preflight should have caught this"
+        )
 
     def _referenced_env_vars(self) -> dict[str, str]:
         """Resolve $VAR / ${VAR} references in the staged models.json.

@@ -20,7 +20,9 @@ variant x task cell and writes summary.csv, summary.json, and report.md.
 
 1. Create a spec: `roast-my-harness init experiment.toml`
 2. Edit the TOML. Set `name`, `pi_version`, `thinking`, `[model]`, and
-   `[tasks] path`. Add one `[[variants]]` block per arm. Local extensions
+   `[tasks] path`. `[model] provider` may be any host pi models.json
+   provider, `openai-codex` (default), or `custom` with provider_id +
+   models_json. Add one `[[variants]]` block per arm. Local extensions
    use `[[variants.extensions]]` with `kind = "local"`, `path`, `entry`.
    Skills use `[[variants.skills]]` with `kind = "local"` and a `path`
    containing SKILL.md. `[control]` toggles the bare-Pi arm.

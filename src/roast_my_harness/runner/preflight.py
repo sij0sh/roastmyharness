@@ -133,7 +133,8 @@ def _sources(spec: ExperimentSpec) -> list[CheckResult]:
 
 def _auth(spec: ExperimentSpec) -> list[CheckResult]:
     results = []
-    if spec.model.auth == "codex":
+    model = spec.model
+    if model.provider == "openai-codex":
         cred = auth_service.codex_credential()
         if cred is None:
             results.append(
@@ -143,14 +144,57 @@ def _auth(spec: ExperimentSpec) -> list[CheckResult]:
             expires = auth_service.credential_expiry(cred)
             results.append(_ok("auth", f"codex OAuth present{expires}"))
         return results
-    if spec.model.models_json is not None:
-        missing = auth_service.missing_env_vars(spec.model.models_json)
+    if model.provider == "custom":
+        if model.models_json is None:
+            results.append(_fail("auth", "custom provider requires models_json"))
+            return results
+        if not model.models_json.is_file():
+            results.append(_fail("auth", f"models.json missing: {model.models_json}"))
+            return results
+        missing = auth_service.missing_env_vars(model.models_json)
         if missing:
             results.append(_fail("auth", f"unset env vars: {', '.join(missing)}"))
         else:
             results.append(_ok("auth", "models.json env vars all set"))
+        return results
+    # Host-configured provider: block must exist, ids must match, no
+    # host-only !command keys, env vars must resolve.
+    block = auth_service.host_provider_block(model.provider)
+    if block is None:
+        results.append(
+            _fail("auth", f"provider '{model.provider}' not in host pi models.json")
+        )
+        return results
+    if model.id not in auth_service.host_model_ids(model.provider):
+        available = ", ".join(auth_service.host_model_ids(model.provider)[:8])
+        results.append(
+            _fail("auth", f"model '{model.id}' not defined for host provider "
+                          f"'{model.provider}' (available: {available})")
+        )
+        return results
+    if auth_service.has_command_keys(block):
+        results.append(
+            _fail("auth", f"provider '{model.provider}' uses !command apiKey "
+                          "values; host commands cannot run in-container")
+        )
+        return results
+    import json as _json
+    import tempfile
+    block_text = _json.dumps({"providers": {model.provider: block}})
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
+        tf.write(block_text)
+        block_path = Path(tf.name)
+    try:
+        missing = auth_service.missing_env_vars(block_path)
+    finally:
+        block_path.unlink(missing_ok=True)
+    if missing:
+        results.append(_fail("auth", f"unset env vars: {', '.join(missing)}"))
     else:
-        results.append(_fail("auth", "api_key mode requires models.json"))
+        auth_note = ""
+        if auth_service.provider_credential(model.provider) is not None:
+            auth_note = ", auth entry present"
+        results.append(_ok("auth", f"host provider '{model.provider}' configured{auth_note}"))
     return results
 
 

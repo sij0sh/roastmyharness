@@ -14,7 +14,8 @@ import stat
 from pathlib import Path
 
 from roast_my_harness import __version__
-from roast_my_harness.auth.service import CODEX_PROVIDER, codex_credential
+from roast_my_harness.auth import service as auth_service
+from roast_my_harness.auth.service import CODEX_PROVIDER, codex_credential, host_provider_block, provider_credential
 from roast_my_harness.errors import AuthError
 from roast_my_harness.spec.models import ExperimentSpec
 
@@ -31,21 +32,58 @@ def stage_home(
     shutil.copytree(cached_home, dest)
     _make_writable(dest)
 
-    if spec.model.auth == "codex":
+    _stage_model(spec, dest)
+    return dest
+
+
+def _stage_model(spec: ExperimentSpec, dest: Path) -> None:
+    """Stage the model credential/config the spec's provider needs.
+
+    The provider name drives staging, not the auth literal.
+    """
+    model = spec.model
+    if model.provider == CODEX_PROVIDER:
         entry = codex_credential()
         if entry is None:
             raise AuthError(
                 "no openai-codex credential in pi auth file; run pi /login codex"
             )
-        (dest / "auth.json").write_text(
-            json.dumps({CODEX_PROVIDER: entry}) + "\n"
+        _write_auth_entry(dest, CODEX_PROVIDER, entry)
+        return
+    if model.provider == "custom":
+        if model.models_json is None:
+            raise AuthError("provider 'custom' requires models_json")
+        if not model.models_json.is_file():
+            raise AuthError(f"models.json missing: {model.models_json}")
+        shutil.copy2(model.models_json, dest / "models.json")
+        return
+    # Host-configured provider: slice its block from the host models.json
+    # and its auth entry when one exists.
+    block = host_provider_block(model.provider)
+    if block is None:
+        raise AuthError(
+            f"provider '{model.provider}' not in host pi models.json "
+            f"({auth_service.pi_models_file()})"
         )
-        os.chmod(dest / "auth.json", 0o600)
-    elif spec.model.models_json is not None:
-        if not spec.model.models_json.is_file():
-            raise AuthError(f"models.json missing: {spec.model.models_json}")
-        shutil.copy2(spec.model.models_json, dest / "models.json")
-    return dest
+    (dest / "models.json").write_text(
+        json.dumps({"providers": {model.provider: block}}, indent=2) + "\n"
+    )
+    entry = provider_credential(model.provider)
+    if entry is not None:
+        _write_auth_entry(dest, model.provider, entry)
+
+
+def _write_auth_entry(dest: Path, provider: str, entry: dict) -> None:
+    auth_path = dest / "auth.json"
+    existing: dict = {}
+    if auth_path.is_file():
+        try:
+            existing = json.loads(auth_path.read_text())
+        except json.JSONDecodeError:
+            existing = {}
+    existing[provider] = entry
+    auth_path.write_text(json.dumps(existing) + "\n")
+    os.chmod(auth_path, 0o600)
 
 
 def force_remove(path: Path) -> None:

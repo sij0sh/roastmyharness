@@ -76,6 +76,69 @@ def refresh_hint(entry: dict[str, Any]) -> bool:
     return False
 
 
+def pi_models_file() -> Path:
+    return pi_auth_dir() / "models.json"
+
+
+def load_host_models() -> dict[str, Any]:
+    """The host pi models.json providers, or {} when absent."""
+    path = pi_models_file()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        raise AuthError(f"cannot read pi models file {path}: {e}") from e
+    providers = data.get("providers")
+    if not isinstance(providers, dict):
+        raise AuthError(f"pi models file {path} has no providers object")
+    return providers
+
+
+def host_provider_block(provider: str) -> dict[str, Any] | None:
+    """A provider block from the host models.json, or None."""
+    block = load_host_models().get(provider)
+    return block if isinstance(block, dict) else None
+
+
+def host_model_ids(provider: str) -> list[str]:
+    """Model ids declared for a host provider (may be empty)."""
+    block = host_provider_block(provider)
+    if block is None:
+        return []
+    models = block.get("models", [])
+    if not isinstance(models, list):
+        return []
+    return [m.get("id") for m in models if isinstance(m, dict) and m.get("id")]
+
+
+def provider_credential(provider: str) -> dict[str, Any] | None:
+    """Any auth.json entry for a provider, shape-checked, or None."""
+    entry = load_auth_file().get(provider)
+    if not isinstance(entry, dict):
+        return None
+    if not entry.get("type"):
+        return None
+    return entry
+
+
+def has_command_keys(block: dict[str, Any]) -> bool:
+    """True when any apiKey/headers value runs a host command (! prefix)."""
+    candidates: list[Any] = [block.get("apiKey")]
+    headers = block.get("headers")
+    if isinstance(headers, dict):
+        candidates.extend(headers.values())
+    model_overrides = block.get("modelOverrides")
+    if isinstance(model_overrides, dict):
+        for override in model_overrides.values():
+            if isinstance(override, dict):
+                candidates.append(override.get("apiKey"))
+    for value in candidates:
+        if isinstance(value, str) and value.startswith("!"):
+            return True
+    return False
+
+
 def missing_env_vars(models_json: Path) -> list[str]:
     """Env var names referenced as $VAR / ${VAR} in models.json that are unset.
 
