@@ -106,6 +106,26 @@ def test_prepare_and_snapshot(tmp_path: Path):
     repo.close()
 
 
+def test_terminal_state_sets_finished_at(tmp_path: Path):
+    import os
+
+    os.environ["ROAST_MY_HARNESS_RUNS_DIR"] = str(tmp_path / "runs")
+    os.environ["XDG_CACHE_HOME"] = str(tmp_path / "cache")
+    spec_path = setup(tmp_path)
+    spec = load_experiment(spec_path)
+    repo = Repository(tmp_path / "db.sqlite")
+    exp_id = experiment_id(spec.name, spec_hash(spec))
+    controller = ExperimentController(spec, exp_id, tmp_path / "run", repo, None)
+    controller.prepare(spec_path)
+    controller._set_state("RUNNING")
+    controller._set_state("COMPLETE")
+    row = repo.get_experiment(exp_id)
+    assert row["status"] == "COMPLETE"
+    assert row["started_at"] is not None
+    assert row["finished_at"] is not None
+    repo.close()
+
+
 def test_pier_env_pythonpath_exposes_package_parent(monkeypatch):
     """PYTHONPATH must point at the *parent* of roast_my_harness so pier can
     `import roast_my_harness.adapter.pi_agent` (regression: off-by-one)."""

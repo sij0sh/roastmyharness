@@ -98,9 +98,16 @@ class ExperimentController:
         if self.progress is not None:
             self.progress(message)
 
+    TERMINAL_STATES = frozenset({"COMPLETE", "FAILED", "CANCELLED"})
+
     def _set_state(self, state: str) -> None:
         self.state = state
-        self.store.set_status(self.experiment_id, state, started=state == "RUNNING")
+        self.store.set_status(
+            self.experiment_id,
+            state,
+            started=state == "RUNNING",
+            finished=state in self.TERMINAL_STATES,
+        )
         self._progress(f"state: {state}")
 
     # --------------------------------------------------------- prepare ----
@@ -731,9 +738,7 @@ class ExperimentController:
             exception_type=type(error).__name__,
             message=str(error),
         )
-        self.state = "FAILED"
-        self.store.set_status(self.experiment_id, "FAILED", finished=True)
-        self._progress("state: FAILED")
+        self._set_state("FAILED")
         self.cleanup_staging()
 
     def _fail(self, error: Exception) -> None:
