@@ -41,3 +41,40 @@ def collect_rows(jobs_root: Path) -> list[dict[str, Any]]:
             item[1]["variant"], item[1]["task"]
         ))
     ]
+
+
+def aggregate_by_variant(rows: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    """Per-variant totals over collected trial rows (completed trials only).
+
+    Keys per variant: n, resolved, input_tokens, output_tokens, wall_sec,
+    cost_usd. Missing or unparsable fields contribute zero, so aggregates
+    stay available mid-run.
+    """
+    out: dict[str, dict[str, float]] = {}
+    for row in rows:
+        variant = str(row.get("variant", ""))
+        agg = out.setdefault(
+            variant,
+            {
+                "n": 0,
+                "resolved": 0,
+                "input_tokens": 0.0,
+                "output_tokens": 0.0,
+                "wall_sec": 0.0,
+                "cost_usd": 0.0,
+            },
+        )
+        agg["n"] += 1
+        try:
+            agg["resolved"] += int(row.get("resolved") or 0)
+        except (TypeError, ValueError):
+            pass
+        for key in ("input_tokens", "output_tokens", "wall_sec", "cost_usd"):
+            try:
+                agg[key] += float(row.get(key) or 0)
+            except (TypeError, ValueError):
+                pass
+    for agg in out.values():
+        agg["wall_sec"] = round(agg["wall_sec"], 1)
+        agg["cost_usd"] = round(agg["cost_usd"], 4)
+    return out
