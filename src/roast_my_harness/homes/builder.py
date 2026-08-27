@@ -119,15 +119,11 @@ def build_home(
                     )
                 entries.append(entry)
                 manifest_exts.append(
-                    ManifestExtension(
-                        name=name,
-                        entry=entry,
-                        source_hash=source_hashes.get(f"ext:{name}", ""),
-                    )
+                    ManifestExtension(name=name, entry=entry)
                 )
             else:  # npm: installed in-container during adapter setup
                 manifest_exts.append(
-                    ManifestExtension(name=ext.package, entry="", source_hash="")
+                    ManifestExtension(name=ext.package, entry="")
                 )
 
         skills: list[ManifestSkill] = []

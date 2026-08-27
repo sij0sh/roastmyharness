@@ -624,31 +624,6 @@ def worker(
     raise typer.Exit(agent_service.run_experiment_worker(spec_path, skip_docker=skip_docker))
 
 
-@app.command("import-dse")
-def import_dse(
-    results_root: Path = typer.Argument(
-        ..., help="Legacy DSE-tests results directory (results-* layout)."
-    ),
-    variant: list[str] = typer.Option(
-        ["bare"], help="Variant directory names to import (repeatable)."
-    ),
-) -> None:
-    """Import legacy DSE control observations (reference-only, not reused)."""
-    from roast_my_harness.report.importer import import_dse_results
-
-    report = import_dse_results(_repo(), results_root, variants=variant)
-    typer.echo(
-        f"scanned={report.scanned} imported={report.imported} "
-        f"skipped_error={report.skipped_error} skipped_layout={report.skipped_variant}"
-    )
-    typer.echo(
-        "imported observations are ineligible for automatic reuse "
-        "(unknown pi_version/adapter provenance)"
-    )
-    for detail in report.details[:10]:
-        typer.echo(f"  {detail}")
-
-
 @app.callback()
 def _default(
     ctx: typer.Context,

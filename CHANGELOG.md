@@ -4,8 +4,7 @@
 
 ### Added
 
-- The Pi integration now provides the user-invoked `/roast` command and a
-  `/roastmyharness` alias.
+- The Pi integration now provides the `/roastmyharness` command.
 - The linear wizard collects variants, control mode, model, and task count.
   It generates and validates YAML. It repeats a `Confirm and run` or `Change`
   review loop before launch.

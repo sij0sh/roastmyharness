@@ -210,14 +210,12 @@ class Repository:
             )
 
     def control_pool(
-        self, cohort_key: str, task_hash: str, *, eligible_only: bool = True
+        self, cohort_key: str, task_hash: str
     ) -> list[sqlite3.Row]:
         query = (
             "SELECT * FROM control_observations "
-            "WHERE cohort_key=? AND task_hash=?"
+            "WHERE cohort_key=? AND task_hash=? AND eligible=1"
         )
-        if eligible_only:
-            query += " AND eligible=1"
         return self.conn.execute(query, (cohort_key, task_hash)).fetchall()
 
 

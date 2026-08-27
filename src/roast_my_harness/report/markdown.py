@@ -195,7 +195,7 @@ def generate_report(
         fresh = reuse.get("fresh_control_tasks", [])
         if fresh:
             lines.append(
-                f"- Control tasks run fresh (insufficient or ineligible "
+                f"- Control tasks run fresh (insufficient "
                 f"history): {', '.join(fresh)}."
             )
         sentinel = reuse.get("sentinel")

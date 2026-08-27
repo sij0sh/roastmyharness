@@ -1,21 +1,12 @@
-"""One parser, two callers: live watcher and final collector.
-
-The incremental tracker remembers (inode, byte offset, trailing partial
-line, parser version) per file and resets on truncation or replacement.
-The final parser rereads complete files from byte zero and is
-authoritative.
-"""
+"""Final-event telemetry parser. Folds complete files from byte zero."""
 
 from __future__ import annotations
 
 import json
 import posixpath
-from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-
-PARSER_VERSION = 1
 
 READ_TOOL_NAMES = {"read"}
 
@@ -184,42 +175,3 @@ def _safe_lines(path: Path) -> Iterator[str]:
     except OSError:
         return
 
-
-# --------------------------------------------------------- incremental -----
-
-@dataclass
-class FileState:
-    inode: int | None = None
-    offset: int = 0
-    partial: str = ""
-    parser_version: int = PARSER_VERSION
-
-
-@dataclass
-class IncrementalTracker:
-    """Poll-safe JSONL reader. Emits only newly appended complete lines."""
-
-    states: dict[Path, FileState] = field(default_factory=dict)
-
-    def read(self, path: Path) -> Iterable[str]:
-        import os
-
-        try:
-            with path.open() as f:
-                stat = os.fstat(f.fileno())
-                state = self.states.get(path)
-                truncated = state is not None and stat.st_size < state.offset
-                if state is None or state.inode != stat.st_ino or truncated:
-                    state = FileState(inode=stat.st_ino)
-                    self.states[path] = state
-                    f.seek(0)
-                else:
-                    f.seek(state.offset)
-                data = f.read()
-                state.offset = f.tell()
-        except OSError:
-            return []
-        data = state.partial + data
-        lines = data.split("\n")
-        state.partial = lines.pop()  # trailing fragment ("" when file ends \n)
-        return [line for line in lines if line.strip()]

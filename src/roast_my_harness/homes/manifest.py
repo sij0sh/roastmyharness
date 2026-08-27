@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 class ManifestExtension(BaseModel):
     name: str
     entry: str  # path relative to the home dir, e.g. extensions/foo/src/index.ts
-    source_hash: str = ""
 
 
 class ManifestSkill(BaseModel):

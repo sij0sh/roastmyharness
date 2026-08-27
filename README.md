@@ -47,12 +47,12 @@ exception with its traceback. The tool stores no credentials of its own; it reus
     roastmyharness run my-experiment.toml
 
 Other commands: `resume <id>`, `status <id>`, `report <id>`, `list`,
-`import-dse <results-dir>`, `auth status`, `setup [--agent pi|claude
+`auth status`, `setup [--agent pi|claude
 --scope user|project]`, `doctor`, plus `--json` on validate/status/list.
 
 ## Pi slash command and integrations
 
-The Pi extension provides `/roast [task-root]`. `/roastmyharness` is an alias.
+The Pi extension provides `/roastmyharness [task-root]`.
 The command follows
 a fixed wizard:
 
@@ -104,10 +104,8 @@ provider block is sliced per job, referenced env vars must be set, and
   Integrated OAuth bridge is a follow-up; use `pi /login codex`.
 - Phase 6 (historic controls): done - eligible-pool reuse planning
   (minimum runs, age limits, never/ask/require), sentinel-gated release
-  with exact Poisson-binomial drift test, H-cell matrix state, report
-  disclosure, `import-dse` for legacy results (imported observations are
-  ineligible for automatic reuse because legacy artifacts lack
-  pi_version/adapter provenance).
+  with exact Poisson-binomial drift test, H-cell matrix state, and report
+  disclosure.
 
 Golden parity: `tests/golden/test_dse_parity.py` reproduces legacy
 DSE-tests collect.py values on a scrubbed real trial

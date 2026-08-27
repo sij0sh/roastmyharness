@@ -808,7 +808,7 @@ async function discoverTaskRoot(
 	}
 	throw new Error(
 		`No Pier tasks found. Searched: ${candidates.join(", ")}. ` +
-			`Pass a task dataset path: /roast <path>`,
+			`Pass a task dataset path: /roastmyharness <path>`,
 	);
 }
 
@@ -1009,7 +1009,6 @@ export default function (pi: ExtensionAPI) {
 		description: "Configure, review, and launch a harness comparison",
 		handler: launchWizard,
 	};
-	pi.registerCommand("roast", command);
 	pi.registerCommand("roastmyharness", command);
 
 	pi.registerTool({
