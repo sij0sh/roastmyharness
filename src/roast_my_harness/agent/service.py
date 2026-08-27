@@ -186,6 +186,8 @@ class AgentService:
                 trials=len(tasks) * len(arms),
                 max_parallel=spec.peak_concurrency(),
                 model=spec.model.full_id(),
+                name=spec.name,
+                pi_version=spec.pi_version,
                 thinking=spec.thinking,
                 control=(
                     "excluded"
@@ -194,9 +196,28 @@ class AgentService:
                     if spec.control.reuse == "never"
                     else "historic"
                 ),
+                control_reuse=(
+                    spec.control.reuse
+                    if spec.control is not None and spec.control.enabled
+                    else None
+                ),
                 task_ids=[task.task_id for task in tasks],
                 tasks_path=str(spec.tasks.path),
                 arm_ids=[arm.id for arm in arms],
+                variant_sources={
+                    variant.id: [
+                        *[
+                            (
+                                f"local:{extension.path}#{extension.entry}"
+                                if extension.kind == "local"
+                                else f"npm:{extension.package}"
+                            )
+                            for extension in variant.extensions
+                        ],
+                        *[f"skill:{skill.path}" for skill in variant.skills],
+                    ]
+                    for variant in spec.variants
+                },
             ),
             warnings=warnings,
             next_action="start",

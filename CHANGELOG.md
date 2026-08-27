@@ -5,9 +5,11 @@
 ### Added
 
 - The Pi integration now provides the `/roastmyharness` command.
-- The linear wizard collects variants, control mode, model, and task count.
-  It generates and validates YAML. It repeats a `Confirm and run` or `Change`
-  review loop before launch.
+- The linear wizard collects variants, control mode, model, thinking mode, and
+  task count. Its `roast_harness author` action now runs YAML authoring in an
+  ephemeral Pi child context and streams source checks, drafting, repair, and
+  validation into a custom session card. The footer authoring notification is
+  no longer used.
 - Experiment specs can now use YAML (`.yaml` or `.yml`) as well as TOML.
 - Live progress streaming for `roast_harness`. `AgentService.watch` emits
   read-only NDJSON events: snapshot, trial, state, heartbeat, and a final
@@ -15,22 +17,25 @@
   state as `status` and never takes the experiment lock.
 - New CLI commands: `roastmyharness tool watch <id>` (NDJSON) and
   `roastmyharness watch <id>` (live ASCII matrix).
-- The Pi extension now defaults `start` to watching. The tool call streams
-  live per-trial progress in the TUI: collapsed counts plus recent trials,
-  Ctrl+O expands the full matrix. It returns final aggregates and report
-  paths. Aborting detaches the watch only; the run continues.
+- The Pi extension now defaults `start` to watching. The tool card streams
+  live per-trial progress in place with a progress bar, per-variant counts,
+  active cells, and recent trials. The configured tool-expand key shows the
+  full matrix. The final card includes aggregates and report paths. Aborting
+  detaches the watch only; the run continues.
 - New tool params: `watch` (default true), `interval_sec`, and `recent`.
-  New action: `watch`. `status` responses now include per-variant
-  aggregates.
+  New actions: `author` and `watch`. `prepare` summaries now include the
+  experiment name, Pi version, exact control reuse policy, and normalized
+  variant sources. `status` responses now include per-variant aggregates.
 
 Simplification pass (complexity audit 20260826184821-a3fbe704, Tiers 0-1).
 
 ### Fixed
 
-- The Pi wizard now hands configuration to the current Pi agent. It supplies
-  verified metadata for configured local Pi packages, and the agent can inspect
-  other sources with its existing tools. This removes the duplicate authoring
-  runtime and prevents guesses about local paths or npm package versions.
+- The Pi wizard supplies verified metadata for configured local Pi packages to
+  its isolated authoring context. The author can inspect other sources with
+  read-only tools and cannot launch a benchmark. This prevents guesses about
+  local paths or npm package versions while keeping authoring work out of the
+  main session context.
 - CI now runs locked dependency checks, Ruff, tests with a 70% coverage gate,
   and a wheel build.
 - Run, resume, and report now use an exclusive per-experiment lock, while

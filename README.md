@@ -62,16 +62,23 @@ a fixed wizard:
 4. Select a supported thinking level.
 5. Select one task, the full task set, or a custom task count.
 
-The wizard hands these answers to the current Pi agent. It also supplies
-verified metadata for local Pi packages configured in user or project settings.
-The agent can inspect other sources with its existing filesystem tools. It
-writes the YAML under `.pi-files/roastmyharness/`, calls `roast_harness prepare`,
-and presents the validated plan for approval. Schema, source, auth, and pinned
-npm availability checks gate approval. The agent must receive explicit approval
-before it calls `roast_harness start`.
+After the selections, a `roast_harness author` card appears in Pi's session.
+The card runs an ephemeral Pi child context with read-only filesystem tools,
+streams its source checks and YAML draft, writes the YAML under
+`.pi-files/roastmyharness/`, and validates it. Invalid generated specs get up to
+two focused repair attempts. The parent session receives only the bounded tool
+result instead of the authoring conversation. No authoring status is shown in
+Pi's footer.
 
-The extension retains the `roast_harness` tool for status, watch, cancel, and report operations. `watch` streams
-per-trial results, running cells, final aggregates, and report paths.
+Schema, source, auth, and pinned npm availability checks gate approval. The
+agent presents the validated plan and must receive explicit approval before it
+calls `roast_harness start`.
+
+The `start` and `watch` actions render a second live session card. It updates
+in place with completion percentage, per-variant counts, active cells, recent
+trial results, final aggregates, and report paths. Expand the card with Pi's
+configured tool-expand key to see the task matrix. Aborting the card detaches
+the watcher but does not stop the experiment; use `cancel` to stop it.
 
 There is no integration skill to invoke implicitly. Install the Pi command or
 the Claude MCP server idempotently:

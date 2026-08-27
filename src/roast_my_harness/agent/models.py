@@ -25,11 +25,15 @@ class ExperimentSummary(_Response):
     trials: int
     max_parallel: int
     model: str
+    name: str | None = None
+    pi_version: str | None = None
     thinking: str = "high"
     control: str = "excluded"
+    control_reuse: Literal["never", "ask", "require"] | None = None
     task_ids: list[str] = []
     tasks_path: str | None = None
     arm_ids: list[str] = []
+    variant_sources: dict[str, list[str]] = {}
 
 
 class PrepareResult(_Response):
