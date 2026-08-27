@@ -104,3 +104,28 @@ def test_prepare_and_snapshot(tmp_path: Path):
     assert snap["matrix"]["control"]["t1"] == "P"
     assert snap["matrix"]["control"]["t2"] == "."
     repo.close()
+
+
+def test_pier_env_pythonpath_exposes_package_parent(monkeypatch):
+    """PYTHONPATH must point at the *parent* of roast_my_harness so pier can
+    `import roast_my_harness.adapter.pi_agent` (regression: off-by-one)."""
+    import os
+
+    import roast_my_harness.runner.controller as controller_mod
+
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    env = ExperimentController._pier_env(object.__new__(ExperimentController))
+    expected = str(
+        Path(controller_mod.__file__).resolve().parents[2]
+    )
+    assert env["PYTHONPATH"] == expected
+
+    # The path must make the adapter importable from a clean interpreter.
+    import subprocess, sys
+
+    code = "import roast_my_harness.adapter.pi_agent as m; print(m.__name__)"
+    proc = subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "roast_my_harness.adapter.pi_agent"

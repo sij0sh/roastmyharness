@@ -747,7 +747,7 @@ class ExperimentController:
         import os
 
         env = dict(os.environ)
-        package_parent = str(Path(__file__).resolve().parent.parent)
+        package_parent = str(Path(__file__).resolve().parents[2])
         existing = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = (
             package_parent + (os.pathsep + existing if existing else "")
