@@ -8,7 +8,8 @@ Pier tasks. Successor to the DSE-tests script harness.
 - One declarative TOML file defines control + variants (no Python edits).
 - Runs one Pier job per variant with the same model, thinking level, and
   fairness flags (`-nc --no-skills --no-prompt-templates --no-themes`).
-- Headless progress: `status <id>` prints the live matrix and totals.
+- Headless progress: `status <id>` prints the live matrix and totals;
+  `watch <id>` streams a live ASCII matrix until the run finishes.
 - Ctrl-C or SIGTERM leaves completed trials resumable; `resume` runs only
   missing cells.
 - Run, resume, and report take an exclusive per-experiment lock. `status` is
@@ -53,7 +54,10 @@ Other commands: `resume <id>`, `status <id>`, `report <id>`, `list`,
 
 `.agents/skills/roastmyharness/SKILL.md` lets Pi or Claude drive
 experiments from plain-language requests; the `roast_harness` tool wraps
-the same service with JSON responses. Install integrations idempotently
+the same service with JSON responses. `start` streams live progress
+(per-trial results, running cells, final aggregates) until the experiment
+finishes; `watch` attaches to an already-running experiment; `status`
+polls once (MCP clients use this). Install integrations idempotently
 instead of symlinking by hand:
 
     roastmyharness setup --agent pi --scope user

@@ -35,9 +35,13 @@ is the same code path with JSON responses.
    model) and get explicit approval before starting.
 4. Call roast_harness with `action: "start"` and the returned `plan_id`.
    Starting is idempotent per `plan_id`; a stale plan returns an error and
-   you must re-prepare.
-5. Poll with `action: "status"` and `experiment_id` until state is
-   finished.
+   you must re-prepare. By default the tool call stays open and streams
+   live progress (per-cell results and state changes) until the
+   experiment finishes; Esc only detaches the watch, the run continues.
+   Pass `watch: false` to return immediately after launch, then attach
+   later with `action: "watch"` and `experiment_id`.
+5. If you did not watch (or detached), poll with `action: "status"` and
+   `experiment_id` until the state is final.
 6. Call `action: "report"`, then read `<run-dir>/report.md` and summarize
    pass/fail/error totals per variant for the user.
 7. To stop a run, call `action: "cancel"`. To run only missing cells after
@@ -48,9 +52,9 @@ is the same code path with JSON responses.
 
 | User says | Do |
 | --------- | -- |
-| "compare these extensions/skills" | prepare, confirm, start |
+| "compare these extensions/skills" | prepare, confirm, start (streams live) |
 | "is my spec ok?" | prepare (it validates) |
-| "how is the run going?" | status |
+| "how is the run going?" | watch (streams until final) or status |
 | "stop the run" | cancel |
 | "what were the results?" | report, read report.md |
 | "check login" | `roastmyharness auth status` |
@@ -61,7 +65,10 @@ is the same code path with JSON responses.
 - Experiment ids come from status responses; they encode the spec name and
   hash.
 - start refuses to launch when preflight fails.
-- Shell commands (`run`, `resume`, `list`, `status`) remain available for
-  interactive human use.
+- Tuning the live view: `interval_sec` (poll interval, default 2) and
+  `recent` (trial events kept for display, default 20).
+- Shell commands (`run`, `resume`, `list`, `status`, `watch`) remain
+  available for interactive human use; `roastmyharness watch <id>` shows a
+  live ASCII matrix in the terminal.
 - `import-dse` imports legacy DSE results; they are reference-only and
   never reused as controls.

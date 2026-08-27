@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- Live progress streaming for `roast_harness`. `AgentService.watch` emits
+  read-only NDJSON events: snapshot, trial, state, heartbeat, and a final
+  event with aggregates and report paths. It polls the same filesystem
+  state as `status` and never takes the experiment lock.
+- New CLI commands: `roastmyharness tool watch <id>` (NDJSON) and
+  `roastmyharness watch <id>` (live ASCII matrix).
+- The Pi extension now defaults `start` to watching. The tool call streams
+  live per-trial progress in the TUI: collapsed counts plus recent trials,
+  Ctrl+O expands the full matrix. It returns final aggregates and report
+  paths. Aborting detaches the watch only; the run continues.
+- New tool params: `watch` (default true), `interval_sec`, and `recent`.
+  New action: `watch`. `status` responses now include per-variant
+  aggregates.
+
 Simplification pass (complexity audit 20260826184821-a3fbe704, Tiers 0-1).
 
 ### Fixed
