@@ -944,7 +944,7 @@ async function runWizard(
 	while (true) {
 		const ready = state.prepared.state === "ready_for_confirmation" && state.prepared.plan_id;
 		const choices = ready
-			? ["Confirm and run", "Change", "Cancel"]
+			? ["Accept", "Change", "Cancel"]
 			: ["Change", "Cancel"];
 		const decision = await ctx.ui.select(reviewText(state, answers, specPath), choices);
 		if (decision === undefined || decision === "Cancel") {
