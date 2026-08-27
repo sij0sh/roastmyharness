@@ -59,18 +59,18 @@ a fixed wizard:
 1. Describe which variants to run and how many.
 2. Include or exclude a control. An included control can be fresh or historic.
 3. Select an available Pi model.
-4. Select one task, the full task set, or a custom task count or list.
-5. Review the generated YAML and validated trial plan.
-6. Choose `Confirm and run`, `Change`, or `Cancel`. `Change` accepts a free-form
-   revision and repeats generation, validation, and review.
+4. Select a supported thinking level.
+5. Select one task, the full task set, or a custom task count.
 
-A read-only Pi SDK agent converts the open variant description and change
-requests into YAML. The wizard gives the agent verified metadata for local Pi
-packages configured in user or project settings. The agent can also inspect
-files with read-only tools. Schema, source, auth, and pinned npm availability
-checks still gate plan approval. Accepted plans launch immediately. Generated
-files are kept under `.pi-files/roastmyharness/`. The extension also retains
-the `roast_harness` tool for status, watch, cancel, and report operations. `watch` streams
+The wizard hands these answers to the current Pi agent. It also supplies
+verified metadata for local Pi packages configured in user or project settings.
+The agent can inspect other sources with its existing filesystem tools. It
+writes the YAML under `.pi-files/roastmyharness/`, calls `roast_harness prepare`,
+and presents the validated plan for approval. Schema, source, auth, and pinned
+npm availability checks gate approval. The agent must receive explicit approval
+before it calls `roast_harness start`.
+
+The extension retains the `roast_harness` tool for status, watch, cancel, and report operations. `watch` streams
 per-trial results, running cells, final aggregates, and report paths.
 
 There is no integration skill to invoke implicitly. Install the Pi command or
