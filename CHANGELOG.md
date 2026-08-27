@@ -8,8 +8,9 @@
 - The linear wizard collects variants, control mode, model, thinking mode, and
   task count. Its `roast_harness author` action now runs YAML authoring in an
   ephemeral Pi child context and streams source checks, drafting, repair, and
-  validation into a custom session card. The footer authoring notification is
-  no longer used.
+  validation into a custom session card. Validation problems render as one
+  compact line, clear before each repair attempt, and appear only after the
+  final attempt. The footer authoring notification is no longer used.
 - Experiment specs can now use YAML (`.yaml` or `.yml`) as well as TOML.
 - Live progress streaming for `roast_harness`. `AgentService.watch` emits
   read-only NDJSON events: snapshot, trial, state, heartbeat, and a final

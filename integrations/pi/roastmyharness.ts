@@ -807,6 +807,11 @@ function describeTool(name: string, args: Record<string, unknown>): string {
 	return `Use ${name}`;
 }
 
+function compactText(text: string, limit: number): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
+}
+
 function appendActivity(details: AuthorDetails, activity: string): void {
 	if (details.activities.at(-1) === activity) return;
 	details.activities.push(activity);
@@ -1315,7 +1320,13 @@ async function authorExperiment(
 		details.attempt = attempt;
 		details.phase = "authoring";
 		details.output = "";
-		appendActivity(details, attempt === 1 ? "Draft experiment YAML" : `Repair YAML (attempt ${attempt})`);
+		details.prepared = undefined;
+		if (attempt > 1) {
+			const previous = request.validation_problem ?? "validation failed";
+			appendActivity(details, `Repair YAML (attempt ${attempt}): ${compactText(previous, 160)}`);
+		} else {
+			appendActivity(details, "Draft experiment YAML");
+		}
 		onUpdate?.(authorUpdate(details));
 
 		const yaml = await runAuthorChild(ctx, request, signal, onUpdate, details, usage);
@@ -1331,11 +1342,11 @@ async function authorExperiment(
 		if (skipDocker) prepareArgs.push("--skip-docker");
 		prepared = await runRoastJson(pi, prepareArgs, signal);
 		details.prepared = prepared;
-		const repairableProblem = prepared.state === "needs_input" &&
+		const specProblem = prepared.state === "needs_input" &&
 			(prepared.questions ?? []).some((question) =>
 				/^(spec|variants?|tasks?|control|model|pi_version)(\.|$)/.test(question.field));
 		const mismatch = choiceMismatch(prepared, answers);
-		if (!repairableProblem && !mismatch) break;
+		if (!specProblem && !mismatch) break;
 		if (attempt === 3) {
 			if (mismatch) {
 				prepared = {
@@ -1352,7 +1363,7 @@ async function authorExperiment(
 		request = {
 			...collected.request,
 			current_yaml: yaml,
-			validation_problem: repairableProblem ? prepareProblem(prepared) : mismatch,
+			validation_problem: specProblem ? prepareProblem(prepared) : mismatch,
 		};
 	}
 
@@ -1389,6 +1400,7 @@ function renderAuthorResult(
 	theme: ThemeLike,
 ): Text {
 	const running = isPartial && !details.final;
+	const validating = details.phase === "validating" || details.phase === "authoring";
 	const icon = details.phase === "ready"
 		? theme.fg("success", "[OK]")
 		: details.phase === "needs_input"
@@ -1434,8 +1446,10 @@ function renderAuthorResult(
 	for (const warning of details.prepared?.warnings ?? []) {
 		text += `\n  ${theme.fg("warning", `warning: ${warning}`)}`;
 	}
-	for (const question of details.prepared?.questions ?? []) {
-		text += `\n  ${theme.fg("warning", `${question.field}: ${question.message}`)}`;
+	if (!validating) {
+		for (const question of details.prepared?.questions ?? []) {
+			text += `\n  ${theme.fg("warning", `${question.field}: ${compactText(question.message, 220)}`)}`;
+		}
 	}
 	if (details.output) {
 		const lines = details.output.trim().split("\n");

@@ -95,6 +95,26 @@ def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
     return _resolve_model(resolved)
 
 
+def validation_summary(error: ValidationError) -> str:
+    """Compact, single-line pydantic error summary for agent-facing messages."""
+    parts: list[str] = []
+    for item in error.errors():
+        loc = ".".join(str(piece) for piece in item.get("loc", ())) or "spec"
+        message = str(item.get("msg", "invalid value"))
+        kind = item.get("type", "")
+        if kind == "extra_forbidden":
+            value = item.get("input")
+            shown = str(value) if not isinstance(value, str) else compact_str(value, 120)
+            message = f"unknown field: {shown}"
+        parts.append(f"{loc}: {message}")
+    return compact_str("; ".join(parts), 480)
+
+
+def compact_str(text: str, limit: int) -> str:
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else f"{flat[: limit - 1]}…"
+
+
 def load_experiment(path: Path) -> ExperimentSpec:
     """Load and validate a TOML or YAML experiment. Resolve all paths."""
     path = path.expanduser().resolve()
@@ -111,5 +131,7 @@ def load_experiment(path: Path) -> ExperimentSpec:
     try:
         spec = ExperimentSpec.model_validate(raw)
     except ValidationError as e:
-        raise SpecError(f"invalid experiment spec in {path}:\n{e}") from e
+        raise SpecError(
+            f"invalid experiment spec in {path}: {validation_summary(e)}"
+        ) from e
     return _resolve(spec, path.parent)

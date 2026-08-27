@@ -51,8 +51,9 @@ def test_min_runs_below_one_rejected(tmp_path: Path):
 def test_http_egress_url_rejected(tmp_path: Path):
     path = spec_text(tmp_path, "")
     text = path.read_text().replace(
-        '[[variants]]',
-        'egress_urls = ["http://evil.example"]\n[[variants]]',
+        "[[variants]]",
+        "[[variants]]\negress_urls = [\"http://evil.example\"]",
+        1,
     )
     path.write_text(text)
     with pytest.raises(SpecError, match="https://"):

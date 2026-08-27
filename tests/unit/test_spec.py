@@ -71,6 +71,19 @@ def test_yaml_requires_a_mapping(tmp_path: Path):
         load_experiment(path)
 
 
+def test_validation_error_is_single_line(tmp_path: Path):
+    path = tmp_path / "experiment.yaml"
+    path.write_text(
+        "schema_version: 1\nname: demo\ntasks: {path: .}\n"
+        "the local `pi-polar` package is needed: true\n"
+    )
+    with pytest.raises(SpecError) as excinfo:
+        load_experiment(path)
+    message = str(excinfo.value)
+    assert "\n" not in message
+    assert "unknown field" in message
+
+
 def test_reserved_control_id_rejected(tmp_path: Path):
     with pytest.raises(SpecError, match="reserved"):
         load_experiment(write(tmp_path, """
