@@ -519,6 +519,8 @@ paths, package versions, or variants. Omit fields that the request does not supp
 Use concurrency.per_variant = 2. A fresh control uses reuse: never. A historic control uses
 reuse: require, minimum_runs_per_task: 10, maximum_age_days: 30, and sentinel_tasks no larger
 than the selected task count. An excluded control uses enabled: false.
+A full task suite uses tasks.include = ["*"]; a smaller suite lists the exact pre-sampled task
+ids supplied in the request.
 Required top-level fields are schema_version, name, pi_version, thinking, model, tasks,
 control, concurrency, and variants.`;
 
@@ -552,6 +554,18 @@ async function discoverTaskIds(root: string): Promise<string[]> {
 		if (await isFile(join(root, entry.name, "task.toml"))) ids.push(entry.name);
 	}
 	return ids.sort((a, b) => a.localeCompare(b));
+}
+
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+
+function supportedThinkingLevels(model: Model<Api>): string[] {
+	const map = model.thinkingLevelMap;
+	if (map) {
+		const supported = THINKING_LEVELS.filter((level) => map[level] !== null && map[level] !== undefined);
+		if (supported.length) return supported;
+	}
+	return model.reasoning ? [...THINKING_LEVELS] : ["off"];
 }
 
 function stripCodeFence(text: string): string {
@@ -739,30 +753,30 @@ function reviewText(state: DraftState, answers: WizardAnswers, specPath: string)
 	return lines.join("\n");
 }
 
-async function chooseTaskRoot(
+async function discoverTaskRoot(
 	ctx: ExtensionCommandContext,
 	argument: string,
-): Promise<{ root: string; ids: string[] } | null> {
-	let candidate = argument.trim() ? expandPath(argument, ctx.cwd) : ctx.cwd;
-	let hasPrompted = false;
-	while (true) {
+): Promise<{ root: string; ids: string[] }> {
+	const candidates = argument.trim()
+		? [expandPath(argument, ctx.cwd), ctx.cwd]
+		: [ctx.cwd];
+	for (const candidate of candidates) {
 		const ids = await discoverTaskIds(candidate);
 		if (ids.length) return { root: candidate, ids };
-		if (hasPrompted || argument.trim()) {
-			ctx.ui.notify(`No Pier tasks found under ${candidate}`, "warning");
-		}
-		const entered = await ctx.ui.input(
-			"Step 4/4 - Task dataset",
-			"Path to a task or a directory of Pier task directories",
-		);
-		if (entered === undefined) return null;
-		if (!entered.trim()) {
-			ctx.ui.notify("Enter a task dataset path.", "warning");
-			continue;
-		}
-		candidate = expandPath(entered, ctx.cwd);
-		hasPrompted = true;
 	}
+	throw new Error(
+		`No Pier tasks found under ${candidates[0]}` +
+			(candidates.length > 1 ? ` or ${candidates[1]}` : ""),
+	);
+}
+
+function sampleTasks(ids: string[], count: number): string[] {
+	const pool = [...ids];
+	const picked: string[] = [];
+	for (let i = 0; i < count && pool.length; i++) {
+		picked.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+	}
+	return picked.sort((a, b) => a.localeCompare(b));
 }
 
 async function chooseTasks(
@@ -772,29 +786,24 @@ async function chooseTasks(
 ): Promise<{ ids: string[]; includeAll: boolean } | null> {
 	if (mode === "full") return { ids: available, includeAll: true };
 	if (mode === "one") {
-		if (available.length === 1) return { ids: available, includeAll: false };
-		const selected = await ctx.ui.select("Choose one task", available);
-		return selected === undefined ? null : { ids: [selected], includeAll: false };
+		return available.length === 1
+			? { ids: available, includeAll: false }
+			: { ids: sampleTasks(available, 1), includeAll: false };
 	}
 	while (true) {
 		const value = await ctx.ui.input(
-			"Custom task selection",
-			"Count from the sorted task list, or comma-separated task ids",
+			"How many tasks?",
+			`Count from 1 to ${available.length} (tasks are picked at random; full set is ${available.length})`,
 		);
 		if (value === undefined) return null;
 		const trimmed = value.trim();
 		if (/^\d+$/.test(trimmed)) {
 			const count = Number(trimmed);
 			if (count >= 1 && count <= available.length) {
-				return { ids: available.slice(0, count), includeAll: count === available.length };
-			}
-		} else {
-			const requested = [...new Set(trimmed.split(/[,\n]/).map((id) => id.trim()).filter(Boolean))];
-			if (requested.length && requested.every((id) => available.includes(id))) {
-				return { ids: requested, includeAll: requested.length === available.length };
+				return { ids: sampleTasks(available, count), includeAll: count === available.length };
 			}
 		}
-		ctx.ui.notify(`Choose 1-${available.length}, or use known task ids.`, "warning");
+		ctx.ui.notify(`Choose a count from 1 to ${available.length}.`, "warning");
 	}
 }
 
@@ -812,20 +821,22 @@ async function runWizard(
 	}
 
 	const variantRequest = await ctx.ui.editor(
-		"Step 1/4 - Which variants should run, and how many? Include each local path and entry, pinned npm package, or skill path.",
+		"Step 1/5 - Which variants should run? " +
+			"Accepted: a local extension path with its entry file, a pinned npm package, or a skill path. " +
+			"The coding harness uses this data to search up the exact paths.",
 		"",
 	);
 	if (variantRequest === undefined || !variantRequest.trim()) return;
 
 	const includeControl = await ctx.ui.select(
-		"Step 2/4 - Control",
+		"Step 2/5 - Control",
 		["Include a control", "Exclude the control"],
 	);
 	if (includeControl === undefined) return;
 	let control: ControlMode = "excluded";
 	if (includeControl === "Include a control") {
 		const source = await ctx.ui.select(
-			"Step 2/4 - Control source",
+			"Step 2/5 - Control source",
 			["Fresh control", "Historic control"],
 		);
 		if (source === undefined) return;
@@ -843,23 +854,28 @@ async function runWizard(
 		return a.localeCompare(b);
 	});
 	if (!modelIds.length) throw new Error("Pi has no authenticated models available");
-	const modelChoice = await ctx.ui.select("Step 3/4 - Model", modelIds);
+	const modelChoice = await ctx.ui.select("Step 3/5 - Model", modelIds);
 	if (modelChoice === undefined) return;
 	const selectedModel = models.get(modelChoice) as Model<Api>;
-	const thinking = selectedModel.reasoning
-		? (modelChoice === currentId ? (ctx.thinkingLevel ?? "high") : "high")
-		: "off";
+	const thinkingOptions = supportedThinkingLevels(selectedModel);
+	let thinking: string;
+	if (thinkingOptions.length === 1) {
+		thinking = thinkingOptions[0];
+	} else {
+		const chosen = await ctx.ui.select("Step 4/5 - Thinking mode", thinkingOptions);
+		if (chosen === undefined) return;
+		thinking = chosen;
+	}
 
 	const taskModeChoice = await ctx.ui.select(
-		"Step 4/4 - How many tasks?",
-		["1 task", "Full task set", "Custom"],
+		"Step 5/5 - How many tasks?",
+		["1 task", "Full task set", "Custom count"],
 	);
 	if (taskModeChoice === undefined) return;
 	const taskMode: TaskMode = taskModeChoice === "1 task"
 		? "one"
 		: taskModeChoice === "Full task set" ? "full" : "custom";
-	const discovered = await chooseTaskRoot(ctx, args);
-	if (!discovered) return;
+	const discovered = await discoverTaskRoot(ctx, args);
 	const taskSelection = await chooseTasks(ctx, taskMode, discovered.ids);
 	if (!taskSelection) return;
 
