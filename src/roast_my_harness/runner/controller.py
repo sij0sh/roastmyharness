@@ -27,10 +27,13 @@ from roast_my_harness.report import collect as report_collect
 from roast_my_harness.report import exports as report_exports
 from roast_my_harness.report import markdown as report_markdown
 from roast_my_harness.runner import pier as pier_mod
+from roast_my_harness.runner import probe as probe_mod
 from roast_my_harness.runner import process as process_mod
 from roast_my_harness.runner.reconcile import Cell, missing_tasks, reconcile_variant
+from roast_my_harness.spec.hashes import experiment_hash as compute_experiment_hash
 from roast_my_harness.spec.hashes import spec_hash as compute_spec_hash
 from roast_my_harness.spec.models import ExperimentSpec
+from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
 from roast_my_harness.store import controls as controls_mod
 from roast_my_harness.store.controls import ReuseDecision
 from roast_my_harness.store.repository import Repository
@@ -86,6 +89,7 @@ class ExperimentController:
         self._own_trial_ids: set[str] = set()
         self._observed_reused_tasks: set[str] = set()
         self._observed_task_ids: list[str] | None = None
+        self.smoke_result: probe_mod.ProbeResult | None = None
 
     # ------------------------------------------------------------ events --
 
@@ -114,6 +118,8 @@ class ExperimentController:
         tasks = discover_tasks(
             self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
         )
+        pairs = [(t.task_id, compute_task_hash(t.path)) for t in tasks]
+        self._assert_identity_current(pairs)
         s_hash = compute_spec_hash(self.spec)
         self.store.create_experiment(
             experiment_id=self.experiment_id,
@@ -122,10 +128,11 @@ class ExperimentController:
             spec_hash=s_hash,
             run_dir=str(self.run_dir),
         )
-        self.store.upsert_tasks(
-            self.experiment_id,
-            [(t.task_id, compute_task_hash(t.path), str(t.path)) for t in tasks],
-        )
+        task_rows = [
+            (task_id, task_hash, str(task.path))
+            for (task_id, task_hash), task in zip(pairs, tasks, strict=True)
+        ]
+        self.store.upsert_tasks(self.experiment_id, task_rows)
 
         self._set_state("BUILDING")
         homes_root = homes_cache_dir()
@@ -136,6 +143,7 @@ class ExperimentController:
                 self.run_dir / "staging" / variant.id,
                 self.spec,
             )
+            self._stage_env(staged, variant)
             manifest_path = staged / "variant.json"
             self.jobs[variant.id] = VariantJob(
                 variant_id=variant.id,
@@ -155,6 +163,66 @@ class ExperimentController:
         self._write_manifest(tasks)
         self._plan_control_reuse(tasks)
         self._set_state("READY")
+
+        if probe_mod.should_probe(self.spec):
+            self._progress("smoke probe: one task on an extension arm")
+            result = probe_mod.run_probe_sync(
+                spec=self.spec, jobs=self.jobs, run_dir=self.run_dir,
+                env=self._pier_env(),
+            )
+            self.smoke_result = result
+            if not result.ok:
+                self._fail(
+                    PierError(
+                        f"smoke probe failed on variant {result.variant_id} "
+                        f"(task {result.task_id}, exit {result.returncode}); "
+                        f"see {result.log_path}"
+                    )
+                )
+                return
+            self._progress(
+                f"smoke probe passed ({result.task_id} on {result.variant_id})"
+            )
+        else:
+            self.smoke_result = None
+
+    def _assert_identity_current(self, pairs: list[tuple[str, str]]) -> None:
+        """Refuse to touch a stored experiment whose task content drifted.
+
+        Identity binds the ordered task id/hash map, so a fresh run with
+        changed content gets a new id. Reaching an existing row with a
+        different map means the dataset changed mid-flight: refuse instead
+        of silently overwriting the stored hashes and reusing old cells.
+        """
+        stored = self.store.get_tasks(self.experiment_id)
+        if not stored:
+            return
+        stored_pairs = [(row["task_id"], row["task_hash"]) for row in stored]
+        if stored_pairs != pairs:
+            expected = make_experiment_id(
+                self.spec.name, compute_experiment_hash(self.spec, pairs)
+            )
+            raise PierError(
+                f"task content changed since experiment {self.experiment_id} "
+                f"was created; expected identity is now {expected}. Create a "
+                "new experiment instead of resuming this one."
+            )
+
+    @staticmethod
+    def _stage_env(staged: Path, variant) -> None:
+        """Write literal env values into the run-only staging dir (0600).
+
+        Cached homes carry names only; this per-run file is deleted by
+        cleanup_staging so values stay out of manifests, hashes, and
+        reports.
+        """
+        if not variant.env:
+            return
+        atomic_write_text(
+            staged / "env.json",
+            json.dumps(dict(variant.env)) + "\n",
+            mode=0o600,
+        )
 
     def load_for_observation(self) -> None:
         """Load an existing run without rebuilding homes or changing state."""
@@ -401,10 +469,18 @@ class ExperimentController:
         all_ids = [t.task_id for t in tasks]
         self._refresh_cells()
         held = self._held_tasks() if self._held_controls_pending() else set()
+        missing_by_job: dict[str, list[str]] = {}
         for job in self.jobs.values():
             missing = missing_tasks(self.cells.get(job.variant_id, {}), all_ids)
             if job.variant_id == "control" and self._reuse_plan is not None:
                 missing = [t for t in missing if t not in held]
+            if missing:
+                missing_by_job[job.variant_id] = missing
+        n_concurrent = self.spec.concurrency.effective_per_variant(
+            len(missing_by_job)
+        )
+        for job in self.jobs.values():
+            missing = missing_by_job.get(job.variant_id)
             if not missing:
                 continue
             argv = pier_mod.build_run_args(
@@ -415,12 +491,15 @@ class ExperimentController:
                 model_id=self.spec.model.full_id(),
                 thinking=self.spec.thinking,
                 pi_version=self.spec.pi_version,
-                n_concurrent=self.spec.concurrency.per_variant,
+                n_concurrent=n_concurrent,
                 include_tasks=missing,
             )
             log = self.run_dir / "logs" / f"{job.variant_id}.log"
             job.proc = process_mod.VariantProcess(job.variant_id, argv, log)
-            self._progress(f"launch {job.variant_id}: {len(missing)} task(s)")
+            self._progress(
+                f"launch {job.variant_id}: {len(missing)} task(s), "
+                f"{n_concurrent} concurrent"
+            )
 
     def _held_tasks(self) -> set[str]:
         """Control tasks whose history satisfies reuse while the sentinel gate

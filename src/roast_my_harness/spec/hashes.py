@@ -27,6 +27,22 @@ def spec_hash(spec: ExperimentSpec) -> str:
     return sha256_canonical(spec.model_dump(mode="json", exclude={"tasks": {"path"}}))
 
 
+def experiment_hash(spec: ExperimentSpec, task_hashes: list[tuple[str, str]]) -> str:
+    """Identity of a run: config plus the ordered task id/content-hash map.
+
+    task_hashes is the discovered task list in stable order, each entry
+    (task_id, content hash). Binding content into identity means changing
+    task files under unchanged ids yields a new experiment instead of
+    silently reusing old cells.
+    """
+    return sha256_canonical(
+        {
+            "spec": spec.model_dump(mode="json", exclude={"tasks": {"path"}}),
+            "tasks": [[task_id, content_hash] for task_id, content_hash in task_hashes],
+        }
+    )
+
+
 def variant_hash(
     variant: VariantSpec,
     pi_version: str,
@@ -36,10 +52,18 @@ def variant_hash(
 
     source_hashes maps a stable source key (extension/skill name) to the
     content hash of the tree that will be copied into the home.
+
+    Literal env values never enter the hash input: cached homes do not
+    contain them (values are staged per run), so homes differing only in
+    env values are safely shared. Env names and env_from_host names are
+    covered so structural changes still re-key the cache.
     """
+    variant_data = variant.model_dump(mode="json", exclude={"env"})
     return sha256_canonical(
         {
-            "variant": variant.model_dump(mode="json"),
+            "variant": variant_data,
+            "env_names": sorted(variant.env),
+            "env_from_host": sorted(variant.env_from_host),
             "sources": source_hashes or {},
             "pi_version": pi_version,
             "adapter_protocol": ADAPTER_PROTOCOL_VERSION,

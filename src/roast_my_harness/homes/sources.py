@@ -15,12 +15,8 @@ def source_tree_hash(src: Path, extra_excludes: list[str] | None = None) -> str:
     for rel, path in iter_source_files(src, extra_excludes):
         sha.update(rel.encode("utf-8"))
         sha.update(b"\0")
-        if path.is_symlink():
-            sha.update(b"L")
-            sha.update(path.readlink().as_posix().encode("utf-8"))
-        else:
-            sha.update(b"F")
-            sha.update(hashlib.sha256(path.read_bytes()).digest())
+        sha.update(b"F")
+        sha.update(hashlib.sha256(path.read_bytes()).digest())
         sha.update(b"\0")
     return sha.hexdigest()
 
@@ -33,12 +29,7 @@ def copy_source_tree(
     for rel, path in iter_source_files(src, extra_excludes):
         target = dst / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        if path.is_symlink():
-            if target.exists() or target.is_symlink():
-                target.unlink()
-            target.symlink_to(path.readlink())
-        else:
-            shutil.copy2(path, target)
+        shutil.copy2(path, target)
         copied.append(rel)
     return copied
 
@@ -52,6 +43,11 @@ def copy_runtime_packages(
         pkg_src = src / "node_modules" / name
         if not pkg_src.is_dir():
             continue
+        for path in pkg_src.rglob("*"):
+            if path.is_symlink():
+                raise ValueError(
+                    f"symlink in runtime package {name!r} is not allowed: {path}"
+                )
         pkg_dst = dst / "node_modules" / name
         if pkg_dst.exists():
             shutil.rmtree(pkg_dst)

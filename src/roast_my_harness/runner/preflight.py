@@ -138,6 +138,14 @@ def _auth(spec: ExperimentSpec) -> list[CheckResult]:
             results.append(
                 _fail("auth", "no openai-codex credential in pi auth file; run pi /login codex")
             )
+        elif auth_service.refresh_hint(cred):
+            results.append(
+                _fail(
+                    "auth",
+                    f"codex OAuth expired{auth_service.credential_expiry(cred)}; "
+                    "run pi /login codex to refresh before launching",
+                )
+            )
         else:
             expires = auth_service.credential_expiry(cred)
             results.append(_ok("auth", f"codex OAuth present{expires}"))

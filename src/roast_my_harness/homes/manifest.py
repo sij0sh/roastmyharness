@@ -33,6 +33,7 @@ class VariantManifest(BaseModel):
     skills: list[ManifestSkill] = Field(default_factory=list)
     npm_packages: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    env_from_host: list[str] = Field(default_factory=list)
     setup: list[ManifestSetupStep] = Field(default_factory=list)
     egress_urls: list[str] = Field(default_factory=list)
     pi_flags: list[str] = Field(default_factory=list)

@@ -240,7 +240,6 @@ thinking = "high"
 [model]
 id = "glm-5.3"
 provider = "z-ai-openai"
-auth = "api_key"
 
 [tasks]
 path = "{tmp_path}"

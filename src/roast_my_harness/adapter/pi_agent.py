@@ -290,7 +290,8 @@ class PiAgent(BaseInstalledAgent):
         self._instruction = instruction
         run_env = dict(_BASE_RUN_ENV)
         run_env.update(self._referenced_env_vars())
-        run_env.update(self._manifest.get("env") or {})
+        run_env.update(self._staged_env())
+        run_env.update(self._host_env())
         extra_flags = list(self._manifest.get("pi_flags") or [])
         skills = [s.get("path", "") for s in self._manifest.get("skills") or []]
         command = cmd.build_run_command(
@@ -301,6 +302,43 @@ class PiAgent(BaseInstalledAgent):
             extra_flags=extra_flags,
         )
         await self.exec_as_agent(environment, command=command, env=run_env)
+
+    def _staged_env(self) -> dict[str, str]:
+        """Literal variant env from the per-run staged env.json.
+
+        Cached homes carry env names only; the runner stages values into
+        the run's staging dir (removed after the run) so they never land
+        in manifests, hashes, or reports.
+        """
+        env_path = self._manifest_path.parent / "env.json"
+        if not env_path.is_file():
+            return {}
+        try:
+            staged = json.loads(env_path.read_text())
+        except json.JSONDecodeError as e:
+            raise ValueError(f"corrupt staged env file {env_path}: {e}") from e
+        if not isinstance(staged, dict):
+            return {}
+        return {str(k): str(v) for k, v in staged.items()}
+
+    def _host_env(self) -> dict[str, str]:
+        """Resolve env_from_host names at execution time; never persisted."""
+        names = self._manifest.get("env_from_host") or []
+        env: dict[str, str] = {}
+        missing: list[str] = []
+        for name in names:
+            value = self._get_env(str(name))
+            if value:
+                env[str(name)] = value
+            else:
+                missing.append(str(name))
+        if missing:
+            raise ValueError(
+                "env_from_host references unset environment variables: "
+                f"{', '.join(missing)}. Export them on the host or pass them "
+                "via pier's --ae KEY=VALUE."
+            )
+        return env
 
     # ---------------------------------------------------- post-run ATIF ---
 

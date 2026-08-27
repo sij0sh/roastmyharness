@@ -106,6 +106,14 @@ class Repository:
                 [(experiment_id, *t) for t in tasks],
             )
 
+    def get_tasks(self, experiment_id: str) -> list[sqlite3.Row]:
+        """Stored task identity rows in insertion order."""
+        return self.conn.execute(
+            "SELECT task_id, task_hash FROM tasks WHERE experiment_id=? "
+            "ORDER BY rowid",
+            (experiment_id,),
+        ).fetchall()
+
     # ---------------------------------------------------------- trials --
 
     def next_attempt(self, experiment_id: str, variant_id: str, task_id: str) -> int:

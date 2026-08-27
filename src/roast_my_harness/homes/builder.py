@@ -25,7 +25,13 @@ from roast_my_harness.homes.manifest import (
 from roast_my_harness.homes.sanitize import INSTRUCTION_FILES
 from roast_my_harness.homes.sources import copy_runtime_packages, copy_source_tree, source_tree_hash
 from roast_my_harness.spec.hashes import variant_hash
-from roast_my_harness.spec.models import ExperimentSpec, LocalExtension, SkillSpec, VariantSpec
+from roast_my_harness.spec.models import (
+    ExperimentSpec,
+    LocalExtension,
+    SkillSpec,
+    VariantSpec,
+    _safe_relative_component,
+)
 
 
 @dataclass(frozen=True)
@@ -36,11 +42,20 @@ class HomeBuild:
 
 
 def _extension_name(ext: LocalExtension, index: int) -> str:
-    return ext.name or ext.path.name
+    name = ext.name or ext.path.name
+    return _checked_component(name, "extension name")
 
 
 def _skill_name(skill: SkillSpec) -> str:
-    return skill.name or skill.path.name
+    name = skill.name or skill.path.name
+    return _checked_component(name, "skill name")
+
+
+def _checked_component(value: str, what: str) -> str:
+    try:
+        return _safe_relative_component(value, what)
+    except ValueError as e:
+        raise HomeBuildError(str(e)) from e
 
 
 def compute_source_hashes(variant: VariantSpec) -> dict[str, str]:
@@ -63,7 +78,6 @@ def build_home(
     variant: VariantSpec,
     spec: ExperimentSpec,
     homes_root: Path,
-    allow_unsafe_source: bool = False,
 ) -> HomeBuild:
     """Build (or return cached) home for one variant arm."""
     v_hash = compute_variant_hash(variant, spec.pi_version)
@@ -82,7 +96,7 @@ def build_home(
             return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash)
         shutil.rmtree(home, ignore_errors=True)
 
-    _validate_sources(variant, allow_unsafe_source)
+    _validate_sources(variant)
 
     homes_root.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=f".build-{v_hash[:8]}-", dir=homes_root))
@@ -146,7 +160,8 @@ def build_home(
             extensions=manifest_exts,
             skills=skills,
             npm_packages=npm_packages,
-            env=dict(variant.env),
+            env={},
+            env_from_host=list(variant.env_from_host),
             setup=setup,
             egress_urls=list(variant.egress_urls),
             pi_flags=list(variant.pi_flags),
@@ -193,16 +208,14 @@ def _setup_args(step) -> dict[str, str]:
     return {}
 
 
-def _validate_sources(variant: VariantSpec, allow_unsafe: bool) -> None:
-    if allow_unsafe:
-        return
+def _validate_sources(variant: VariantSpec) -> None:
     paths: list[Path] = [e.path for e in variant.extensions if e.kind == "local"]
     paths += [s.path for s in variant.skills]
     for path in paths:
         if path.exists() and (path.stat().st_mode & 0o002):
             raise HomeBuildError(
                 f"source directory is world-writable: {path} "
-                "(pass --allow-unsafe-source to override)"
+                "(chmod o-w the source to proceed)"
             )
 
 

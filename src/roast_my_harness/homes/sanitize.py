@@ -71,19 +71,25 @@ def is_excluded(rel_posix: str, extra: list[str] | None = None) -> bool:
 
 
 def iter_source_files(src: Path, extra_excludes: list[str] | None = None):
-    """Yield (relative posix path, absolute path) for copyable files."""
+    """Yield (relative posix path, absolute path) for copyable files.
+
+    Symlinks are rejected, not copied: recreating them inside a home and
+    later chmod-ing through them can touch files outside the source root.
+    """
     extra = list(extra_excludes or [])
     for path in sorted(src.rglob("*")):
-        if path.is_symlink():
-            yield path.relative_to(src).as_posix(), path
-            continue
-        if not path.is_file():
-            continue
         rel = path.relative_to(src).as_posix()
-        parts = rel.split("/")[:-1]
-        if any(part in EXCLUDED_DIR_NAMES for part in parts):
+        parts = rel.split("/")
+        if any(part in EXCLUDED_DIR_NAMES for part in parts[:-1]):
             continue
-        if any(part in extra for part in parts):
+        if any(part in extra for part in parts[:-1]):
+            continue
+        if path.is_symlink():
+            raise ValueError(
+                f"symlink in source tree is not allowed: {src / rel} -> "
+                f"{path.readlink()}"
+            )
+        if not path.is_file():
             continue
         if is_excluded(rel, extra):
             continue

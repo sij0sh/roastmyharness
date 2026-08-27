@@ -66,5 +66,7 @@ def test_pipeline(tmp_path: Path):
     assert manifests["airhead2"]["extensions"][0]["entry"].endswith(
         "src/index.ts"
     )
-    assert manifests["airhead2"]["env"] == {"AIRHEAD_KEEP": "2"}
+
+    assert manifests["airhead2"]["env"] == {}
+    assert "AIRHEAD_KEEP" not in json.dumps(manifests["airhead2"])
     assert manifests["airhead2"]["variant_hash"] != manifests["control"]["variant_hash"]

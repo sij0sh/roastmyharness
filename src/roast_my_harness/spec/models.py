@@ -5,14 +5,86 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SCHEMA_VERSION = 1
 RESERVED_VARIANT_IDS = {"control"}
 
-# Filesystem-safe: lowercase alnum plus hyphen, must start alphanumeric.
+
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+
+
+ALLOWED_PI_FLAGS = {
+    "--append-system-prompt",
+    "--system-prompt",
+    "--tools",
+    "--exclude-tools",
+    "--no-builtin-tools",
+    "--no-tools",
+}
+RESERVED_PI_FLAGS = {
+    "-nc",
+    "--no-context-files",
+    "--model",
+    "--thinking",
+    "--skill",
+    "--session-dir",
+    "--mode",
+    "--extension",
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+}
+
+
+
+_SECRET_ENV_KEYS = (
+    "access",
+    "refresh",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "apikey",
+    "api_key",
+    "authorization",
+    "credential",
+    "private_key",
+)
+
+
+def _safe_relative_component(value: str, field: str) -> str:
+    """One slug-safe destination component: no separators, no dot specials."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value):
+        raise ValueError(
+            f"{field} must be a slug-safe name (letters, digits, '.', '_', '-'; "
+            f"no leading dot), got {value!r}"
+        )
+    return value
+
+
+def _safe_rel_path(value: str, field: str) -> str:
+    """A strictly relative path usable under a home directory."""
+    if value.startswith(("/", "\\")) or Path(value).is_absolute():
+        raise ValueError(f"{field} must be relative, got {value!r}")
+    parts = value.replace("\\", "/").split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError(
+            f"{field} must not contain '..', '.', or empty components: {value!r}"
+        )
+    return value
+
+
+def _safe_env_name(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        raise ValueError(f"environment variable name {value!r} must be UPPER_SNAKE_CASE")
+    return value
+
 
 ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
@@ -21,12 +93,16 @@ class ResolvedModelSpec(BaseModel):
     """Host-config materialization: what actually runs, recorded at load
     time so spec_hash covers host configuration drift."""
 
+    model_config = ConfigDict(extra="forbid")
+
     provider: str
     provider_block_sha256: str
     env_vars: list[str] = Field(default_factory=list)
 
 
 class ModelSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str = "gpt-5.6-luna"
     provider: str = "openai-codex"
     provider_id: str | None = None
@@ -52,6 +128,8 @@ class ModelSpec(BaseModel):
 
 
 class LocalExtension(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     kind: Literal["local"]
     path: Path
     entry: str
@@ -59,11 +137,42 @@ class LocalExtension(BaseModel):
     exclude: list[str] = Field(default_factory=list)
     runtime_packages: list[str] = Field(default_factory=list)
 
+    @field_validator("entry")
+    @classmethod
+    def _safe_entry(cls, value: str) -> str:
+        return _safe_rel_path(value, "extension entry")
+
+    @field_validator("name")
+    @classmethod
+    def _safe_name(cls, value: str | None) -> str | None:
+        return _safe_relative_component(value, "extension name") if value else value
+
+    @field_validator("runtime_packages")
+    @classmethod
+    def _safe_packages(cls, value: list[str]) -> list[str]:
+        for name in value:
+            segments = name.split("/")
+            if len(segments) > 2 or not all(
+                re.fullmatch(r"@?[A-Za-z0-9][A-Za-z0-9._-]*", segment)
+                for segment in segments
+            ):
+                raise ValueError(
+                    f"runtime_package {name!r} must be a plain npm package name"
+                )
+        return value
+
 
 class NpmExtension(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     kind: Literal["npm"]
     package: str
     name: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _safe_name(cls, value: str | None) -> str | None:
+        return _safe_relative_component(value, "extension name") if value else value
 
     @field_validator("package")
     @classmethod
@@ -85,12 +194,21 @@ ExtensionSpec = Annotated[LocalExtension | NpmExtension, Field(discriminator="ki
 
 
 class SkillSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     kind: Literal["local"] = "local"
     path: Path
     name: str | None = None
 
+    @field_validator("name")
+    @classmethod
+    def _safe_name(cls, value: str | None) -> str | None:
+        return _safe_relative_component(value, "skill name") if value else value
+
 
 class NpmPiInstall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     handler: Literal["npm_pi_install"]
     package: str
 
@@ -110,6 +228,8 @@ class NpmPiInstall(BaseModel):
 
 
 class InstallBinary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     handler: Literal["install_binary"]
     source: Path
     destination: str = "/usr/local/bin"
@@ -117,10 +237,14 @@ class InstallBinary(BaseModel):
 
 
 class RunRtkInit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     handler: Literal["run_rtk_init"]
 
 
 class CodegraphIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     handler: Literal["codegraph_index"]
     bundle: Path
 
@@ -132,11 +256,14 @@ SetupSpec = Annotated[
 
 
 class VariantSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     name: str | None = None
     extensions: list[ExtensionSpec] = Field(default_factory=list)
     skills: list[SkillSpec] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    env_from_host: list[str] = Field(default_factory=list)
     setup: list[SetupSpec] = Field(default_factory=list)
     egress_urls: list[str] = Field(default_factory=list)
     pi_flags: list[str] = Field(default_factory=list)
@@ -151,19 +278,83 @@ class VariantSpec(BaseModel):
             )
         return value
 
+    @field_validator("env")
+    @classmethod
+    def _no_secret_literals(cls, value: dict[str, str]) -> dict[str, str]:
+        from roast_my_harness.observability import contains_secret
+
+        for key, item in value.items():
+            _safe_env_name(key)
+            lowered = key.lower().replace("-", "_")
+            if any(word in lowered for word in _SECRET_ENV_KEYS):
+                raise ValueError(
+                    f"env key {key!r} looks like a credential; pass secrets via "
+                    'env_from_host = ["NAME"] instead of literal values'
+                )
+            if contains_secret(item):
+                raise ValueError(
+                    f"env value for {key!r} looks like a credential; pass secrets "
+                    'via env_from_host = ["NAME"] instead of literal values'
+                )
+        return value
+
+    @field_validator("env_from_host")
+    @classmethod
+    def _safe_host_names(cls, value: list[str]) -> list[str]:
+        for name in value:
+            _safe_env_name(name)
+        return value
+
+    @field_validator("egress_urls")
+    @classmethod
+    def _https_only(cls, value: list[str]) -> list[str]:
+        for url in value:
+            parsed = urlparse(url)
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise ValueError(
+                    f"egress_urls must be absolute https:// URLs, got {url!r}"
+                )
+        return value
+
+    @field_validator("pi_flags")
+    @classmethod
+    def _allowlisted_flags(cls, value: list[str]) -> list[str]:
+        for flag in value:
+            if any(ch.isspace() for ch in flag):
+                raise ValueError(
+                    f"pi_flags entries must be single tokens, got {flag!r}; "
+                    "use --flag=value form"
+                )
+            name = flag.split("=", 1)[0]
+            if name in RESERVED_PI_FLAGS:
+                raise ValueError(
+                    f"pi_flags entry {flag!r} conflicts with a harness-controlled "
+                    "flag and would break arm fairness"
+                )
+            if name not in ALLOWED_PI_FLAGS:
+                raise ValueError(
+                    f"pi_flags entry {flag!r} is not allowlisted; allowed: "
+                    f"{', '.join(sorted(ALLOWED_PI_FLAGS))}"
+                )
+        return value
+
 
 class TaskSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     path: Path
     include: list[str] = Field(default_factory=lambda: ["*"])
     exclude: list[str] = Field(default_factory=list)
 
 
 class ControlSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = True
     reuse: Literal["never", "ask", "require"] = "ask"
-    minimum_runs_per_task: int = 10
-    maximum_age_days: int = 30
-    sentinel_tasks: int = 6  
+    minimum_runs_per_task: int = Field(default=10, ge=1)
+    maximum_age_days: int = Field(default=30, ge=1)
+    sentinel_tasks: int = 6
 
     @field_validator("sentinel_tasks")
     @classmethod
@@ -174,10 +365,35 @@ class ControlSpec(BaseModel):
 
 
 class ConcurrencySpec(BaseModel):
-    per_variant: int = 2
+    """Concurrency bounds.
+
+    max_parallel caps total trials across all launching arms; when set,
+    per_variant is divided down so arms * effective_per_variant <= max_parallel.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    per_variant: int = Field(default=2, ge=1, le=16)
+    max_parallel: int | None = Field(default=None, ge=1, le=32)
+
+    def effective_per_variant(self, launching_arms: int) -> int:
+        """Per-arm concurrency honoring the global max_parallel cap."""
+        if launching_arms < 1 or self.max_parallel is None:
+            return self.per_variant
+        return max(1, min(self.per_variant, self.max_parallel // launching_arms))
+
+    def peak_parallel(self, launching_arms: int) -> int:
+        """Peak total concurrency given the arms launching at once."""
+        arms = max(launching_arms, 1)
+        return self.effective_per_variant(arms) * arms
+
+
+MAX_VARIANTS = 16
 
 
 class ExperimentSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     schema_version: int = SCHEMA_VERSION
     name: str
     model: ModelSpec = Field(default_factory=ModelSpec)
@@ -219,6 +435,16 @@ class ExperimentSpec(BaseModel):
             )
         return self
 
+    @field_validator("variants")
+    @classmethod
+    def _cap_variants(cls, value: list[VariantSpec]) -> list[VariantSpec]:
+        if len(value) > MAX_VARIANTS:
+            raise ValueError(
+                f"experiment allows at most {MAX_VARIANTS} variants, "
+                f"got {len(value)}"
+            )
+        return value
+
     def arms(self) -> list[VariantSpec]:
         """Every launched arm. The control is a bare VariantSpec named control."""
         arms: list[VariantSpec] = []
@@ -226,3 +452,7 @@ class ExperimentSpec(BaseModel):
             arms.append(VariantSpec(id="control", name="Bare Pi control"))
         arms.extend(self.variants)
         return arms
+
+    def peak_concurrency(self) -> int:
+        """Peak total trials in flight when all arms launch at once."""
+        return self.concurrency.peak_parallel(len(self.arms()))

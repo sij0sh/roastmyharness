@@ -19,6 +19,8 @@ path = "./dataset"
 enabled = true
 [[variants]]
 id = "a"
+[variants.env]
+AIRHEAD_KEEP = "2"
 [[variants.extensions]]
 kind = "local"
 path = "./ext"
@@ -58,6 +60,16 @@ def test_prepare_and_snapshot(tmp_path: Path):
     assert (tmp_path / "run" / "experiment.toml").is_file()
     assert (tmp_path / "run" / "manifest.json").is_file()
     assert (tmp_path / "run" / "staging" / "a" / "variant.json").is_file()
+    staged_env = tmp_path / "run" / "staging" / "a" / "env.json"
+    assert staged_env.is_file()
+    import json as _json
+    import stat as _stat
+    assert _json.loads(staged_env.read_text()) == {"AIRHEAD_KEEP": "2"}
+    assert not _stat.S_IMODE(staged_env.stat().st_mode) & 0o077
+    staged_manifest = _json.loads(
+        (tmp_path / "run" / "staging" / "a" / "variant.json").read_text()
+    )
+    assert staged_manifest["env"] == {}
     staged_auth = tmp_path / "run" / "staging" / "a" / "auth.json"
     assert staged_auth.is_file()  # codex default staged per job
 
