@@ -238,6 +238,67 @@ def test_status_unknown_experiment(tmp_path):
         service.status("nope")
 
 
+def seed_experiment(tmp_path: Path, name: str, exp_id: str, spec_cache: dict) -> str:
+    """Insert one experiment row built from the shared SPEC template."""
+    from roast_my_harness.store.repository import Repository
+
+    if "spec" not in spec_cache:
+        spec_cache["spec"] = load_experiment(make_spec(tmp_path))
+    spec = spec_cache["spec"]
+    repo = Repository(tmp_path / "db.sqlite")
+    repo.create_experiment(
+        experiment_id=exp_id,
+        name=name,
+        spec=spec.model_dump(mode="json"),
+        spec_hash="deadbeef",
+        run_dir=str(tmp_path / "run"),
+    )
+    repo.close()
+    return exp_id
+
+
+def test_resolve_accepts_id_name_and_prefix(tmp_path):
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    exp_id = seed_experiment(tmp_path, "svc", "svc-112233445566", {})
+    assert service._resolve_experiment(exp_id) == exp_id
+    assert service._resolve_experiment("svc") == exp_id
+    assert service._resolve_experiment("svc-1122") == exp_id
+
+
+def test_resolve_prefers_newest_on_duplicate_names(tmp_path):
+    cache: dict = {}
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    seed_experiment(tmp_path, "svc", "svc-111111111111", cache)
+    newest = seed_experiment(tmp_path, "svc", "svc-222222222222", cache)
+    assert service._resolve_experiment("svc") == newest
+
+
+def test_resolve_rejects_ambiguous_prefix(tmp_path):
+    cache: dict = {}
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    seed_experiment(tmp_path, "one", "svc-112200000000", cache)
+    seed_experiment(tmp_path, "two", "svc-112211111111", cache)
+    with pytest.raises(svc.AmbiguousExperimentError):
+        service._resolve_experiment("svc-1122")
+
+
+def test_cancel_resolves_spec_name(tmp_path):
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    seed_experiment(tmp_path, "svc", "svc-112233445566", {})
+    result = service.cancel("svc")
+    assert result.ok
+    assert result.cancelled is False
+    assert result.experiment_id == "svc-112233445566"
+
+
 def test_cancel_reports_when_no_worker(tmp_path, green_preflight, monkeypatch):
     spec_path = make_spec(tmp_path)
     service = svc.AgentService(

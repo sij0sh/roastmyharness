@@ -70,6 +70,10 @@ class UnknownExperimentError(ServiceError):
     code = "unknown_experiment"
 
 
+class AmbiguousExperimentError(ServiceError):
+    code = "ambiguous_experiment"
+
+
 class StalePlanError(ServiceError):
     code = "stale_plan"
 
@@ -270,7 +274,37 @@ class AgentService:
             started=True,
         )
 
-    def _observe(self, experiment_id: str) -> tuple[ExperimentController, Path]:
+    def _resolve_experiment(self, handle: str) -> str:
+        """Resolve an experiment handle to a stored experiment id.
+
+        Accepts an exact experiment id, an exact spec name (newest wins),
+        or a unique id prefix. Ambiguous prefixes are rejected.
+        """
+        repo = Repository(self.db_path)
+        try:
+            row = repo.get_experiment(handle)
+            if row is not None:
+                return str(row["id"])
+            rows = repo.list_experiments()
+        finally:
+            repo.close()
+        by_name = [r for r in rows if str(r["name"]) == handle]
+        if by_name:
+            return str(by_name[0]["id"])
+        prefix_matches = [r for r in rows if str(r["id"]).startswith(handle)]
+        if len(prefix_matches) == 1:
+            return str(prefix_matches[0]["id"])
+        if len(prefix_matches) > 1:
+            ids = ", ".join(sorted(str(r["id"]) for r in prefix_matches))
+            raise AmbiguousExperimentError(
+                f"experiment handle {handle!r} matches multiple experiments: {ids}"
+            )
+        if self._has_started_marker(handle):
+            return handle
+        raise UnknownExperimentError(f"unknown experiment {handle}")
+
+    def _observe(self, handle: str) -> tuple[ExperimentController, Path]:
+        experiment_id = self._resolve_experiment(handle)
         """Read-only observation of one experiment; caller closes no state.
 
         Opens the DB, validates the stored spec, and returns an observing
@@ -334,6 +368,7 @@ class AgentService:
         instead of hanging.
         """
         controller, rd = self._observe(experiment_id)
+        experiment_id = controller.experiment_id
         first = self._watch_snapshot(controller)
         yield {"event": "snapshot", **first}
         last_emit = time.monotonic()
@@ -438,6 +473,7 @@ class AgentService:
 
     def cancel(self, experiment_id: str) -> models.CancelResult:
         """Ask a live worker to cancel gracefully."""
+        experiment_id = self._resolve_experiment(experiment_id)
         repo = Repository(self.db_path)
         try:
             row = repo.get_experiment(experiment_id)
@@ -479,6 +515,7 @@ class AgentService:
 
     def report(self, experiment_id: str) -> models.ReportResult:
         """Regenerate summary.csv, summary.json, and report.md."""
+        experiment_id = self._resolve_experiment(experiment_id)
         from roast_my_harness.auth import staging
         from roast_my_harness.report import collect as report_collect
         from roast_my_harness.report import exports as report_exports
