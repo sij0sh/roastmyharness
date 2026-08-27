@@ -7,6 +7,7 @@ import re
 import tomllib
 from pathlib import Path
 
+import yaml
 from pydantic import ValidationError
 
 from roast_my_harness.errors import SpecError
@@ -95,12 +96,18 @@ def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
 
 
 def load_experiment(path: Path) -> ExperimentSpec:
-    """Load and validate an experiment TOML file. All paths become absolute."""
+    """Load and validate a TOML or YAML experiment. Resolve all paths."""
     path = path.expanduser().resolve()
     try:
-        raw = tomllib.loads(path.read_text())
-    except (OSError, tomllib.TOMLDecodeError) as e:
+        text = path.read_text()
+        if path.suffix.lower() in (".yaml", ".yml"):
+            raw = yaml.safe_load(text)
+        else:
+            raw = tomllib.loads(text)
+    except (OSError, tomllib.TOMLDecodeError, yaml.YAMLError) as e:
         raise SpecError(f"cannot read experiment file {path}: {e}") from e
+    if not isinstance(raw, dict):
+        raise SpecError(f"invalid experiment spec in {path}: expected a mapping")
     try:
         spec = ExperimentSpec.model_validate(raw)
     except ValidationError as e:
