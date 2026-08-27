@@ -64,10 +64,13 @@ a fixed wizard:
 6. Choose `Confirm and run`, `Change`, or `Cancel`. `Change` accepts a free-form
    revision and repeats generation, validation, and review.
 
-The active Pi model converts the open variant description and change requests
-into YAML. Accepted plans launch immediately. Generated files are kept under
-`.pi-files/roastmyharness/`. The extension also retains the `roast_harness`
-tool for status, watch, cancel, and report operations. `watch` streams
+A read-only Pi SDK agent converts the open variant description and change
+requests into YAML. The wizard gives the agent verified metadata for local Pi
+packages configured in user or project settings. The agent can also inspect
+files with read-only tools. Schema, source, auth, and pinned npm availability
+checks still gate plan approval. Accepted plans launch immediately. Generated
+files are kept under `.pi-files/roastmyharness/`. The extension also retains
+the `roast_harness` tool for status, watch, cancel, and report operations. `watch` streams
 per-trial results, running cells, final aggregates, and report paths.
 
 There is no integration skill to invoke implicitly. Install the Pi command or

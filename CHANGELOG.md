@@ -27,6 +27,9 @@ Simplification pass (complexity audit 20260826184821-a3fbe704, Tiers 0-1).
 
 ### Fixed
 
+- The Pi wizard now authors YAML through a read-only Pi SDK agent and supplies
+  verified metadata for configured local Pi packages. It no longer asks a
+  tool-less model completion to guess local paths or npm package versions.
 - CI now runs locked dependency checks, Ruff, tests with a 70% coverage gate,
   and a wheel build.
 - Run, resume, and report now use an exclusive per-experiment lock, while
