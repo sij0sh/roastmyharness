@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { Api, Model, UserMessage } from "@earendil-works/pi-ai";
@@ -753,20 +753,62 @@ function reviewText(state: DraftState, answers: WizardAnswers, specPath: string)
 	return lines.join("\n");
 }
 
+const RUNS_DIR_ENV = "ROAST_MY_HARNESS_RUNS_DIR";
+
+function runsRoot(): string {
+	const override = process.env[RUNS_DIR_ENV];
+	if (override?.trim()) return expandPath(override, process.cwd());
+	return join(homedir(), ".local", "share", "roastmyharness", "runs");
+}
+
+async function recentTaskRoots(): Promise<string[]> {
+	let runDirs;
+	try {
+		runDirs = await readdir(runsRoot(), { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	const specs = new Map<string, number>();
+	for (const entry of runDirs) {
+		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+		const specPath = join(runsRoot(), entry.name, "experiment.toml");
+		let text: string;
+		let mtime: number;
+		try {
+			text = await readFile(specPath, "utf8");
+			mtime = (await stat(specPath)).mtimeMs;
+		} catch {
+			continue;
+		}
+		const match = text.match(/\[tasks\][^\[]*?path\s*=\s*"([^"]+)"/s);
+		if (!match) continue;
+		const root = expandPath(match[1], process.cwd());
+		const known = specs.get(root);
+		if (known === undefined || mtime > known) specs.set(root, mtime);
+	}
+	return [...specs.entries()]
+		.sort((a, b) => b[1] - a[1])
+		.map(([root]) => root);
+}
+
 async function discoverTaskRoot(
 	ctx: ExtensionCommandContext,
 	argument: string,
 ): Promise<{ root: string; ids: string[] }> {
-	const candidates = argument.trim()
-		? [expandPath(argument, ctx.cwd), ctx.cwd]
-		: [ctx.cwd];
+	const candidates: string[] = [];
+	const add = (candidate: string) => {
+		if (!candidates.includes(candidate)) candidates.push(candidate);
+	};
+	if (argument.trim()) add(expandPath(argument, ctx.cwd));
+	add(ctx.cwd);
+	for (const recent of await recentTaskRoots()) add(recent);
 	for (const candidate of candidates) {
 		const ids = await discoverTaskIds(candidate);
 		if (ids.length) return { root: candidate, ids };
 	}
 	throw new Error(
-		`No Pier tasks found under ${candidates[0]}` +
-			(candidates.length > 1 ? ` or ${candidates[1]}` : ""),
+		`No Pier tasks found. Searched: ${candidates.join(", ")}. ` +
+			`Pass a task dataset path: /roast <path>`,
 	);
 }
 
