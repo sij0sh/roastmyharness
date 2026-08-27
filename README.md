@@ -46,17 +46,19 @@ exception with its traceback. The tool stores no credentials of its own; it reus
     roast-my-harness run my-experiment.toml
 
 Other commands: `resume <id>`, `status <id>`, `report <id>`, `list`,
-`import-dse <results-dir>`, `auth status`, plus `--json` on
-validate/status/list.
+`import-dse <results-dir>`, `auth status`, `setup [--agent pi|claude
+--scope user|project]`, `doctor`, plus `--json` on validate/status/list.
 
-## Agent skill
+## Agent skill and extension
 
-`.agents/skills/roast-my-harness/SKILL.md` lets Pi or Claude drive the
-CLI from plain-language requests. Pi loads it from the project
-`.agents/skills/` directory. Link it globally for Pi or Claude:
+`.agents/skills/roast-my-harness/SKILL.md` lets Pi or Claude drive
+experiments from plain-language requests; the `roast_harness` tool wraps
+the same service with JSON responses. Install integrations idempotently
+instead of symlinking by hand:
 
-    ln -sfn "$PWD/.agents/skills/roast-my-harness" ~/.pi/agent/skills/roast-my-harness
-    ln -sfn "$PWD/.agents/skills/roast-my-harness" ~/.claude/skills/roast-my-harness
+    roast-my-harness setup --agent pi --scope user
+    roast-my-harness setup --agent claude --scope project
+    roast-my-harness doctor
 
 ## Experiment spec
 

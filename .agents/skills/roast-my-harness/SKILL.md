@@ -1,6 +1,6 @@
 ---
 name: roast-my-harness
-description: Drive the roast-my-harness CLI to design, validate, run, resume, and report Pi extension/skill comparison experiments on identical Pier tasks. Use when the user wants to compare harnesses, run an experiment, check run status, resume an interrupted run, or read results.
+description: Drive the roast_harness tool to design, validate, run, resume, and report Pi extension/skill comparison experiments on identical Pier tasks. Use when the user wants to compare harnesses, run an experiment, check run status, resume an interrupted run, or read results.
 ---
 
 # RoastMyHarness
@@ -11,45 +11,57 @@ variant x task cell and writes summary.csv, summary.json, and report.md.
 
 ## Prerequisites
 
-- `roast-my-harness` on PATH (`uv tool install .` from the repo).
+- Pi or Claude Code with the roast_harness tool available
+  (`roast-my-harness setup --agent <pi|claude>` installs it).
 - Pier 0.3.x, docker, and node/npm in task containers.
 - Codex auth: `roast-my-harness auth status`. If missing, the user must run
   `pi /login codex` once; the CLI reuses `~/.pi/agent/auth.json`.
+- `roast-my-harness doctor` verifies all of the above in one table.
 
-## Workflow
+## Tool usage
 
-1. Create a spec: `roast-my-harness init experiment.toml`
-2. Edit the TOML. Set `name`, `pi_version`, `thinking`, `[model]`, and
-   `[tasks] path`. `[model] provider` may be any host pi models.json
-   provider, `openai-codex` (default), or `custom` with provider_id +
-   models_json. Add one `[[variants]]` block per arm. Local extensions
-   use `[[variants.extensions]]` with `kind = "local"`, `path`, `entry`.
-   Skills use `[[variants.skills]]` with `kind = "local"` and a `path`
-   containing SKILL.md. `[control]` toggles the bare-Pi arm.
-3. Validate: `roast-my-harness validate experiment.toml`
-   Fix every failure before running. Add `--json` when parsing output.
-4. Run: `roast-my-harness run experiment.toml --yes`
-   Always add `--yes` in non-interactive sessions. Ctrl-C cancels safely;
-   completed cells persist on disk.
-5. Watch: `roast-my-harness list`, then `roast-my-harness status <id>`.
-6. Resume an interrupted run: `roast-my-harness resume <id>`
-7. Report: `roast-my-harness report <id>`, then read `<run-dir>/report.md`
-   and summarize pass/fail/error totals per variant for the user.
+Prefer the `roast_harness` tool over shell commands in agent sessions; it
+is the same code path with JSON responses.
 
-## User intent to command
+1. Ask the user for the experiment TOML (or create one with
+   `roast-my-harness init` and edit it). Set `name`, `pi_version`,
+   `thinking`, `[model]`, and `[tasks] path`. Add one `[[variants]]` block
+   per arm.
+2. Call roast_harness with `action: "prepare"` and `spec_path`. Review the
+   returned plan, warnings, and `questions`. Fix every reported failure
+   before proceeding. Stop and relay unconfirmed choices (`needs_input`)
+   to the user.
+3. Show the user the plan summary (tasks, arms, trials, max_parallel,
+   model) and get explicit approval before starting.
+4. Call roast_harness with `action: "start"` and the returned `plan_id`.
+   Starting is idempotent per `plan_id`; a stale plan returns an error and
+   you must re-prepare.
+5. Poll with `action: "status"` and `experiment_id` until state is
+   finished.
+6. Call `action: "report"`, then read `<run-dir>/report.md` and summarize
+   pass/fail/error totals per variant for the user.
+7. To stop a run, call `action: "cancel"`. To run only missing cells after
+   an interruption, re-run prepare and start on the same spec (resume
+   semantics are automatic).
 
-| User says | Run |
+## User intent to tool action
+
+| User says | Do |
 | --------- | -- |
-| "compare these extensions/skills" | init, edit, validate, run |
-| "is my spec ok?" | validate |
-| "how is the run going?" | list, then status |
-| "it got interrupted" | resume |
-| "what were the results?" | report, then read report.md |
-| "check login" | auth status |
+| "compare these extensions/skills" | prepare, confirm, start |
+| "is my spec ok?" | prepare (it validates) |
+| "how is the run going?" | status |
+| "stop the run" | cancel |
+| "what were the results?" | report, read report.md |
+| "check login" | `roast-my-harness auth status` |
+| "set it up" / "is it installed?" | `roast-my-harness setup`, `doctor` |
 
 ## Notes
 
-- Experiment ids come from `list`; they encode the spec name and hash.
-- `run` refuses to launch when preflight fails.
+- Experiment ids come from status responses; they encode the spec name and
+  hash.
+- start refuses to launch when preflight fails.
+- Shell commands (`run`, `resume`, `list`, `status`) remain available for
+  interactive human use.
 - `import-dse` imports legacy DSE results; they are reference-only and
   never reused as controls.

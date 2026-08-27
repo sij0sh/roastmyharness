@@ -12,17 +12,20 @@ from typing import Any
 import typer
 
 from roast_my_harness import __version__
+from roast_my_harness.agent import service as agent_service
 from roast_my_harness.auth import service as auth_service
 from roast_my_harness.errors import RoastMyHarnessError
 from roast_my_harness.paths import database_path, run_dir
 from roast_my_harness.runner import preflight
 from roast_my_harness.runner.controller import ExperimentController
 from roast_my_harness.runner.signals import install_cancel_handlers
-from roast_my_harness.spec.hashes import spec_hash as compute_spec_hash
+from roast_my_harness.spec.hashes import experiment_hash as compute_experiment_hash
 from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
 from roast_my_harness.store.locking import ExperimentLock
 from roast_my_harness.store.repository import Repository
+from roast_my_harness.tasks.discover import discover_tasks
+from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 
 app = typer.Typer(
     name="roast-my-harness",
@@ -34,7 +37,7 @@ app = typer.Typer(
 auth_app = typer.Typer(help="Credential inspection and login.")
 app.add_typer(auth_app, name="auth")
 
-STARTER_TOML = '''
+STARTER_TOML = """
 schema_version = 1
 name = "my-comparison"
 pi_version = "0.84.3"
@@ -79,7 +82,7 @@ MY_EXTENSION_SETTING = "2"
 # [[variants.skills]]
 # kind = "local"
 # path = "~/my-skills/my-skill"  # must contain SKILL.md
-'''
+"""
 
 
 def _repo() -> Repository:
@@ -91,6 +94,35 @@ def _print_progress(message: str) -> None:
     print(f"[roast] {message}", file=sys.stderr)
 
 
+EXIT_CODES = {"FAILED": 2, "CANCELLED": 3}
+
+
+def _exit_for_final_state(experiment_id: str, final: str) -> int:
+    """Report the final state honestly: nonzero for FAILED/CANCELLED."""
+    if final == "COMPLETE":
+        typer.secho(f"experiment {experiment_id}: {final}", fg=typer.colors.GREEN)
+        return 0
+    code = EXIT_CODES.get(final)
+    if code is None:
+        typer.secho(f"experiment {experiment_id}: {final}", fg=typer.colors.YELLOW)
+        return 0
+    typer.secho(
+        json.dumps(
+            {
+                "ok": False,
+                "error": {
+                    "code": f"experiment_{final.lower()}",
+                    "experiment_id": experiment_id,
+                    "state": final,
+                },
+            }
+        ),
+        fg=typer.colors.RED,
+    )
+    typer.secho(f"experiment {experiment_id}: {final}", fg=typer.colors.RED)
+    return code
+
+
 def _ask_reuse(message: str) -> bool:
     """Interactive ask-mode prompt for control reuse (plan section 16)."""
     typer.echo(message)
@@ -98,6 +130,7 @@ def _ask_reuse(message: str) -> bool:
 
 
 # ------------------------------------------------------------------ init --
+
 
 @app.command()
 def init(
@@ -117,12 +150,10 @@ def init(
 
 # -------------------------------------------------------------- validate --
 
+
 @app.command()
 def validate(
     spec_path: Path = typer.Argument(..., help="Experiment TOML file."),
-    allow_unsafe_source: bool = typer.Option(
-        False, "--allow-unsafe-source", help="Allow world-writable sources."
-    ),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable."),
 ) -> None:
     """Validate spec, discover tasks, check sources and environment."""
@@ -132,16 +163,23 @@ def validate(
         payload: dict[str, Any] = {
             "ok": not preflight.has_failures(results),
             "checks": [r.__dict__ for r in results],
+            "peak_concurrency": spec.peak_concurrency(),
         }
         print(json.dumps(payload, indent=2))
     else:
         typer.echo(preflight.format_table(results))
+        typer.echo(
+            f"peak concurrency: {spec.peak_concurrency()} "
+            f"({len(spec.arms())} arms x "
+            f"{spec.concurrency.effective_per_variant(len(spec.arms()))} each)"
+        )
         typer.echo(preflight.container_probe_note())
     if preflight.has_failures(results):
         raise typer.Exit(1)
 
 
 # ------------------------------------------------------------------- run --
+
 
 @app.command()
 def run(
@@ -162,7 +200,16 @@ def run(
     if not yes and sys.stdin.isatty():
         if not typer.confirm("Launch now?"):
             raise typer.Exit(0)
-    experiment_id = make_experiment_id(spec.name, compute_spec_hash(spec))
+    experiment_id = make_experiment_id(
+        spec.name,
+        compute_experiment_hash(
+            spec,
+            [
+                (t.task_id, compute_task_hash(t.path))
+                for t in discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
+            ],
+        ),
+    )
     repo = _repo()
     controller = ExperimentController(
         spec,
@@ -178,9 +225,7 @@ def run(
         try:
             try:
                 controller.prepare(spec_path)
-                controller.enforce_reuse_policy(
-                    interactive=sys.stdin.isatty() and not yes
-                )
+                controller.enforce_reuse_policy(interactive=sys.stdin.isatty() and not yes)
             except Exception as error:
                 controller.fail_setup(error)
                 raise
@@ -192,10 +237,11 @@ def run(
         finally:
             cleanup()
             loop.close()
-    typer.secho(f"experiment {experiment_id}: {final}", fg=typer.colors.GREEN)
+    raise typer.Exit(_exit_for_final_state(experiment_id, final))
 
 
 # ---------------------------------------------------------------- resume --
+
 
 @app.command()
 def resume(
@@ -214,12 +260,11 @@ def resume(
         spec, experiment_id, Path(row["run_dir"]), repo, _print_progress
     )
     with ExperimentLock(controller.run_dir):
-        asyncio.run(_run_with_cancel(controller, prepare=True))
+        final = asyncio.run(_run_with_cancel(controller, prepare=True))
+    raise typer.Exit(_exit_for_final_state(experiment_id, final))
 
 
-async def _run_with_cancel(
-    controller: ExperimentController, *, prepare: bool = False
-) -> None:
+async def _run_with_cancel(controller: ExperimentController, *, prepare: bool = False) -> str:
     loop = asyncio.get_running_loop()
     cleanup = install_cancel_handlers(loop, controller.request_cancel)
     try:
@@ -232,12 +277,13 @@ async def _run_with_cancel(
             except BaseException:
                 controller.cleanup_staging()
                 raise
-        await controller.run()
+        return await controller.run()
     finally:
         cleanup()
 
 
 # ----------------------------------------------------------------- status --
+
 
 @app.command()
 def status(
@@ -253,9 +299,7 @@ def status(
     from roast_my_harness.spec.models import ExperimentSpec
 
     spec = ExperimentSpec.model_validate(json.loads(row["spec_json"]))
-    controller = ExperimentController(
-        spec, experiment_id, Path(row["run_dir"]), repo, None
-    )
+    controller = ExperimentController(spec, experiment_id, Path(row["run_dir"]), repo, None)
     controller.load_for_observation()
     snap = controller.snapshot()
     if json_output:
@@ -276,50 +320,23 @@ def status(
 
 # ----------------------------------------------------------------- report --
 
+
 @app.command()
 def report(experiment_id: str = typer.Argument(...)) -> None:
     """Regenerate summary.csv, summary.json, and report.md."""
-    repo = _repo()
-    row = repo.get_experiment(experiment_id)
-    if row is None:
+    try:
+        result = agent_service.AgentService().report(experiment_id)
+    except agent_service.UnknownExperimentError:
         typer.secho(f"unknown experiment {experiment_id}", fg=typer.colors.RED)
-        raise typer.Exit(1)
-    from roast_my_harness.auth import staging
-    from roast_my_harness.report import collect as report_collect
-    from roast_my_harness.report import exports as report_exports
-    from roast_my_harness.report import markdown as report_markdown
-
-    rd = Path(row["run_dir"])
-    with ExperimentLock(rd):
-        rows = report_collect.collect_rows(rd / "jobs")
-        if not rows:
-            typer.secho("no completed trials to report", fg=typer.colors.RED)
-            raise typer.Exit(1)
-        provenance: dict[str, Any] = {
-            "experiment_id": experiment_id,
-            "spec_hash": row["spec_hash"],
-        }
-        manifest_path = rd / "manifest.json"
-        if manifest_path.is_file():
-            try:
-                loaded = json.loads(manifest_path.read_text())
-            except json.JSONDecodeError:
-                loaded = None
-            if isinstance(loaded, dict):
-                provenance = loaded
-        provenance["secret_scan_scope"] = (
-            "all regular run artifacts after staging cleanup"
-        )
-        provenance["secret_scan_hits"] = staging.scan_for_secrets(rd)
-        csv = report_exports.write_summary_csv(rd, rows)
-        report_exports.write_summary_json(rd, rows, provenance)
-        out = report_markdown.generate_report(
-            rd, experiment_id=experiment_id, provenance=provenance, rows=rows
-        )
-    typer.secho(f"wrote {csv} and {out}", fg=typer.colors.GREEN)
+        raise typer.Exit(1) from None
+    except agent_service.ServiceError as error:
+        typer.secho(str(error), fg=typer.colors.RED)
+        raise typer.Exit(1) from None
+    typer.secho(f"wrote {result.csv_path} and {result.markdown_path}", fg=typer.colors.GREEN)
 
 
 # ------------------------------------------------------------------- list --
+
 
 @app.command("list")
 def list_experiments(
@@ -331,7 +348,9 @@ def list_experiments(
     if json_output:
         print(
             json.dumps(
-                [dict(r) for r in rows], indent=2, default=str,
+                [dict(r) for r in rows],
+                indent=2,
+                default=str,
             )
         )
         return
@@ -341,13 +360,16 @@ def list_experiments(
 
 # ------------------------------------------------------------------- auth --
 
+
 @auth_app.command("status")
 def auth_status() -> None:
     """Show credential status without printing token values."""
     cred = auth_service.codex_credential()
     if cred is None:
-        typer.echo(f"no {auth_service.CODEX_PROVIDER} credential at "
-                   f"{auth_service.pi_auth_file()}; run pi /login codex")
+        typer.echo(
+            f"no {auth_service.CODEX_PROVIDER} credential at "
+            f"{auth_service.pi_auth_file()}; run pi /login codex"
+        )
         raise typer.Exit(1)
     expiry = auth_service.credential_expiry(cred)
     state = "EXPIRED (host must re-login)" if auth_service.refresh_hint(cred) else "valid"
@@ -386,7 +408,119 @@ def auth_logout(
     typer.echo("removed")
 
 
-# ---------------------------------------------------------------- default --
+@app.command()
+def setup(
+    agent: str | None = typer.Option(
+        None, help="Client to configure: pi or claude. Default: detect."
+    ),
+    scope: str = typer.Option("user", help="Where to install: user or project."),
+) -> None:
+    """Install integrations for one agent (idempotent)."""
+    from roast_my_harness import setup as setup_mod
+
+    agents = [agent] if agent else setup_mod.detect_agents()
+    if not agents:
+        typer.secho(
+            "no agent given and none detected; pass --agent pi or claude", fg=typer.colors.RED
+        )
+        raise typer.Exit(1)
+    problems = False
+    for one in agents:
+        typer.echo(f"{one} ({scope}):")
+        for action in setup_mod.setup(one, scope):
+            mark = "!" if action.problem else ("*" if action.changed else " ")
+            typer.echo(f"  {mark} {action.name}: {action.detail}")
+            problems |= action.problem
+    if problems:
+        raise typer.Exit(1)
+
+
+@app.command()
+def doctor() -> None:
+    """Report pi, pier, docker, auth, model, and integration health."""
+    from roast_my_harness import setup as setup_mod
+
+    results = setup_mod.run_doctor()
+    typer.echo(preflight.format_table(results))
+    if preflight.has_failures(results):
+        raise typer.Exit(1)
+
+
+tool_app = typer.Typer(help="Machine-facing JSON tool for agents.")
+app.add_typer(tool_app, name="tool", hidden=True)
+
+
+def _tool_call(fn, *args, **kwargs):
+    """Run one service action; ServiceErrors come back as JSON."""
+    try:
+        return fn(*args, **kwargs)
+    except agent_service.ServiceError as error:
+        print(
+            json.dumps(
+                {"ok": False, "error": {"code": error.code, "message": str(error)}},
+                indent=2,
+            )
+        )
+        raise typer.Exit(1) from None
+
+
+@tool_app.command("prepare")
+def tool_prepare(
+    spec_path: Path = typer.Argument(..., help="Experiment TOML file."),
+    skip_docker: bool = typer.Option(False, help="Skip docker checks."),
+) -> None:
+    """Validate and return a plan awaiting confirmation (JSON)."""
+    result = agent_service.AgentService().prepare(spec_path, skip_docker=skip_docker)
+    print(result.model_dump_json(exclude_none=True, indent=2))
+    if not result.ok:
+        raise typer.Exit(1)
+
+
+@tool_app.command("start")
+def tool_start(
+    plan_id: str = typer.Argument(..., help="Plan id from prepare."),
+    skip_docker: bool = typer.Option(False, help="Skip docker checks."),
+) -> None:
+    """Launch an approved plan (JSON). Idempotent per plan_id."""
+    result = _tool_call(agent_service.AgentService().start, plan_id, skip_docker=skip_docker)
+    print(result.model_dump_json(exclude_none=True, indent=2))
+
+
+@tool_app.command("status")
+def tool_status(
+    experiment_id: str = typer.Argument(...),
+) -> None:
+    """Current experiment matrix and aggregates (JSON)."""
+    result = _tool_call(agent_service.AgentService().status, experiment_id)
+    print(result.model_dump_json(exclude_none=True, indent=2))
+
+
+@tool_app.command("cancel")
+def tool_cancel(
+    experiment_id: str = typer.Argument(...),
+) -> None:
+    """Ask a live worker to cancel gracefully (JSON)."""
+    result = _tool_call(agent_service.AgentService().cancel, experiment_id)
+    print(result.model_dump_json(exclude_none=True, indent=2))
+
+
+@tool_app.command("report")
+def tool_report(
+    experiment_id: str = typer.Argument(...),
+) -> None:
+    """Regenerate summary and report artifacts (JSON)."""
+    result = _tool_call(agent_service.AgentService().report, experiment_id)
+    print(result.model_dump_json(exclude_none=True, indent=2))
+
+
+@app.command("_worker", hidden=True)
+def worker(
+    spec_path: Path = typer.Argument(...),
+    skip_docker: bool = typer.Option(False, help="Skip docker checks."),
+) -> None:
+    """Internal: run one prepared experiment headlessly."""
+    raise typer.Exit(agent_service.run_experiment_worker(spec_path, skip_docker=skip_docker))
+
 
 @app.command("import-dse")
 def import_dse(
@@ -416,9 +550,7 @@ def import_dse(
 @app.callback()
 def _default(
     ctx: typer.Context,
-    version: bool = typer.Option(
-        False, "--version", help="Show version and exit."
-    ),
+    version: bool = typer.Option(False, "--version", help="Show version and exit."),
 ) -> None:
     if version:
         typer.echo(f"roast-my-harness {__version__}")
