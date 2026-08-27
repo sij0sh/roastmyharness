@@ -182,6 +182,17 @@ class AgentService:
                 trials=len(tasks) * len(arms),
                 max_parallel=spec.peak_concurrency(),
                 model=spec.model.full_id(),
+                thinking=spec.thinking,
+                control=(
+                    "excluded"
+                    if spec.control is None or not spec.control.enabled
+                    else "fresh"
+                    if spec.control.reuse == "never"
+                    else "historic"
+                ),
+                task_ids=[task.task_id for task in tasks],
+                tasks_path=str(spec.tasks.path),
+                arm_ids=[arm.id for arm in arms],
             ),
             warnings=warnings,
             next_action="start",

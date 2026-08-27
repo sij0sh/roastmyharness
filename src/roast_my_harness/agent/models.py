@@ -25,6 +25,11 @@ class ExperimentSummary(_Response):
     trials: int
     max_parallel: int
     model: str
+    thinking: str = "high"
+    control: str = "excluded"
+    task_ids: list[str] = []
+    tasks_path: str | None = None
+    arm_ids: list[str] = []
 
 
 class PrepareResult(_Response):

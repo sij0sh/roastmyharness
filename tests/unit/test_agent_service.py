@@ -74,6 +74,11 @@ def test_prepare_ready_for_confirmation(tmp_path, green_preflight):
     assert result.experiment.arms == 2  
     assert result.experiment.trials == 2
     assert result.experiment.model == "openai-codex/gpt-5.6-luna"
+    assert result.experiment.thinking == "high"
+    assert result.experiment.control == "historic"
+    assert result.experiment.task_ids == ["t1"]
+    assert result.experiment.tasks_path == str((tmp_path / "dataset").resolve())
+    assert result.experiment.arm_ids == ["control", "bare"]
     plan_file = tmp_path / "plans" / f"{result.plan_id}.json"
     assert plan_file.is_file()
     plan = json.loads(plan_file.read_text())
