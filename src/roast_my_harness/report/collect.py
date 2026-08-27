@@ -11,7 +11,7 @@ from roast_my_harness.telemetry.result import is_trial_dir, trial_row
 def collect_rows(jobs_root: Path) -> list[dict[str, Any]]:
     """One row per trial result.json under <variant>/... in jobs_root.
 
-    jobs_root is `<run>/jobs` for roast-my-harness runs, or a legacy DSE
+    jobs_root is `<run>/jobs` for roastmyharness runs, or a legacy DSE
     `results-*` directory (same <variant>/<timestamp>/<trial> layout).
     """
     selected: dict[tuple[str, str], tuple[int, dict[str, Any]]] = {}

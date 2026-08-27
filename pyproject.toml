@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "roast-my-harness"
+name = "roastmyharness"
 dynamic = ["version"]
 description = "Terminal tool that compares Pi extensions and skills on identical Pier tasks"
 readme = "README.md"
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-roast-my-harness = "roast_my_harness.cli:main"
+roastmyharness = "roast_my_harness.cli:main"
 
 [dependency-groups]
 dev = [

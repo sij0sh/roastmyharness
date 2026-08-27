@@ -20,7 +20,7 @@ from roast_my_harness.agent.service import AgentService, ServiceError
 
 TOOL_NAME = "roast_harness"
 TOOL_DESCRIPTION = (
-    "Run harness-comparison experiments via the roast-my-harness service. "
+    "Run harness-comparison experiments via the roastmyharness service. "
     "prepare validates an experiment TOML and returns a plan for user "
     "approval; start launches an approved plan_id in the background; status "
     "polls an experiment; cancel requests graceful cancellation; report "
@@ -76,7 +76,7 @@ def dispatch(service: AgentService, method: str, params: Any) -> Any:
         return {
             "protocolVersion": _negotiated_version(params),
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "roast-my-harness", "version": __version__},
+            "serverInfo": {"name": "roastmyharness", "version": __version__},
         }
     if method == "ping":
         return {}

@@ -88,7 +88,7 @@ class TestInitialize:
         result = dispatch(FakeService(), "initialize", {"protocolVersion": "2025-03-26"})
         assert result["protocolVersion"] == "2025-03-26"
         assert "tools" in result["capabilities"]
-        assert result["serverInfo"]["name"] == "roast-my-harness"
+        assert result["serverInfo"]["name"] == "roastmyharness"
 
     def test_unknown_version_falls_back(self):
         result = dispatch(FakeService(), "initialize", {"protocolVersion": "1999-01-01"})

@@ -37,7 +37,7 @@ interface RoastResponse {
 }
 
 function roastBinary(): string {
-	return process.env.ROAST_MY_HARNESS_BIN || "roast-my-harness";
+	return process.env.ROAST_MY_HARNESS_BIN || "roastmyharness";
 }
 
 function buildArgs(params: {
@@ -91,12 +91,12 @@ export default function (pi: ExtensionAPI) {
 		name: "roast_harness",
 		label: "RoastMyHarness",
 		description:
-			"Run harness-comparison experiments via the roast-my-harness service. " +
+			"Run harness-comparison experiments via the roastmyharness service. " +
 			"prepare validates an experiment TOML and returns a plan for user approval; " +
 			"start launches an approved plan_id in the background; status polls an " +
 			"experiment; cancel requests graceful cancellation; report regenerates artifacts.",
 		promptSnippet:
-			"Prepare, launch, monitor, and report harness-comparison experiments via the roast-my-harness service",
+			"Prepare, launch, monitor, and report harness-comparison experiments via the roastmyharness service",
 		promptGuidelines: [
 			"Use roast_harness instead of shell commands when comparing harness configurations: prepare, then ask the user to approve the plan, then start with the returned plan_id.",
 			"Read roast_harness results as JSON; when prepare returns needs_input, resolve the listed questions instead of guessing.",

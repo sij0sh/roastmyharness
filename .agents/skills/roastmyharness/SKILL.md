@@ -1,22 +1,22 @@
 ---
-name: roast-my-harness
+name: roastmyharness
 description: Drive the roast_harness tool to design, validate, run, resume, and report Pi extension/skill comparison experiments on identical Pier tasks. Use when the user wants to compare harnesses, run an experiment, check run status, resume an interrupted run, or read results.
 ---
 
 # RoastMyHarness
 
-roast-my-harness compares Pi extensions and skills on identical Pier tasks.
+roastmyharness compares Pi extensions and skills on identical Pier tasks.
 One TOML file defines a control arm plus variants. The CLI runs every
 variant x task cell and writes summary.csv, summary.json, and report.md.
 
 ## Prerequisites
 
 - Pi or Claude Code with the roast_harness tool available
-  (`roast-my-harness setup --agent <pi|claude>` installs it).
+  (`roastmyharness setup --agent <pi|claude>` installs it).
 - Pier 0.3.x, docker, and node/npm in task containers.
-- Codex auth: `roast-my-harness auth status`. If missing, the user must run
+- Codex auth: `roastmyharness auth status`. If missing, the user must run
   `pi /login codex` once; the CLI reuses `~/.pi/agent/auth.json`.
-- `roast-my-harness doctor` verifies all of the above in one table.
+- `roastmyharness doctor` verifies all of the above in one table.
 
 ## Tool usage
 
@@ -24,7 +24,7 @@ Prefer the `roast_harness` tool over shell commands in agent sessions; it
 is the same code path with JSON responses.
 
 1. Ask the user for the experiment TOML (or create one with
-   `roast-my-harness init` and edit it). Set `name`, `pi_version`,
+   `roastmyharness init` and edit it). Set `name`, `pi_version`,
    `thinking`, `[model]`, and `[tasks] path`. Add one `[[variants]]` block
    per arm.
 2. Call roast_harness with `action: "prepare"` and `spec_path`. Review the
@@ -53,8 +53,8 @@ is the same code path with JSON responses.
 | "how is the run going?" | status |
 | "stop the run" | cancel |
 | "what were the results?" | report, read report.md |
-| "check login" | `roast-my-harness auth status` |
-| "set it up" / "is it installed?" | `roast-my-harness setup`, `doctor` |
+| "check login" | `roastmyharness auth status` |
+| "set it up" / "is it installed?" | `roastmyharness setup`, `doctor` |
 
 ## Notes
 

@@ -22,8 +22,8 @@ from roast_my_harness.auth import service as auth_service
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import preflight
 
-SKILL_NAME = "roast-my-harness"
-MCP_SERVER_NAME = "roast-my-harness"
+SKILL_NAME = "roastmyharness"
+MCP_SERVER_NAME = "roastmyharness"
 
 
 @dataclass(frozen=True)
@@ -102,9 +102,9 @@ def _write_mcp_config(config_path: Path) -> ActionResult:
 
 
 def _tool_visible() -> ActionResult:
-    exe = shutil.which("roast-my-harness")
+    exe = shutil.which("roastmyharness")
     if exe:
-        return ActionResult("tool", f"roast-my-harness at {exe}")
+        return ActionResult("tool", f"roastmyharness at {exe}")
     module = f"{Path(sys.executable).name} -m roast_my_harness"
     return ActionResult("tool", f"not on PATH; use {module} (or `uv tool install .`)", problem=True)
 
@@ -131,11 +131,11 @@ def setup(
 
     results: list[ActionResult] = []
     skill_source = root / ".agents/skills" / SKILL_NAME
-    extension_source = root / "integrations/pi/roast-my-harness.ts"
+    extension_source = root / "integrations/pi/roastmyharness.ts"
 
     if agent == "pi":
         base = home / ".pi/agent" if scope == "user" else root / ".pi"
-        results.append(_link(extension_source, base / "extensions/roast-my-harness.ts"))
+        results.append(_link(extension_source, base / "extensions/roastmyharness.ts"))
         if scope == "user":
             results.append(_link(skill_source, base / "skills" / SKILL_NAME))
         else:
@@ -165,7 +165,7 @@ def run_doctor(
     """One health table: pi, pier, docker, auth, model, integrations."""
     results: list[preflight.CheckResult] = []
     results.append(
-        preflight._ok("python", f"{sys.version.split()[0]} (roast-my-harness {__version__})")
+        preflight._ok("python", f"{sys.version.split()[0]} (roastmyharness {__version__})")
     )
 
     pi = shutil.which("pi")
@@ -209,15 +209,15 @@ def run_doctor(
     home = home or Path.home()
     if pi and root is not None:
         candidates = [
-            home / ".pi/agent/extensions/roast-my-harness.ts",
-            root / ".pi/extensions/roast-my-harness.ts",
+            home / ".pi/agent/extensions/roastmyharness.ts",
+            root / ".pi/extensions/roastmyharness.ts",
         ]
         installed = next((p for p in candidates if p.is_symlink() or p.exists()), None)
         results.append(
             preflight._ok("extension", str(installed))
             if installed
             else preflight._warn(
-                "extension", "not installed; run roast-my-harness setup --agent pi"
+                "extension", "not installed; run roastmyharness setup --agent pi"
             )
         )
 
@@ -243,8 +243,8 @@ def run_doctor(
                 registered = True
                 break
         results.append(
-            preflight._ok("mcp", "roast-my-harness server registered")
+            preflight._ok("mcp", "roastmyharness server registered")
             if registered
-            else preflight._warn("mcp", "not registered; run roast-my-harness setup --agent claude")
+            else preflight._warn("mcp", "not registered; run roastmyharness setup --agent claude")
         )
     return results

@@ -29,9 +29,9 @@ adapter).
 
 ## Uninstall
 
-    uv tool uninstall roast-my-harness
-    rm -rf ~/.local/share/roast-my-harness   # database + run outputs
-    rm -rf ~/.cache/roast-my-harness         # cached Pi homes
+    uv tool uninstall roastmyharness
+    rm -rf ~/.local/share/roastmyharness   # database + run outputs
+    rm -rf ~/.cache/roastmyharness         # cached Pi homes
     
 Run outputs live under the data dir unless `ROAST_MY_HARNESS_RUNS_DIR`
 is set. Set `ROAST_MY_HARNESS_DEBUG=1` to re-raise an unexpected CLI
@@ -40,10 +40,10 @@ exception with its traceback. The tool stores no credentials of its own; it reus
 
 ## Quick start
 
-    roast-my-harness init my-experiment.toml   # commented starter spec
+    roastmyharness init my-experiment.toml   # commented starter spec
     $EDITOR my-experiment.toml
-    roast-my-harness validate my-experiment.toml
-    roast-my-harness run my-experiment.toml
+    roastmyharness validate my-experiment.toml
+    roastmyharness run my-experiment.toml
 
 Other commands: `resume <id>`, `status <id>`, `report <id>`, `list`,
 `import-dse <results-dir>`, `auth status`, `setup [--agent pi|claude
@@ -51,18 +51,18 @@ Other commands: `resume <id>`, `status <id>`, `report <id>`, `list`,
 
 ## Agent skill and extension
 
-`.agents/skills/roast-my-harness/SKILL.md` lets Pi or Claude drive
+`.agents/skills/roastmyharness/SKILL.md` lets Pi or Claude drive
 experiments from plain-language requests; the `roast_harness` tool wraps
 the same service with JSON responses. Install integrations idempotently
 instead of symlinking by hand:
 
-    roast-my-harness setup --agent pi --scope user
-    roast-my-harness setup --agent claude --scope project
-    roast-my-harness doctor
+    roastmyharness setup --agent pi --scope user
+    roastmyharness setup --agent claude --scope project
+    roastmyharness doctor
 
 ## Experiment spec
 
-See `examples/` and `roast-my-harness init`. Key sections: `[model]`, `[tasks]`,
+See `examples/` and `roastmyharness init`. Key sections: `[model]`, `[tasks]`,
 `[concurrency]`, `[control]`, and one `[[variants]]` block per arm with
 local extensions (`kind = "local"`), pinned npm packages (`kind = "npm"`),
 skills, env pins, and typed setup handlers.
@@ -80,7 +80,7 @@ provider block is sliced per job, referenced env vars must be set, and
   reports, resume, cancellation).
 - Phase 4 (TUI): removed - CLI-first pivot. The Textual TUI is archived,
   untracked, under `.pi-files/tui-archive/`; the `textual` dependency is
-  gone and bare `roast-my-harness` prints help.
+  gone and bare `roastmyharness` prints help.
 - Phase 5 (auth): Phase A done (reuse pi Codex OAuth, status, staging).
   Integrated OAuth bridge is a follow-up; use `pi /login codex`.
 - Phase 6 (historic controls): done - eligible-pool reuse planning

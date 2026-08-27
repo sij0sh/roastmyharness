@@ -52,7 +52,7 @@ def run_checks(spec: ExperimentSpec, *, skip_docker: bool = False) -> list[Check
 def _python() -> CheckResult:
     # The install floor (requires-python >=3.12) guarantees the minimum;
     # this check reports what is actually running the CLI.
-    return _ok("python", f"{sys.version.split()[0]} (roast-my-harness {__version__})")
+    return _ok("python", f"{sys.version.split()[0]} (roastmyharness {__version__})")
 
 
 def _pier(spec: ExperimentSpec) -> CheckResult:

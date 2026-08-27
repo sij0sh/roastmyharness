@@ -312,7 +312,7 @@ class AgentService:
                 experiment_id=experiment_id,
                 state=state,
                 cancelled=False,
-                note="no live worker found; use roast-my-harness resume to continue",
+                note="no live worker found; use roastmyharness resume to continue",
             )
         try:
             os.kill(pid, signal.SIGINT)

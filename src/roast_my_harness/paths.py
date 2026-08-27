@@ -7,7 +7,7 @@ from pathlib import Path
 
 from platformdirs import user_cache_dir, user_data_dir
 
-APP_NAME = "roast-my-harness"
+APP_NAME = "roastmyharness"
 RUNS_DIR_ENV = "ROAST_MY_HARNESS_RUNS_DIR"
 
 
@@ -16,7 +16,7 @@ def data_dir() -> Path:
 
 
 def database_path() -> Path:
-    return data_dir() / "roast-my-harness.db"
+    return data_dir() / "roastmyharness.db"
 
 
 def cache_root() -> Path:

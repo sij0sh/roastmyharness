@@ -2529,7 +2529,7 @@ wheels = [
 ]
 
 [[package]]
-name = "roast-my-harness"
+name = "roastmyharness"
 source = { editable = "." }
 dependencies = [
     { name = "platformdirs" },

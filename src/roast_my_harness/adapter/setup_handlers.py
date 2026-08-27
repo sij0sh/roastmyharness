@@ -65,7 +65,7 @@ async def install_binary(agent, environment, step: dict[str, Any]) -> None:
     verify = step.get("verify") or target
     if not _safe_command_path(verify):
         raise ValueError(f"install_binary verify command is unsafe: {verify!r}")
-    remote_tmp = f"{REMOTE_TMP}/roast-my-harness-binary"
+    remote_tmp = f"{REMOTE_TMP}/roastmyharness-binary"
     await environment.upload_file(source, remote_tmp)
     await agent.exec_as_root(
         environment,

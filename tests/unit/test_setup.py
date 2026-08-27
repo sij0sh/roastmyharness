@@ -9,10 +9,10 @@ from roast_my_harness import setup as setup_mod
 
 
 def _make_repo(root: Path) -> Path:
-    skill = root / ".agents/skills/roast-my-harness"
+    skill = root / ".agents/skills/roastmyharness"
     skill.mkdir(parents=True)
-    (skill / "SKILL.md").write_text("# roast-my-harness\n")
-    ext = root / "integrations/pi/roast-my-harness.ts"
+    (skill / "SKILL.md").write_text("# roastmyharness\n")
+    ext = root / "integrations/pi/roastmyharness.ts"
     ext.parent.mkdir(parents=True)
     ext.write_text("export default {};\n")
     return root
@@ -23,17 +23,17 @@ def test_setup_pi_user_is_idempotent(tmp_path: Path) -> None:
     for _ in range(2):
         results = setup_mod.setup("pi", "user", root=root, home=home)
     assert not [r for r in results if r.problem]
-    link = home / ".pi/agent/skills/roast-my-harness"
+    link = home / ".pi/agent/skills/roastmyharness"
     assert (
-        link.is_symlink() and link.resolve() == (root / ".agents/skills/roast-my-harness").resolve()
+        link.is_symlink() and link.resolve() == (root / ".agents/skills/roastmyharness").resolve()
     )
-    assert (home / ".pi/agent/extensions/roast-my-harness.ts").is_symlink()
+    assert (home / ".pi/agent/extensions/roastmyharness.ts").is_symlink()
     assert not any(r.changed for r in results)
 
 
 def test_setup_preserves_existing_real_paths(tmp_path: Path) -> None:
     root, home = _make_repo(tmp_path / "repo"), tmp_path / "home"
-    conflict = home / ".pi/agent/extensions/roast-my-harness.ts"
+    conflict = home / ".pi/agent/extensions/roastmyharness.ts"
     conflict.parent.mkdir(parents=True)
     conflict.write_text("real file\n")
     results = setup_mod.setup("pi", "user", root=root, home=home)
@@ -44,12 +44,12 @@ def test_setup_preserves_existing_real_paths(tmp_path: Path) -> None:
 
 def test_setup_replaces_stale_symlink(tmp_path: Path) -> None:
     root, home = _make_repo(tmp_path / "repo"), tmp_path / "home"
-    stale = home / ".claude/skills/roast-my-harness"
+    stale = home / ".claude/skills/roastmyharness"
     stale.parent.mkdir(parents=True)
     stale.symlink_to(tmp_path / "elsewhere")
     results = setup_mod.setup("claude", "user", root=root, home=home)
     assert not [r for r in results if r.problem]
-    assert stale.resolve() == (root / ".agents/skills/roast-my-harness").resolve()
+    assert stale.resolve() == (root / ".agents/skills/roastmyharness").resolve()
 
 
 def test_setup_claude_merges_and_preserves_config(tmp_path: Path) -> None:

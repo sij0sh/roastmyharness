@@ -10,7 +10,7 @@ from typing import Any
 from roast_my_harness.telemetry.parser import final_event_metrics
 
 # Column order matches DSE-tests collect.py so downstream notebooks keep
-# working; new roast-my-harness columns may only be appended.
+# working; new roastmyharness columns may only be appended.
 COLUMNS = [
     "variant", "task", "resolved", "reward", "rewards",
     "exception_type", "input_tokens", "output_tokens", "cache_tokens",

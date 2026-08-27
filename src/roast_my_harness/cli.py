@@ -28,7 +28,7 @@ from roast_my_harness.tasks.discover import discover_tasks
 from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 
 app = typer.Typer(
-    name="roast-my-harness",
+    name="roastmyharness",
     help="Compare Pi extensions and skills on identical Pier tasks.",
     invoke_without_command=True,
     no_args_is_help=False,
@@ -385,7 +385,7 @@ def auth_login(
     if provider != "codex":
         typer.secho(f"unknown provider {provider}", fg=typer.colors.RED)
         raise typer.Exit(1)
-    typer.echo("run `pi` then `/login codex`; roast-my-harness reuses ~/.pi/agent/auth.json")
+    typer.echo("run `pi` then `/login codex`; roastmyharness reuses ~/.pi/agent/auth.json")
 
 
 @auth_app.command("logout")
@@ -553,7 +553,7 @@ def _default(
     version: bool = typer.Option(False, "--version", help="Show version and exit."),
 ) -> None:
     if version:
-        typer.echo(f"roast-my-harness {__version__}")
+        typer.echo(f"roastmyharness {__version__}")
         raise typer.Exit(0)
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
