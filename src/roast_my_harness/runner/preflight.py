@@ -44,6 +44,7 @@ def run_checks(spec: ExperimentSpec, *, skip_docker: bool = False) -> list[Check
         results.extend(_docker())
     results.extend(_tasks(spec))
     results.extend(_sources(spec))
+    results.extend(_npm_packages(spec))
     results.extend(_auth(spec))
     results.append(_disk(spec))
     return results
@@ -126,6 +127,53 @@ def _sources(spec: ExperimentSpec) -> list[CheckResult]:
                     f"{len(variant.skills)} skills",
                 )
             )
+    return results
+
+
+def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
+    packages = sorted(
+        {
+            extension.package
+            for variant in spec.arms()
+            for extension in variant.extensions
+            if extension.kind == "npm"
+        }
+        | {
+            step.package
+            for variant in spec.arms()
+            for step in variant.setup
+            if step.handler == "npm_pi_install"
+        }
+    )
+    if not packages:
+        return []
+
+    npm = shutil.which("npm")
+    if npm is None:
+        return [_fail("npm", "npm not on PATH; cannot validate pinned packages")]
+
+    results: list[CheckResult] = []
+    for package in packages:
+        try:
+            proc = subprocess.run(
+                [npm, "view", package, "version", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            results.append(_fail(f"npm package {package}", str(error)))
+            continue
+        if proc.returncode != 0:
+            results.append(
+                _fail(
+                    f"npm package {package}",
+                    "package or pinned version is not available from the npm registry",
+                )
+            )
+        else:
+            results.append(_ok(f"npm package {package}", "available"))
     return results
 
 
