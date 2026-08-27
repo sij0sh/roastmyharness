@@ -1,4 +1,4 @@
-"""Pydantic v2 experiment schema. One TOML file defines a whole experiment."""
+"""Pydantic v2 schema for TOML and YAML experiment files."""
 
 from __future__ import annotations
 

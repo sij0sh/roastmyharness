@@ -1,4 +1,4 @@
-"""TOML loading and path resolution."""
+"""TOML and YAML loading with path resolution."""
 
 from __future__ import annotations
 

@@ -45,6 +45,32 @@ def test_control_arm_added(tmp_path: Path):
     assert [v.id for v in spec.arms()] == ["control", "bareish"]
 
 
+def test_yaml_spec_loads(tmp_path: Path):
+    path = tmp_path / "experiment.yaml"
+    path.write_text(
+        """schema_version: 1
+name: yaml-demo
+tasks:
+  path: .
+control:
+  enabled: false
+variants:
+  - id: extension-a
+"""
+    )
+    spec = load_experiment(path)
+    assert spec.name == "yaml-demo"
+    assert spec.tasks.path == tmp_path.resolve()
+    assert [variant.id for variant in spec.arms()] == ["extension-a"]
+
+
+def test_yaml_requires_a_mapping(tmp_path: Path):
+    path = tmp_path / "experiment.yaml"
+    path.write_text("- not\n- a\n- mapping\n")
+    with pytest.raises(SpecError, match="expected a mapping"):
+        load_experiment(path)
+
+
 def test_reserved_control_id_rejected(tmp_path: Path):
     with pytest.raises(SpecError, match="reserved"):
         load_experiment(write(tmp_path, """

@@ -2534,6 +2534,7 @@ source = { editable = "." }
 dependencies = [
     { name = "platformdirs" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "typer" },
 ]
 
@@ -2550,6 +2551,7 @@ dev = [
 requires-dist = [
     { name = "platformdirs", specifier = ">=4.3" },
     { name = "pydantic", specifier = ">=2.9" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "typer", specifier = ">=0.15" },
 ]
 
