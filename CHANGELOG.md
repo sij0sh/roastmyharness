@@ -4,6 +4,12 @@
 
 ### Added
 
+- The Pi integration now provides the user-invoked `/roast` command and a
+  `/roastmyharness` alias.
+- The linear wizard collects variants, control mode, model, and task count.
+  It generates and validates YAML. It repeats a `Confirm and run` or `Change`
+  review loop before launch.
+- Experiment specs can now use YAML (`.yaml` or `.yml`) as well as TOML.
 - Live progress streaming for `roast_harness`. `AgentService.watch` emits
   read-only NDJSON events: snapshot, trial, state, heartbeat, and a final
   event with aggregates and report paths. It polls the same filesystem
@@ -62,6 +68,8 @@ stored spec) and old TOMLs still load (unknown keys are ignored).
 
 ### Removed (internal, no spec impact)
 
+- The agent skill and its implicit prose workflow. Pi setup now installs only
+  the slash-command extension. Claude setup now installs only the MCP server.
 - Typed event dataclasses; the controller now takes `progress` and `ask`
   callbacks. `run`/`resume` still print per-trial progress to stderr
   (`[roast] <variant>/<task>: <status>`).

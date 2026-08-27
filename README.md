@@ -5,7 +5,7 @@ Pier tasks. Successor to the DSE-tests script harness.
 
 ## What it does
 
-- One declarative TOML file defines control + variants (no Python edits).
+- One declarative TOML or YAML file defines control + variants (no Python edits).
 - Runs one Pier job per variant with the same model, thinking level, and
   fairness flags (`-nc --no-skills --no-prompt-templates --no-themes`).
 - Headless progress: `status <id>` prints the live matrix and totals;
@@ -50,15 +50,28 @@ Other commands: `resume <id>`, `status <id>`, `report <id>`, `list`,
 `import-dse <results-dir>`, `auth status`, `setup [--agent pi|claude
 --scope user|project]`, `doctor`, plus `--json` on validate/status/list.
 
-## Agent skill and extension
+## Pi slash command and integrations
 
-`.agents/skills/roastmyharness/SKILL.md` lets Pi or Claude drive
-experiments from plain-language requests; the `roast_harness` tool wraps
-the same service with JSON responses. `start` streams live progress
-(per-trial results, running cells, final aggregates) until the experiment
-finishes; `watch` attaches to an already-running experiment; `status`
-polls once (MCP clients use this). Install integrations idempotently
-instead of symlinking by hand:
+The Pi extension provides `/roast [task-root]`. `/roastmyharness` is an alias.
+The command follows
+a fixed wizard:
+
+1. Describe which variants to run and how many.
+2. Include or exclude a control. An included control can be fresh or historic.
+3. Select an available Pi model.
+4. Select one task, the full task set, or a custom task count or list.
+5. Review the generated YAML and validated trial plan.
+6. Choose `Confirm and run`, `Change`, or `Cancel`. `Change` accepts a free-form
+   revision and repeats generation, validation, and review.
+
+The active Pi model converts the open variant description and change requests
+into YAML. Accepted plans launch immediately. Generated files are kept under
+`.pi-files/roastmyharness/`. The extension also retains the `roast_harness`
+tool for status, watch, cancel, and report operations. `watch` streams
+per-trial results, running cells, final aggregates, and report paths.
+
+There is no integration skill to invoke implicitly. Install the Pi command or
+the Claude MCP server idempotently:
 
     roastmyharness setup --agent pi --scope user
     roastmyharness setup --agent claude --scope project
@@ -66,7 +79,9 @@ instead of symlinking by hand:
 
 ## Experiment spec
 
-See `examples/` and `roastmyharness init`. Key sections: `[model]`, `[tasks]`,
+The loader accepts TOML and YAML. `roastmyharness init` still writes a
+commented TOML starter. See `examples/` for more TOML examples. Key sections
+are `[model]`, `[tasks]`,
 `[concurrency]`, `[control]`, and one `[[variants]]` block per arm with
 local extensions (`kind = "local"`), pinned npm packages (`kind = "npm"`),
 skills, env pins, and typed setup handlers.
