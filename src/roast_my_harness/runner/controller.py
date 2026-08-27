@@ -761,14 +761,17 @@ class ExperimentController:
         self._refresh_cells()
         all_ids = self._task_ids()
         matrix: dict[str, dict[str, str]] = {}
+        matrix_rewards: dict[str, dict[str, float]] = {}
         held = self._held_tasks() if self._held_controls_pending() else set()
         reused = self._reused_tasks()
         for variant_id in self.jobs:
             cells = self.cells.get(variant_id, {})
             row: dict[str, str] = {}
+            rewards: dict[str, float] = {}
             for task_id in all_ids:
                 if task_id in cells:
                     row[task_id] = cells[task_id].status[0].upper()
+                    rewards[task_id] = cells[task_id].reward
                 elif variant_id == "control" and task_id in reused:
                     row[task_id] = "H"
                 elif variant_id == "control" and task_id in held:
@@ -778,7 +781,13 @@ class ExperimentController:
                         self.run_dir / "jobs" / variant_id, task_id
                     )
             matrix[variant_id] = row
-        return {"state": self.state, "matrix": matrix, "tasks": all_ids}
+            matrix_rewards[variant_id] = rewards
+        return {
+            "state": self.state,
+            "matrix": matrix,
+            "rewards": matrix_rewards,
+            "tasks": all_ids,
+        }
 
     def _reused_tasks(self) -> set[str]:
         """Control tasks covered by accepted history after the sentinel gate."""

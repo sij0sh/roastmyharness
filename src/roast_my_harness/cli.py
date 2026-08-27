@@ -504,6 +504,108 @@ def tool_cancel(
     print(result.model_dump_json(exclude_none=True, indent=2))
 
 
+@tool_app.command("watch")
+def tool_watch(
+    experiment_id: str = typer.Argument(...),
+    interval: float = typer.Option(
+        agent_service.WATCH_INTERVAL_SEC, "--interval", help="Poll seconds."
+    ),
+) -> None:
+    """Stream NDJSON progress until a final state (machine-facing)."""
+    import sys
+
+    try:
+        for event in agent_service.AgentService().watch(
+            experiment_id, interval_sec=max(interval, 0.2)
+        ):
+            sys.stdout.write(json.dumps(event, default=str) + "\n")
+            sys.stdout.flush()
+    except agent_service.UnknownExperimentError:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "unknown_experiment",
+                        "message": f"unknown experiment {experiment_id}",
+                    },
+                }
+            )
+        )
+        raise typer.Exit(1) from None
+
+
+@app.command("watch")
+def watch_human(
+    experiment_id: str = typer.Argument(...),
+    interval: float = typer.Option(
+        agent_service.WATCH_INTERVAL_SEC, "--interval", help="Poll seconds."
+    ),
+) -> None:
+    """Live matrix view for a running experiment (human-readable)."""
+    try:
+        for event in agent_service.AgentService().watch(
+            experiment_id, interval_sec=max(interval, 0.2)
+        ):
+            kind = event.get("event")
+            if kind in ("snapshot", "heartbeat"):
+                _print_watch_frame(event)
+            elif kind == "trial":
+                mark = "!" if event["status"] == "E" else ("+" if event["status"] == "P" else "-")
+                typer.secho(
+                    f"{mark} {event['variant']}/{event['task']}: "
+                    f"{event['status']}" + _reward_text(event.get("reward"))
+                )
+            elif kind == "final":
+                _print_watch_frame(event, final=True)
+    except agent_service.UnknownExperimentError:
+        typer.secho(f"unknown experiment {experiment_id}", fg=typer.colors.RED)
+        raise typer.Exit(1) from None
+
+
+def _reward_text(reward: Any) -> str:
+    if reward is None:
+        return ""
+    return f" reward={reward}"
+
+
+def _print_watch_frame(event: dict[str, Any], *, final: bool = False) -> None:
+    """Render one snapshot/final event as an ASCII frame."""
+    matrix = event.get("matrix") or {}
+    totals = event.get("totals") or {}
+    state = event.get("state", "?")
+    typer.echo()
+    label = "final" if final else "state"
+    typer.secho(f"{label}: {state}", bold=final)
+    if matrix:
+        variants = list(matrix)
+        tasks = sorted({t for row in matrix.values() for t in row})
+        typer.echo("\t".join(["task"] + variants))
+        for task in tasks:
+            typer.echo("\t".join([task] + [matrix[v].get(task, ".") for v in variants]))
+    for variant, counts in totals.items():
+        typer.echo(
+            f"{variant}: P={counts.get('P', 0)} F={counts.get('F', 0)} "
+            f"E={counts.get('E', 0)}"
+        )
+    aggregates = event.get("aggregates") or {}
+    for variant, agg in aggregates.items():
+        n = int(agg.get("n", 0))
+        resolved = int(agg.get("resolved", 0))
+        typer.echo(
+            f"{variant}: {resolved}/{n} resolved  "
+            f"in {agg.get('input_tokens', 0) / 1000:.0f}k  "
+            f"out {agg.get('output_tokens', 0) / 1000:.0f}k  "
+            f"wall {agg.get('wall_sec', 0) / 60:.0f}m  "
+            f"cost ${agg.get('cost_usd', 0):.2f}"
+        )
+    report = event.get("report") or {}
+    if report.get("markdown"):
+        typer.secho(f"report: {report['markdown']}", fg=typer.colors.GREEN)
+    if final and event.get("note"):
+        typer.secho(f"note: {event['note']}", fg=typer.colors.YELLOW)
+
+
 @tool_app.command("report")
 def tool_report(
     experiment_id: str = typer.Argument(...),

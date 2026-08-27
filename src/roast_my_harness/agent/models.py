@@ -60,6 +60,7 @@ class StatusResult(_Response):
     tasks: list[str]
     matrix: dict[str, dict[str, str]]
     totals: dict[str, dict[str, int]]
+    aggregates: dict[str, dict[str, float]] = {}
     report: ReportPaths | None
 
 

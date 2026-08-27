@@ -15,6 +15,8 @@ import re
 import signal
 import subprocess
 import sys
+import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -27,9 +29,11 @@ from roast_my_harness.errors import RoastMyHarnessError, SpecError
 from roast_my_harness.files import atomic_write_text
 from roast_my_harness.homes.sources import source_tree_hash
 from roast_my_harness.paths import data_dir, database_path, run_dir
+from roast_my_harness.report.collect import aggregate_by_variant, collect_rows
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import preflight
 from roast_my_harness.runner.controller import ExperimentController
+from roast_my_harness.runner.lock_probe import lock_is_free
 from roast_my_harness.runner.signals import install_cancel_handlers
 from roast_my_harness.spec.hashes import (
     experiment_hash as compute_experiment_hash,
@@ -47,6 +51,9 @@ from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 PLAN_ID_RE = re.compile(r"^plan_[0-9a-f]{12}$")
 FINAL_STATES = frozenset({"COMPLETE", "FAILED", "CANCELLED"})
 EXIT_CODES = {"FAILED": 2, "CANCELLED": 3}
+WATCH_INTERVAL_SEC = 2.0
+WATCH_HEARTBEAT_SEC = 30.0
+WATCH_WORKER_GRACE_SEC = 10.0
 
 
 class ServiceError(RoastMyHarnessError):
@@ -252,25 +259,36 @@ class AgentService:
             started=True,
         )
 
-    def status(self, experiment_id: str) -> models.StatusResult:
-        """Current matrix and aggregates; cheap to poll."""
+    def _observe(self, experiment_id: str) -> tuple[ExperimentController, Path]:
+        """Read-only observation of one experiment; caller closes no state.
+
+        Opens the DB, validates the stored spec, and returns an observing
+        controller plus the run dir. The DB connection is closed before
+        returning; the controller only touches the filesystem afterwards.
+        """
         repo = Repository(self.db_path)
         try:
             row = repo.get_experiment(experiment_id)
             if row is None:
                 raise UnknownExperimentError(f"unknown experiment {experiment_id}")
             spec = ExperimentSpec.model_validate(json.loads(row["spec_json"]))
-            controller = ExperimentController(spec, experiment_id, Path(row["run_dir"]), repo, None)
+            run_dir = Path(row["run_dir"])
+            controller = ExperimentController(spec, experiment_id, run_dir, repo, None)
             controller.load_for_observation()
-            snap = controller.snapshot()
-            state = str(snap["state"])
         finally:
             repo.close()
+        return controller, run_dir
+
+    def status(self, experiment_id: str) -> models.StatusResult:
+        """Current matrix and aggregates; cheap to poll."""
+        controller, rd = self._observe(experiment_id)
+        snap = controller.snapshot()
+        state = str(snap["state"])
         totals = {
             variant: {s: sum(1 for c in cells.values() if c == s) for s in "PFE"}
             for variant, cells in snap["matrix"].items()
         }
-        rd = run_dir(experiment_id)
+        aggregates = aggregate_by_variant(collect_rows(rd / "jobs"))
         report = (
             models.ReportPaths(markdown=str(rd / "report.md"), csv=str(rd / "summary.csv"))
             if (rd / "report.md").is_file()
@@ -284,8 +302,128 @@ class AgentService:
             tasks=list(snap["tasks"]),
             matrix=snap["matrix"],
             totals=totals,
+            aggregates=aggregates,
             report=report,
         )
+
+    def watch(
+        self,
+        experiment_id: str,
+        *,
+        interval_sec: float = WATCH_INTERVAL_SEC,
+        worker_grace_sec: float = WATCH_WORKER_GRACE_SEC,
+    ) -> Iterator[dict[str, Any]]:
+        """Yield NDJSON-ready dicts describing progress until a final state.
+
+        Read-only: never takes the experiment lock and never mutates state.
+        Emits a snapshot first, then trial/state events on change, a fresh
+        snapshot whenever the matrix changes, a heartbeat when quiet, and a
+        final event with aggregates and report paths. A non-final experiment
+        with no lockable run dir and no live worker terminates with a note
+        instead of hanging.
+        """
+        controller, rd = self._observe(experiment_id)
+        first = self._watch_snapshot(controller)
+        yield {"event": "snapshot", **first}
+        last_emit = time.monotonic()
+        started_at = last_emit
+        state_prev = first["state"]
+        matrix_prev = first["matrix"]
+        while True:
+            time.sleep(interval_sec)
+            controller, rd = self._observe(experiment_id)
+            snap = self._watch_snapshot(controller)
+            state, matrix = snap["state"], snap["matrix"]
+            now = time.monotonic()
+            if state != state_prev:
+                yield {"event": "state", "state": state}
+                state_prev = state
+                last_emit = now
+            if matrix != matrix_prev:
+                for variant, cells in matrix.items():
+                    old = matrix_prev.get(variant, {})
+                    for task, status in cells.items():
+                        if status in ("P", "F", "E") and old.get(task) != status:
+                            yield {
+                                "event": "trial",
+                                "variant": variant,
+                                "task": task,
+                                "status": status,
+                                "reward": snap["rewards"].get(variant, {}).get(task),
+                            }
+                yield {"event": "snapshot", **snap}
+                matrix_prev = matrix
+                last_emit = now
+                continue
+            if state in FINAL_STATES:
+                yield self._watch_final(experiment_id, rd, state)
+                return
+            quiet = now - last_emit >= WATCH_HEARTBEAT_SEC
+            orphan = (
+                now - started_at >= worker_grace_sec
+                and lock_is_free(rd)
+                and self._worker_pid(experiment_id) is None
+            )
+            if orphan:
+                yield self._watch_final(
+                    experiment_id,
+                    rd,
+                    state,
+                    note="worker not running; run resume or cancel to clean up",
+                )
+                return
+            if quiet:
+                yield {"event": "heartbeat", "state": state}
+                last_emit = now
+
+    @staticmethod
+    def _watch_snapshot(controller: ExperimentController) -> dict[str, Any]:
+        snap = controller.snapshot()
+        totals = {
+            variant: {s: sum(1 for c in cells.values() if c == s) for s in "PFE"}
+            for variant, cells in snap["matrix"].items()
+        }
+        running = [
+            [variant, task]
+            for variant, cells in snap["matrix"].items()
+            for task, status in cells.items()
+            if status == "~"
+        ]
+        return {
+            "state": snap["state"],
+            "totals": totals,
+            "matrix": snap["matrix"],
+            "rewards": snap["rewards"],
+            "running": running,
+        }
+
+    def _watch_final(
+        self,
+        experiment_id: str,
+        rd: Path,
+        state: str,
+        *,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """Final event: aggregates over completed trials plus report paths."""
+        aggregates = aggregate_by_variant(collect_rows(rd / "jobs"))
+        report: dict[str, str] | None = None
+        if (rd / "report.md").is_file():
+            report = {
+                "markdown": str(rd / "report.md"),
+                "csv": str(rd / "summary.csv"),
+            }
+        event: dict[str, Any] = {
+            "event": "final",
+            "experiment_id": experiment_id,
+            "state": state,
+            "final": state in FINAL_STATES,
+            "aggregates": aggregates,
+            "report": report,
+        }
+        if note:
+            event["note"] = note
+        return event
 
     def cancel(self, experiment_id: str) -> models.CancelResult:
         """Ask a live worker to cancel gracefully."""
