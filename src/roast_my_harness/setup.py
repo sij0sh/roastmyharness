@@ -1,11 +1,10 @@
 """Idempotent client integration: ``setup`` and ``doctor``.
 
-setup installs the skill, the Pi extension, and the Claude MCP server
-configuration for one agent (pi or claude) and one scope (user or
-project). Existing user configuration is preserved: only symlinks that
-point elsewhere are replaced, and real files or directories are never
-touched. doctor reports Pi, Pier, Docker, auth, model, and integration
-health in one place.
+setup installs the Pi slash-command extension or the Claude MCP server
+configuration for one agent and one scope. Existing user configuration
+is preserved: only symlinks that point elsewhere are replaced, and real
+files or directories are never touched. doctor reports Pi, Pier, Docker,
+auth, model, and integration health in one place.
 """
 
 from __future__ import annotations
@@ -22,8 +21,8 @@ from roast_my_harness.auth import service as auth_service
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import preflight
 
-SKILL_NAME = "roastmyharness"
 MCP_SERVER_NAME = "roastmyharness"
+OBSOLETE_SKILL_NAME = "roastmyharness"
 
 
 @dataclass(frozen=True)
@@ -35,13 +34,13 @@ class ActionResult:
 
 
 def repo_root() -> Path | None:
-    """Locate a checkout that carries the skill and extension sources."""
+    """Locate a checkout that carries the Pi extension source."""
     env = os.environ.get("ROAST_MY_HARNESS_REPO")
     candidates = [Path(env).resolve()] if env else []
     here = Path(__file__).resolve()
     candidates.extend([Path.cwd(), *here.parents])
     for base in candidates:
-        if (base / ".agents/skills" / SKILL_NAME / "SKILL.md").is_file():
+        if (base / "integrations/pi/roastmyharness.ts").is_file():
             return base
     return None
 
@@ -65,6 +64,24 @@ def _link(source: Path, dest: Path) -> ActionResult:
     except OSError as e:
         return ActionResult(label, str(e), problem=True)
     return ActionResult(label, f"{source} -> {dest}", changed=True)
+
+
+def _remove_obsolete_skill(dest: Path) -> ActionResult:
+    """Remove the symlink created by older releases without touching real paths."""
+    label = f"remove obsolete skill {dest}"
+    try:
+        if dest.is_symlink():
+            dest.unlink()
+            return ActionResult(label, "removed", changed=True)
+        if dest.exists():
+            return ActionResult(
+                label,
+                f"{dest} exists and is not a symlink; remove it manually",
+                problem=True,
+            )
+    except OSError as error:
+        return ActionResult(label, str(error), problem=True)
+    return ActionResult(label, "already absent")
 
 
 def mcp_entry() -> dict[str, object]:
@@ -130,24 +147,15 @@ def setup(
         ]
 
     results: list[ActionResult] = []
-    skill_source = root / ".agents/skills" / SKILL_NAME
     extension_source = root / "integrations/pi/roastmyharness.ts"
 
     if agent == "pi":
         base = home / ".pi/agent" if scope == "user" else root / ".pi"
         results.append(_link(extension_source, base / "extensions/roastmyharness.ts"))
-        if scope == "user":
-            results.append(_link(skill_source, base / "skills" / SKILL_NAME))
-        else:
-            results.append(
-                ActionResult(
-                    f"skill {SKILL_NAME}",
-                    f"project skill already discovered at {skill_source}",
-                )
-            )
+        results.append(_remove_obsolete_skill(base / "skills" / OBSOLETE_SKILL_NAME))
     else:
         base = home / ".claude" if scope == "user" else root / ".claude"
-        results.append(_link(skill_source, base / "skills" / SKILL_NAME))
+        results.append(_remove_obsolete_skill(base / "skills" / OBSOLETE_SKILL_NAME))
         config = home / ".claude.json" if scope == "user" else root / ".mcp.json"
         results.append(_write_mcp_config(config))
 
@@ -223,13 +231,6 @@ def run_doctor(
 
     claude = shutil.which("claude")
     if claude and root is not None:
-        claude_skill = home / ".claude/skills" / SKILL_NAME
-        found = claude_skill.is_symlink() or (root / ".claude/skills" / SKILL_NAME).is_symlink()
-        results.append(
-            preflight._ok("skill", str(claude_skill))
-            if found
-            else preflight._warn("skill", f"not found at {claude_skill}")
-        )
         configs = [home / ".claude.json", root / ".mcp.json"]
         registered = False
         for config in configs:
