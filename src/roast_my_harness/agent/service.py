@@ -35,7 +35,6 @@ from roast_my_harness.report.collect import (
     collect_rows,
     latest_result_path,
 )
-from roast_my_harness.telemetry.result import trial_row
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import preflight
 from roast_my_harness.runner.controller import ExperimentController
@@ -53,6 +52,7 @@ from roast_my_harness.store.locking import ExperimentLock
 from roast_my_harness.store.repository import Repository
 from roast_my_harness.tasks.discover import discover_tasks
 from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
+from roast_my_harness.telemetry.result import trial_row
 
 PLAN_ID_RE = re.compile(r"^plan_[0-9a-f]{12}$")
 FINAL_STATES = frozenset({"COMPLETE", "FAILED", "CANCELLED"})

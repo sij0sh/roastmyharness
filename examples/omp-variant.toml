@@ -1,0 +1,29 @@
+# omp (oh-my-pi) harness-comparison arm against the pi control.
+#
+# The omp pin comes from the registry default (18.0.9); when omp is the
+# spec's default agent, pin it with `agent_version = "x.y.z"`. omp is a
+# pi-family fork: same home layout and event stream, but it runs on Bun
+# (installed in-container) and is staged models.yml + config.yml.
+schema_version = 1
+name = "omp-variant"
+pi_version = "0.84.3"
+
+[model]
+id = "gpt-5.6-luna"
+provider = "openai-codex"
+
+[tasks]
+path = "~/datasets/my-tasks"
+include = ["*"]
+exclude = []
+
+[concurrency]
+per_variant = 2
+
+[control]
+enabled = true
+
+[[variants]]
+id = "omp"
+name = "oh-my-pi 18"
+agent = "omp"

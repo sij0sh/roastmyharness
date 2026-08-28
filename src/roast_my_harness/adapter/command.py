@@ -37,16 +37,22 @@ def build_run_command(
     thinking: str | None,
     skill_paths: list[str],
     extra_flags: list[str],
+    fairness_flags: str = FAIRNESS_FLAGS,
+    binary: str = "pi",
 ) -> str:
-    """The in-container pi invocation, streamed through the event stamper."""
+    """The in-container agent invocation, streamed through the event stamper.
+
+    binary and fairness_flags let pi-family forks (omp) reuse the command
+    shape while pinning their own fairness contract.
+    """
     parts = [
         f"export PI_CODING_AGENT_DIR={shlex.quote(REMOTE_HOME)};",
-        "pi --mode json",
+        f"{binary} --mode json",
         f"--model {shlex.quote(model)}",
     ]
     if thinking:
         parts.append(f"--thinking {shlex.quote(thinking)}")
-    parts.append(FAIRNESS_FLAGS)
+    parts.append(fairness_flags)
     flags = skill_flags(skill_paths)
     if flags:
         parts.append(flags)
