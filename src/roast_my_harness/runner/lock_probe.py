@@ -7,12 +7,8 @@ succeed. The run/resume worker holds that lock for the whole experiment.
 
 from __future__ import annotations
 
+import fcntl
 from pathlib import Path
-
-try:
-    import fcntl
-except ImportError:  
-    fcntl = None
 
 
 def lock_is_free(run_dir: Path) -> bool:
@@ -25,8 +21,6 @@ def lock_is_free(run_dir: Path) -> bool:
     path = run_dir / ".experiment.lock"
     if not path.is_file():
         return True
-    if fcntl is None:
-        return False
     try:
         handle = path.open("r", encoding="utf-8")
     except OSError:

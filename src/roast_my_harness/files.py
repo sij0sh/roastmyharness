@@ -18,10 +18,7 @@ def atomic_write_text(path: Path, text: str, *, mode: int | None = None) -> None
     open_fd: int | None = fd
     try:
         if mode is not None:
-            try:
-                os.fchmod(fd, mode)
-            except AttributeError:
-                os.chmod(temporary, mode)
+            os.fchmod(fd, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             open_fd = None
             handle.write(text)
