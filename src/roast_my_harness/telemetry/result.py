@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from roast_my_harness.runner.reconcile import PASS_THRESHOLD
 from roast_my_harness.telemetry.parser import final_event_metrics
 
 # Column order matches DSE-tests collect.py so downstream notebooks keep
@@ -70,7 +71,7 @@ def trial_row(result_path: Path, variant: str) -> dict[str, Any] | None:
         reward = 0.0
     if exception_type:
         reward = 0.0
-    resolved = not exception_type and reward >= 0.999
+    resolved = not exception_type and reward >= PASS_THRESHOLD
 
     agent = result.get("agent_result") or {}
     timing = result.get("agent_execution") or {}
