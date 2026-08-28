@@ -173,6 +173,56 @@ def test_watch_reports_trial_transitions(environment, monkeypatch):
     assert finals[0]["aggregates"]["bare"]["n"] == 2
 
 
+def test_watch_trial_event_carries_stats(environment, monkeypatch):
+    """Each trial event carries trial_row stats; crashed trials carry none."""
+    db_path, run_dir = environment
+    service = svc.AgentService(plans_dir=run_dir.parent / "plans", db_path=db_path)
+    _patch_observe_states(
+        monkeypatch,
+        service,
+        run_dir,
+        [
+            {"state": "RUNNING", "results": []},
+            {"state": "RUNNING", "results": [("bare", "t1", 1.0)]},
+            {"state": "COMPLETE", "results": []},
+        ],
+    )
+    
+    trial = run_dir / "jobs" / "bare" / "attempt-1" / "t2__1"
+    (trial / "agent").mkdir(parents=True, exist_ok=True)
+    (trial / "verifier").mkdir(parents=True, exist_ok=True)
+
+    events = list(service.watch(EXPERIMENT_ID, interval_sec=0.01))
+    trials = {t["task"]: t for t in events if t["event"] == "trial"}
+    assert trials["t1"]["status"] == "P"
+    assert trials["t1"]["stats"] == {
+        "input_tokens": 1000,
+        "output_tokens": 500,
+        "tool_calls": 0,
+        "wall_sec": 60.0,
+    }
+
+
+def test_trial_stats_skip_crashed_trials(environment):
+    """A trial whose agent never finished reports no stats, not zeros."""
+    db_path, run_dir = environment
+    trial = run_dir / "jobs" / "bare" / "attempt-1" / "t1__1"
+    (trial / "agent").mkdir(parents=True)
+    (trial / "verifier").mkdir(parents=True)
+    (trial / "result.json").write_text(
+        json.dumps(
+            {
+                "task_name": "t1",
+                "verifier_result": {"rewards": {"reward": 1.0}},
+                "exception_info": {},
+                "agent_result": None,
+                "agent_execution": None,
+            }
+        )
+    )
+    assert svc._trial_stats(run_dir, "bare", "t1") == {}
+
+
 def test_watch_terminates_when_worker_gone(environment, monkeypatch):
     db_path, run_dir = environment
     (run_dir / ".experiment.lock").write_text("{}\n")

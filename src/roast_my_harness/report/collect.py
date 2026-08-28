@@ -2,10 +2,42 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 from roast_my_harness.telemetry.result import is_trial_dir, trial_row
+
+
+def latest_result_path(jobs_root: Path, variant: str, task: str) -> Path | None:
+    """Newest trial result.json under jobs_root/<variant> for one task.
+
+    Mirrors the collect_rows selection (trial-dir check, task_name from
+    result.json with the trial dir name as fallback, newest mtime wins)
+    without parsing any trial's agent logs.
+    """
+    variant_dir = jobs_root / variant
+    if not variant_dir.is_dir():
+        return None
+    best: tuple[int, Path] | None = None
+    for result_path in variant_dir.rglob("result.json"):
+        if not is_trial_dir(result_path.parent):
+            continue
+        try:
+            result = json.loads(result_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(result, dict):
+            continue
+        if str(result.get("task_name") or result_path.parent.name) != task:
+            continue
+        try:
+            stamp = result_path.stat().st_mtime_ns
+        except OSError:
+            stamp = 0
+        if best is None or stamp > best[0]:
+            best = (stamp, result_path)
+    return best[1] if best else None
 
 
 def collect_rows(jobs_root: Path) -> list[dict[str, Any]]:

@@ -67,11 +67,21 @@ interface RoastResponse {
 	[key: string]: unknown;
 }
 
+interface TrialStats {
+	input_tokens?: number;
+	output_tokens?: number;
+	cache_tokens?: number;
+	tool_calls?: number;
+	turns?: number;
+	wall_sec?: number;
+}
+
 interface TrialEvent {
 	variant: string;
 	task: string;
 	status: string;
 	reward?: number;
+	stats?: TrialStats;
 }
 
 interface WatchDetails {
@@ -86,6 +96,7 @@ interface WatchDetails {
 	matrix?: Record<string, Record<string, string>>;
 	running?: [string, string][];
 	recent: TrialEvent[];
+	summaries: TrialEvent[];
 	aggregates?: Record<string, Record<string, number>>;
 	report?: { markdown: string; csv: string } | null;
 }
@@ -116,6 +127,14 @@ const emptyUsage = (): Usage => ({
 
 function numeric(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function statNumber(value: unknown): number | undefined {
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) {
+		return Number(value);
+	}
+	return undefined;
 }
 
 function addUsage(target: Usage, value: unknown): void {
@@ -285,6 +304,52 @@ function renderTrials(trials: TrialEvent[], theme: ThemeLike, limit?: number): s
 		.join("\n");
 }
 
+const STATUS_WORDS: Record<string, string> = { P: "pass", F: "fail", E: "error" };
+
+function renderTrialSummaries(summaries: TrialEvent[], theme: ThemeLike): string {
+	const columns = ["in", "out", "cache", "tools", "turns", "wall"] as const;
+	const statKeys = [
+		"input_tokens",
+		"output_tokens",
+		"cache_tokens",
+		"tool_calls",
+		"turns",
+		"wall_sec",
+	] as const;
+	const lines: string[] = [];
+	for (const s of summaries) {
+		const word = STATUS_WORDS[s.status] ?? s.status;
+		const color = s.status === "P"
+			? "success"
+			: s.status === "F"
+				? "error"
+				: "warning";
+		const reward = s.reward !== undefined ? ` · reward ${s.reward}` : "";
+		lines.push(
+			`  ${statusIcon(s.status, theme.fg)} ${theme.fg("accent", s.variant)}` +
+				theme.fg("dim", "/") +
+				`${s.task}` +
+				theme.fg(color, ` · ${word}`) +
+				theme.fg("dim", reward),
+		);
+		const cells = statKeys.map((key, i) => {
+			const value = s.stats?.[key];
+			if (value === undefined) return "-";
+			return key === "wall_sec" ? `${value}s` : String(value);
+		});
+		const widths = cells.map((cell, i) => Math.max(cell.length, columns[i].length));
+		const pad = (cell: string, i: number) =>
+			i === cells.length - 1 ? cell : cell.padEnd(widths[i]);
+		lines.push(
+			"    " + columns.map((c, i) => theme.fg("muted", pad(c, i))).join("  "),
+		);
+		lines.push(
+			"    " + cells.map((cell, i) => theme.fg(color, pad(cell, i))).join("  "),
+		);
+	}
+	return lines.join("\n");
+}
+
 function countDone(details: WatchDetails): { done: number; total: number } {
 	let done = 0;
 	let total = 0;
@@ -334,12 +399,17 @@ async function streamWatch(
 		state: "?",
 		final: false,
 		recent: [],
+		summaries: [],
 	};
 
 	const emit = () => {
 		onUpdate?.({
 			content: [{ type: "text", text: oneLineStatus(details) }],
-			details: { ...details, recent: [...details.recent] },
+			details: {
+				...details,
+				recent: [...details.recent],
+				summaries: [...details.summaries],
+			},
 		});
 	};
 
@@ -353,11 +423,34 @@ async function streamWatch(
 		} else if (kind === "state") {
 			details.state = String(event.state ?? details.state);
 		} else if (kind === "trial") {
-			details.recent.push({
+			const summary: TrialEvent = {
 				variant: String(event.variant ?? "?"),
 				task: String(event.task ?? "?"),
 				status: String(event.status ?? "?"),
 				reward: typeof event.reward === "number" ? event.reward : undefined,
+			};
+			if (event.stats && typeof event.stats === "object" && !Array.isArray(event.stats)) {
+				const raw = event.stats as Record<string, unknown>;
+				const stats: TrialStats = {};
+				for (const key of [
+					"input_tokens",
+					"output_tokens",
+					"cache_tokens",
+					"tool_calls",
+					"turns",
+					"wall_sec",
+				] as const) {
+					const value = statNumber(raw[key]);
+					if (value !== undefined) stats[key] = value;
+				}
+				if (Object.keys(stats).length) summary.stats = stats;
+			}
+			details.summaries.push(summary);
+			details.recent.push({
+				variant: summary.variant,
+				task: summary.task,
+				status: summary.status,
+				reward: summary.reward,
 			});
 			if (details.recent.length > recentCap) {
 				details.recent.splice(0, details.recent.length - recentCap);
@@ -578,6 +671,11 @@ function renderWatchResult(
 	if (details.recent.length) {
 		const trialBlock = renderTrials(details.recent, theme, expanded ? undefined : 5);
 		if (trialBlock) text += `\n${trialBlock}`;
+	}
+
+	if (details.summaries.length) {
+		const block = renderTrialSummaries(details.summaries, theme);
+		if (block) text += `\n${block}`;
 	}
 
 	if (expanded && details.matrix && Object.keys(details.matrix).length) {

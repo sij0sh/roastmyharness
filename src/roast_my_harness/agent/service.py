@@ -30,7 +30,12 @@ from roast_my_harness.errors import RoastMyHarnessError, SpecError
 from roast_my_harness.files import atomic_write_text
 from roast_my_harness.homes.sources import source_tree_hash
 from roast_my_harness.paths import data_dir, database_path, run_dir
-from roast_my_harness.report.collect import aggregate_by_variant, collect_rows
+from roast_my_harness.report.collect import (
+    aggregate_by_variant,
+    collect_rows,
+    latest_result_path,
+)
+from roast_my_harness.telemetry.result import trial_row
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import preflight
 from roast_my_harness.runner.controller import ExperimentController
@@ -125,6 +130,38 @@ def _needs_input(field: str, message: str, choices: list[str] | None = None):
         state="needs_input",
         questions=[models.Question(field=field, message=message, choices=choices or [])],
     )
+
+
+WATCH_TRIAL_STAT_KEYS: tuple[tuple[str, str], ...] = (
+    ("input_tokens", "input_tokens"),
+    ("output_tokens", "output_tokens"),
+    ("cache_tokens", "cache_tokens"),
+    ("tool_calls", "tool_calls"),
+    ("turns", "agent_steps"),
+    ("wall_sec", "wall_sec"),
+)
+
+
+def _trial_stats(rd: Path, variant: str, task: str) -> dict[str, Any]:
+    """Per-trial stats for a just-completed cell, or {} when unmeasured.
+
+    A cell only reaches P/F/E after its result.json parses, so trial_row
+    can read the agent totals and event folds at flip time. Trials whose
+    agent never finished (crash) carry no agent_result; they report no
+    stats rather than zero defaults.
+    """
+    result_path = latest_result_path(rd / "jobs", variant, task)
+    if not result_path:
+        return {}
+    row = trial_row(result_path, variant)
+    if not row or row.get("input_tokens") in ("", None):
+        return {}
+    stats: dict[str, Any] = {}
+    for key, column in WATCH_TRIAL_STAT_KEYS:
+        value = row.get(column)
+        if value not in ("", None):
+            stats[key] = value
+    return stats
 
 
 class AgentService:
@@ -404,13 +441,17 @@ class AgentService:
                     old = matrix_prev.get(variant, {})
                     for task, status in cells.items():
                         if status in ("P", "F", "E") and old.get(task) != status:
-                            yield {
+                            event: dict[str, Any] = {
                                 "event": "trial",
                                 "variant": variant,
                                 "task": task,
                                 "status": status,
                                 "reward": snap["rewards"].get(variant, {}).get(task),
                             }
+                            stats = _trial_stats(rd, variant, task)
+                            if stats:
+                                event["stats"] = stats
+                            yield event
                 yield {"event": "snapshot", **snap}
                 matrix_prev = matrix
                 last_emit = now

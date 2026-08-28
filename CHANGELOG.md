@@ -41,6 +41,13 @@ planning, and the sentinel drift gate are gone.
   New actions: `author` and `watch`. `prepare` summaries now include the
   experiment name, Pi version, exact control reuse policy, and normalized
   variant sources. `status` responses now include per-variant aggregates.
+- Per-trial stats on the live watch card. Each `trial` event now carries a
+  `stats` block from `trial_row`: input/output/cache tokens, tool calls,
+  turns, and wall time. Trials whose agent never finished carry no stats.
+  The extension appends one aligned table per completed (task, variant) to
+  the same card. The summary grows as the run progresses and stays for the
+  final aggregates. Trials completed before the watch started are not
+  backfilled.
 
 Simplification pass (complexity audit 20260826184821-a3fbe704, Tiers 0-1).
 
