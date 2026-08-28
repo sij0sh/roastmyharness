@@ -63,7 +63,7 @@ Simplification pass (complexity audit 20260826184821-a3fbe704, Tiers 0-1).
 Removed spec fields change `spec_hash` for every existing TOML, so re-running
 `roastmyharness run` on an unchanged TOML now creates a NEW experiment id.
 Existing runs remain resumable (`roastmyharness resume <old-id>` loads the
-stored spec) and old TOMLs still load (unknown keys are ignored).
+stored spec). Spec parsing is strict: unknown keys are rejected.
 
 - `concurrency.global_max` (never enforced by any runtime code)
 - `output.budget_usd` and the whole `[output]` section (the budget check was
