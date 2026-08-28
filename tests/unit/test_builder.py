@@ -62,6 +62,20 @@ def test_local_extension_home(tmp_path: Path):
     assert (home.path / "extensions" / "myext" / "src" / "index.ts").read_text() == "1"
 
 
+def test_dot_dir_extension_home(tmp_path: Path):
+    src = make_ext(tmp_path, name=".pi-git-suite")
+    spec = spec_for(
+        tmp_path,
+        [VariantSpec(id="a", extensions=[
+            LocalExtension(kind="local", path=src, entry="src/index.ts")
+        ])],
+    )
+    home = build_home(spec.variants[0], spec, tmp_path / "homes")
+    settings = json.loads((home.path / "settings.json").read_text())
+    assert settings["extensions"] == ["extensions/pi-git-suite/src/index.ts"]
+    assert (home.path / "extensions" / "pi-git-suite" / "src" / "index.ts").is_file()
+
+
 def test_missing_entry_fails(tmp_path: Path):
     src = make_ext(tmp_path)
     spec = spec_for(

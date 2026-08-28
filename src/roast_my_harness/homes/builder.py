@@ -42,12 +42,12 @@ class HomeBuild:
 
 
 def _extension_name(ext: LocalExtension, index: int) -> str:
-    name = ext.name or ext.path.name
+    name = ext.name or ext.path.name.lstrip(".") or f"extension-{index + 1}"
     return _checked_component(name, "extension name")
 
 
 def _skill_name(skill: SkillSpec) -> str:
-    name = skill.name or skill.path.name
+    name = skill.name or skill.path.name.lstrip(".") or "skill"
     return _checked_component(name, "skill name")
 
 

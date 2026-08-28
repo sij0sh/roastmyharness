@@ -9,10 +9,12 @@
 - `/roastmyharness` no longer routes through the model. The command opens
   the wizard directly; freeform text after the command prefills the
   variant-request step. The isolated spec author stays the only model
-  call. The validated plan is shown in a wizard screen where
+  call and streams its draft into a live card above the editor. The
+  validated plan is shown in a wizard screen where
   "Confirm and launch" (default) starts the experiment deterministically
   and "Regenerate with feedback" re-runs the author with freeform
-  feedback. Live watch progress renders in a widget above the editor.
+  feedback. Live watch progress renders in the same widget slot.
+  Author-child failures surface their error message per attempt.
   The `roast_harness` tool path is unchanged for model-initiated
   authoring.
 
@@ -85,6 +87,11 @@ planning, and the sentinel drift gate are gone.
 Simplification pass (complexity audit 20260826184821-a3fbe704, Tiers 0-1).
 
 ### Fixed
+
+- Home staging now normalizes extension and skill names derived from
+  dot-directory sources (`~/.pi-git-suite` stages as `pi-git-suite`).
+  Pi rejects leading-dot extension names, which failed home building
+  after the wizard accepted the spec.
 
 - The Pi wizard supplies verified metadata for configured local Pi packages to
   its isolated authoring context. The author can inspect other sources with
