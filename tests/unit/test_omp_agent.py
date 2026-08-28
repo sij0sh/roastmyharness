@@ -89,8 +89,9 @@ def test_omp_install_spec_installs_bun_first(tmp_path: Path):
     runs = [step.run for step in spec.steps]
     assert any("npm install -g bun" in run for run in runs)
 
-    assert any("npm_config_include_optional=true" in run for run in runs)
+    assert any("npm_config_omit=" in run for run in runs)
     assert any("bun@1.4.0" in run for run in runs)
+    assert any('bun --version)" = "1.4.0"' in run for run in runs)
     assert any("@oh-my-pi/pi-coding-agent@18.0.9" in run for run in runs)
     assert runs[-1].endswith("&& omp --version")
     assert spec.verification_command == "omp --version"
