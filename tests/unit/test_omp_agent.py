@@ -88,6 +88,9 @@ def test_omp_install_spec_installs_bun_first(tmp_path: Path):
     spec = agent.install_spec()
     runs = [step.run for step in spec.steps]
     assert any("npm install -g bun" in run for run in runs)
+
+    assert any("npm_config_include_optional=true" in run for run in runs)
+    assert any("bun@1.4.0" in run for run in runs)
     assert any("@oh-my-pi/pi-coding-agent@18.0.9" in run for run in runs)
     assert runs[-1].endswith("&& omp --version")
     assert spec.verification_command == "omp --version"
@@ -258,3 +261,33 @@ def test_omp_hash_differs_from_pi_same_variant():
     omp_hash = variant_hash(variant, "0.84.3", agent="omp", agent_version="18.0.9")
     pi_hash = variant_hash(variant, "0.84.3", agent="pi", agent_version="0.84.3")
     assert omp_hash != pi_hash
+
+
+def test_omp_model_validation_reads_models_yml(tmp_path: Path):
+    """Regression: omp stages models.yml; model validation must find it."""
+    (tmp_path / "models.yml").write_text(json.dumps(
+        {"providers": {"p": {"baseUrl": "https://x/v1", "models": [{"id": "m1"}]}}}
+    ))
+    obj = types.SimpleNamespace(
+        _home_dir=tmp_path,
+        model_name="p/m1",
+        _load_models_config=lambda: json.loads((tmp_path / "models.yml").read_text()),
+        _staged_providers=lambda: {"p"},
+    )
+    OmpAgent._validate_model(obj)
+    path = OmpAgent._models_config_path(obj)
+    assert path == tmp_path / "models.yml"
+
+
+def test_omp_model_validation_still_tolerates_models_json(tmp_path: Path):
+    (tmp_path / "models.json").write_text(json.dumps(
+        {"providers": {"p": {"baseUrl": "https://x/v1", "models": [{"id": "m1"}]}}}
+    ))
+    obj = types.SimpleNamespace(
+        _home_dir=tmp_path,
+        model_name="p/m1",
+        _load_models_config=lambda: json.loads((tmp_path / "models.json").read_text()),
+        _staged_providers=lambda: {"p"},
+    )
+    assert OmpAgent._models_config_path(obj) == tmp_path / "models.json"
+    OmpAgent._validate_model(obj)

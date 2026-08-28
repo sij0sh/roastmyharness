@@ -34,6 +34,10 @@ from roast_my_harness.adapter.pi_agent import (
     load_variant_manifest,
 )
 
+BUN_VERSION = "1.4.0"
+"""Pinned bun build; probed host-side against omp 18.0.9 (1.3.x fails to
+parse omp's minified cli.js)."""
+
 OMP_DISABLED_PROVIDERS: tuple[str, ...] = (
     "agents-md",
     "claude",
@@ -94,12 +98,23 @@ class OmpAgent(PiAgent):
     def name() -> str:
         return "omp"
 
+    def _models_config_path(self) -> Path | None:
+        """omp stages models.yml (bare-env form) instead of models.json."""
+        path = self._home_dir / "models.yml"
+        if path.is_file():
+            return path
+        return PiAgent._models_config_path(self)
+
     def install_spec(self) -> AgentInstallSpec:
-        """Bun first (omp is a Bun app), then the pinned omp package."""
+        """Bun first (omp is a Bun app), then the pinned omp package.
+
+        Some task images configure npm to omit optional dependencies,
+        which breaks bun's platform-binary postinstall; force them on.
+        """
         spec = super().install_spec()
         bun_run = (
-            "set -e; npm install -g bun "
-            '&& node "$(npm root -g)/bun/install.js" && bun --version'
+            "set -e; export npm_config_include_optional=true npm_config_omit=; "
+            f"npm install -g bun@{BUN_VERSION} && bun --version"
         )
         return AgentInstallSpec(
             agent_name=spec.agent_name,
