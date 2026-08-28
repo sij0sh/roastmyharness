@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from roast_my_harness.adapter.registry import get_agent
 from roast_my_harness.constants import DEFAULT_PI_VERSION, FAIRNESS_FLAGS
 from roast_my_harness.observability import SECRET_KEY_WORDS
 
@@ -61,6 +62,13 @@ def _safe_rel_path(value: str, field: str) -> str:
         raise ValueError(
             f"{field} must not contain '..', '.', or empty components: {value!r}"
         )
+    return value
+
+
+def _exact_version_pin(value: str, field: str) -> str:
+    """An exact version pin safe to pass as a single argv token."""
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", value):
+        raise ValueError(f"{field} must be an exact version, got {value!r}")
     return value
 
 
@@ -244,6 +252,7 @@ class VariantSpec(BaseModel):
 
     id: str
     name: str | None = None
+    agent: str | None = None
     extensions: list[ExtensionSpec] = Field(default_factory=list)
     skills: list[SkillSpec] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
@@ -261,6 +270,11 @@ class VariantSpec(BaseModel):
                 "starting alphanumeric"
             )
         return value
+
+    @field_validator("agent")
+    @classmethod
+    def _known_agent(cls, value: str | None) -> str | None:
+        return value if value is None else get_agent(value).id
 
     @field_validator("env")
     @classmethod
@@ -332,11 +346,17 @@ class TaskSelection(BaseModel):
 
 
 class ControlSpec(BaseModel):
-    """Bare Pi control arm. Controls always run fresh."""
+    """Bare-agent control arm. Controls always run fresh."""
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
+    agent: str | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _known_agent(cls, value: str | None) -> str | None:
+        return value if value is None else get_agent(value).id
 
 
 class ConcurrencySpec(BaseModel):
@@ -373,6 +393,8 @@ class ExperimentSpec(BaseModel):
     name: str
     model: ModelSpec = Field(default_factory=ModelSpec)
     thinking: ThinkingLevel = "high"
+    agent: str = "pi"
+    agent_version: str | None = None
     pi_version: str = DEFAULT_PI_VERSION
     pier_version: str = ">=0.3,<0.4"
     tasks: TaskSelection
@@ -380,12 +402,20 @@ class ExperimentSpec(BaseModel):
     variants: list[VariantSpec] = Field(default_factory=list)
     concurrency: ConcurrencySpec = Field(default_factory=ConcurrencySpec)
 
+    @field_validator("agent")
+    @classmethod
+    def _known_agent(cls, value: str) -> str:
+        return get_agent(value).id
+
     @field_validator("pi_version")
     @classmethod
     def _safe_pi_version(cls, value: str) -> str:
-        if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", value):
-            raise ValueError(f"pi_version must be an exact npm version, got {value!r}")
-        return value
+        return _exact_version_pin(value, "pi_version")
+
+    @field_validator("agent_version")
+    @classmethod
+    def _safe_agent_version(cls, value: str | None) -> str | None:
+        return None if value is None else _exact_version_pin(value, "agent_version")
 
     @field_validator("schema_version")
     @classmethod
@@ -420,13 +450,77 @@ class ExperimentSpec(BaseModel):
             )
         return value
 
+    def resolved_agents(self) -> dict[str, str]:
+        """Arm id -> agent id for every launched arm."""
+        agents: dict[str, str] = {}
+        if self.control is not None and self.control.enabled:
+            agents["control"] = self.control.agent or self.agent
+        for variant in self.variants:
+            agents[variant.id] = variant.agent or self.agent
+        return agents
+
+    def agent_version_for(self, agent_id: str) -> str:
+        """Effective version pin for one agent.
+
+        Precedence: an explicit agent_version for the spec's default agent,
+        then pi_version as the legacy pi alias, then the registry default.
+        """
+        if self.agent_version is not None and agent_id == self.agent:
+            return self.agent_version
+        if agent_id == "pi":
+            return self.pi_version
+        return get_agent(agent_id).default_version
+
     def arms(self) -> list[VariantSpec]:
-        """Every launched arm. The control is a bare VariantSpec named control."""
+        """Every launched arm with agent inheritance applied. The control is
+        a bare VariantSpec named control."""
         arms: list[VariantSpec] = []
         if self.control is not None and self.control.enabled:
-            arms.append(VariantSpec(id="control", name="Bare Pi control"))
-        arms.extend(self.variants)
+            arms.append(
+                VariantSpec(
+                    id="control",
+                    name="Bare control",
+                    agent=self.control.agent or self.agent,
+                )
+            )
+        arms.extend(
+            v if v.agent is not None else v.model_copy(update={"agent": self.agent})
+            for v in self.variants
+        )
         return arms
+
+    @model_validator(mode="after")
+    def _validate_agent_arms(self) -> ExperimentSpec:
+        if (
+            self.agent_version is not None
+            and self.agent == "pi"
+            and self.agent_version != self.pi_version
+        ):
+            raise ValueError(
+                f"agent_version {self.agent_version!r} conflicts with "
+                f"pi_version {self.pi_version!r}; set one version pin only"
+            )
+        for variant in self.variants:
+            agent = get_agent(variant.agent or self.agent)
+            if agent.family == "pi":
+                continue
+            pi_only = [
+                feature
+                for feature, values in (
+                    ("extensions", variant.extensions),
+                    ("skills", variant.skills),
+                    ("pi_flags", variant.pi_flags),
+                )
+                if values
+            ]
+            if any(step.handler == "npm_pi_install" for step in variant.setup):
+                pi_only.append("npm_pi_install setup")
+            if pi_only:
+                raise ValueError(
+                    f"variant {variant.id!r} runs agent {agent.id!r} which "
+                    f"does not support pi-only features: {', '.join(pi_only)}"
+                )
+        return self
 
     def peak_concurrency(self) -> int:
         """Peak total trials in flight when all arms launch at once."""
