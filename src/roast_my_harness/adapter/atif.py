@@ -78,6 +78,9 @@ def _metrics_from_usage(usage: dict[str, Any]) -> Metrics | None:
     extra: dict[str, Any] = {}
     if usage.get("reasoning") is not None:
         extra["reasoning_tokens"] = usage["reasoning"]
+    elif usage.get("reasoningTokens") is not None:
+        # omp (pi fork) names the key reasoningTokens
+        extra["reasoning_tokens"] = usage["reasoningTokens"]
     if usage.get("cacheWrite"):
         extra["cache_write_tokens"] = usage["cacheWrite"]
     return Metrics(
