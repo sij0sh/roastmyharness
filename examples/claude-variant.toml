@@ -1,0 +1,35 @@
+# Claude Code harness-comparison arm against the pi control.
+#
+# The claude pin comes from the registry default (2.1.251); when claude is
+# the spec's default agent, pin it with `agent_version = "x.y.z"`.
+# Claude arms stage a CLAUDE_CONFIG_DIR home (pinned settings.json) and
+# resolve ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN from the host
+# provider block named by the arm's [variants.model] provider. The arm
+# model overrides the global [model] (claude cannot use openai models).
+schema_version = 1
+name = "claude-variant"
+pi_version = "0.84.3"
+
+[model]
+id = "gpt-5.6-luna"
+provider = "openai-codex"
+
+[tasks]
+path = "~/datasets/my-tasks"
+include = ["*"]
+exclude = []
+
+[concurrency]
+per_variant = 2
+
+[control]
+enabled = true
+
+[[variants]]
+id = "claude"
+name = "Claude Code 2"
+agent = "claude"
+
+[variants.model]
+provider = "azure-anthropic-gateway"
+id = "claude-sonnet-5"

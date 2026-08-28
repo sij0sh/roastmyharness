@@ -15,6 +15,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from roast_my_harness.adapter.registry import get_agent
 from roast_my_harness.errors import HomeBuildError
 from roast_my_harness.homes.manifest import (
     ManifestExtension,
@@ -159,7 +160,8 @@ def build_home(
             skills.append(ManifestSkill(name=name, path=rel))
 
         (tmp / "settings.json").write_text(
-            json.dumps({"extensions": entries}, indent=2) + "\n"
+            json.dumps(_settings_payload(agent_id, variant, spec, entries), indent=2)
+            + "\n"
         )
 
         setup = [
@@ -175,7 +177,7 @@ def build_home(
             pi_version=spec.pi_version,
             agent=agent_id,
             agent_version=agent_version,
-            model_id=spec.model.full_id(),
+            model_id=spec.model_for(variant).full_id(),
             extensions=manifest_exts,
             skills=skills,
             npm_packages=npm_packages,
@@ -214,6 +216,34 @@ def build_home(
         raise
 
     return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash)
+
+
+def _settings_payload(
+    agent_id: str,
+    variant: VariantSpec,
+    spec: ExperimentSpec,
+    entries: list[str],
+) -> dict:
+    """The home's settings.json, shaped per agent family.
+
+    pi-family pins extension entry points. claude-code gets a pinned
+    fairness contract: the arm's model, bypassed permissions (matching
+    pier's --permission-mode), and telemetry/auto-update shutdowns.
+    """
+    if get_agent(agent_id).family == "claude-code":
+        model_id = spec.model_for(variant).full_id()
+        return {
+            "model": model_id.rsplit("/", 1)[-1],
+            "permissions": {"defaultMode": "bypassPermissions"},
+            "env": {
+                "DISABLE_AUTOUPDATER": "1",
+                "DISABLE_TELEMETRY": "1",
+                "DISABLE_ERROR_REPORTING": "1",
+                "DISABLE_BUG_COMMAND": "1",
+                "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
+            },
+        }
+    return {"extensions": entries}
 
 
 def _setup_args(step) -> dict[str, str]:

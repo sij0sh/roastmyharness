@@ -23,11 +23,15 @@ from roast_my_harness.auth.service import (
 from roast_my_harness.errors import AuthError
 from roast_my_harness.files import atomic_write_text
 from roast_my_harness.observability import contains_secret
-from roast_my_harness.spec.models import ExperimentSpec
+from roast_my_harness.spec.models import ExperimentSpec, ModelSpec
 
 
 def stage_home(
-    cached_home: Path, dest: Path, spec: ExperimentSpec, agent_id: str = "pi"
+    cached_home: Path,
+    dest: Path,
+    spec: ExperimentSpec,
+    agent_id: str = "pi",
+    model: ModelSpec | None = None,
 ) -> Path:
     """Copy cached home into a writable staging dir and add credentials."""
     if dest.exists():
@@ -36,7 +40,7 @@ def stage_home(
     shutil.copytree(cached_home, dest)
     _make_writable(dest)
 
-    _stage_model(spec, dest, agent_id)
+    _stage_model(spec, dest, agent_id, model)
     return dest
 
 
@@ -47,15 +51,21 @@ def _strip_env_refs(value: str) -> tuple[str, str | None]:
     return value, None
 
 
-def _stage_model(spec: ExperimentSpec, dest: Path, agent_id: str = "pi") -> None:
-    """Stage the model credential/config the spec's provider needs.
+def _stage_model(
+    spec: ExperimentSpec,
+    dest: Path,
+    agent_id: str = "pi",
+    model: ModelSpec | None = None,
+) -> None:
+    """Stage the model credential/config the arm's provider needs.
 
     The provider name drives staging, not the auth literal. omp arms get
     models.yml (JSON text is valid YAML) with bare env-name refs plus a
     model-env.json name list the omp adapter resolves at run time; pi
-    arms keep models.json with ``$VAR`` refs.
+    arms keep models.json with ``$VAR`` refs; claude arms get env.json
+    with ANTHROPIC_* values resolved from the host environment.
     """
-    model = spec.model
+    model = model or spec.model
     if model.provider == CODEX_PROVIDER:
         entry = codex_credential()
         if entry is None:
@@ -69,6 +79,11 @@ def _stage_model(spec: ExperimentSpec, dest: Path, agent_id: str = "pi") -> None
             raise AuthError("provider 'custom' requires models_json")
         if not model.models_json.is_file():
             raise AuthError(f"models.json missing: {model.models_json}")
+        if agent_id == "claude":
+            raise AuthError(
+                "claude arms stage credentials from host-configured "
+                "providers only; 'custom' is not supported yet"
+            )
         if agent_id != "pi":
             _stage_bare_env_models(dest, model.models_json.read_text())
             return
@@ -76,8 +91,9 @@ def _stage_model(spec: ExperimentSpec, dest: Path, agent_id: str = "pi") -> None
         shutil.copy2(model.models_json, models_path)
         os.chmod(models_path, 0o600)
         return
-    
-    
+    if agent_id == "claude":
+        _stage_claude_env(dest, model)
+        return
     block = host_provider_block(model.provider)
     if block is None:
         raise AuthError(
@@ -101,6 +117,66 @@ def _stage_model(spec: ExperimentSpec, dest: Path, agent_id: str = "pi") -> None
     entry = provider_credential(model.provider)
     if entry is not None:
         _write_auth_entry(dest, model.provider, entry)
+
+
+def _resolve_env_ref(value: str, what: str) -> str:
+    """Resolve a ``$VAR`` reference against the host environment."""
+    if not value.startswith("$"):
+        return value
+    name = value[1:]
+    resolved = os.environ.get(name)
+    if not resolved:
+        raise AuthError(
+            f"{what} references ${name} but it is unset on the host; "
+            "export it before staging"
+        )
+    return resolved
+
+
+def _stage_claude_env(dest: Path, model: ModelSpec) -> None:
+    """Stage env.json with ANTHROPIC_* values for claude-family arms.
+
+    The host provider block's baseUrl becomes ANTHROPIC_BASE_URL and its
+    ``$VAR`` apiKey resolves to ANTHROPIC_AUTH_TOKEN. Values live only in
+    the per-run staging dir (0600), never in the cached home.
+    """
+    block = host_provider_block(model.provider)
+    if block is None:
+        raise AuthError(
+            f"provider '{model.provider}' not in host pi models.json "
+            f"({auth_service.pi_models_file()})"
+        )
+    resolved = model.resolved_model
+    if resolved is not None and resolved.provider == model.provider:
+        actual_hash = auth_service.provider_block_hash(block)
+        if actual_hash != resolved.provider_block_sha256:
+            raise AuthError(
+                f"host provider '{model.provider}' changed since the spec was loaded; "
+                "reload the experiment before running or resuming"
+            )
+    base_url = block.get("baseUrl")
+    api_key = block.get("apiKey")
+    if not isinstance(base_url, str) or not base_url:
+        raise AuthError(
+            f"provider '{model.provider}' has no baseUrl; claude arms "
+            "need a gateway endpoint"
+        )
+    if not isinstance(api_key, str) or not api_key:
+        raise AuthError(
+            f"provider '{model.provider}' has no apiKey for claude staging"
+        )
+    env: dict[str, str] = {"ANTHROPIC_BASE_URL": _resolve_env_ref(base_url, "baseUrl")}
+    token = _resolve_env_ref(api_key, "apiKey")
+    env["ANTHROPIC_AUTH_TOKEN"] = token
+    env_path = dest / "env.json"
+    existing: dict = {}
+    if env_path.is_file():
+        try:
+            existing = json.loads(env_path.read_text())
+        except json.JSONDecodeError:
+            existing = {}
+    existing.update(env)
+    atomic_write_text(env_path, json.dumps(existing) + "\n", mode=0o600)
 
 
 def _stage_bare_env_models(dest: Path, models_json_text: str) -> None:
