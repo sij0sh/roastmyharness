@@ -9,14 +9,13 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from roast_my_harness.constants import DEFAULT_PI_VERSION, FAIRNESS_FLAGS
+
 SCHEMA_VERSION = 1
 RESERVED_VARIANT_IDS = {"control"}
 
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-
-
-
 
 ALLOWED_PI_FLAGS = {
     "--append-system-prompt",
@@ -26,8 +25,11 @@ ALLOWED_PI_FLAGS = {
     "--no-builtin-tools",
     "--no-tools",
 }
-RESERVED_PI_FLAGS = {
-    "-nc",
+
+
+
+_FAIRNESS_FLAG_NAMES = frozenset(FAIRNESS_FLAGS.split())
+_CONSTRUCTION_PI_FLAGS = {
     "--no-context-files",
     "--model",
     "--thinking",
@@ -36,12 +38,8 @@ RESERVED_PI_FLAGS = {
     "--mode",
     "--extension",
     "--no-extensions",
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
 }
-
-
+RESERVED_PI_FLAGS = _FAIRNESS_FLAG_NAMES | _CONSTRUCTION_PI_FLAGS
 
 _SECRET_ENV_KEYS = (
     "access",
@@ -398,7 +396,7 @@ class ExperimentSpec(BaseModel):
     name: str
     model: ModelSpec = Field(default_factory=ModelSpec)
     thinking: ThinkingLevel = "high"
-    pi_version: str = "0.84.3"
+    pi_version: str = DEFAULT_PI_VERSION
     pier_version: str = ">=0.3,<0.4"
     tasks: TaskSelection
     control: ControlSpec | None = None

@@ -25,6 +25,7 @@ from pydantic import ValidationError
 
 from roast_my_harness import ADAPTER_PROTOCOL_VERSION, __version__
 from roast_my_harness.agent import models
+from roast_my_harness.constants import EXIT_CODES
 from roast_my_harness.errors import RoastMyHarnessError, SpecError
 from roast_my_harness.files import atomic_write_text
 from roast_my_harness.homes.sources import source_tree_hash
@@ -50,7 +51,6 @@ from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 
 PLAN_ID_RE = re.compile(r"^plan_[0-9a-f]{12}$")
 FINAL_STATES = frozenset({"COMPLETE", "FAILED", "CANCELLED"})
-EXIT_CODES = {"FAILED": 2, "CANCELLED": 3}
 WATCH_INTERVAL_SEC = 2.0
 WATCH_HEARTBEAT_SEC = 30.0
 WATCH_WORKER_GRACE_SEC = 10.0

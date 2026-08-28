@@ -14,6 +14,7 @@ import typer
 from roast_my_harness import __version__
 from roast_my_harness.agent import service as agent_service
 from roast_my_harness.auth import service as auth_service
+from roast_my_harness.constants import EXIT_CODES
 from roast_my_harness.errors import RoastMyHarnessError
 from roast_my_harness.paths import database_path
 from roast_my_harness.runner import preflight
@@ -88,9 +89,6 @@ def _repo() -> Repository:
 def _print_progress(message: str) -> None:
     """Plain stderr progress line (states, launches, per-trial outcomes)."""
     print(f"[roast] {message}", file=sys.stderr)
-
-
-EXIT_CODES = {"FAILED": 2, "CANCELLED": 3}
 
 
 def _exit_for_final_state(experiment_id: str, final: str) -> int:

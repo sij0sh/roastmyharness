@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import shlex
 
+from roast_my_harness.constants import FAIRNESS_FLAGS
+
 REMOTE_HOME = "/opt/pi-home"
 EVENTS_FILENAME = "pi-events.jsonl"
 EVENT_TIMES_FILENAME = "pi-event-times.log"
@@ -11,9 +13,9 @@ SESSIONS_DIR = "pi-sessions"
 STDERR_FILENAME = "pi-stderr.log"
 TRAJECTORY_FILENAME = "trajectory.json"
 
-# Fairness flags kept identical for every arm so repo/global context files
-# and per-variant cosmetics cannot differ.
-FAIRNESS_FLAGS = "--no-skills --no-prompt-templates --no-themes -nc"
+
+
+
 
 EVENT_STAMPER = (
     "node -e \"require('readline').createInterface({input:process.stdin})"

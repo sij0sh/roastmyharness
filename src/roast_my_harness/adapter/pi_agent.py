@@ -35,12 +35,12 @@ from pier.utils.trajectory_metrics import populate_context_from_final_metrics
 from roast_my_harness.adapter import command as cmd
 from roast_my_harness.adapter import setup_handlers
 from roast_my_harness.adapter.atif import write_trajectory
+from roast_my_harness.constants import CODEX_PROVIDER, DEFAULT_PI_VERSION
 
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
-DEFAULT_PI_NPM_VERSION = "0.84.3"
 
 
-_BUILTIN_PI_PROVIDERS = {"openai-codex"}
+_BUILTIN_PI_PROVIDERS = {CODEX_PROVIDER}
 _BUILTIN_PI_URLS = {
     "https://chatgpt.com/backend-api",
     "https://auth.openai.com",
@@ -93,7 +93,7 @@ class PiAgent(BaseInstalledAgent):
         *args: Any,
         variant_manifest: str | None = None,
         thinking: str | None = "high",
-        pi_version: str | None = DEFAULT_PI_NPM_VERSION,
+        pi_version: str | None = DEFAULT_PI_VERSION,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)

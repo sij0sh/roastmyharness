@@ -134,6 +134,16 @@ id = "a"
         )
 
 
+def test_every_fairness_flag_is_reserved():
+    """Fairness flags must stay reserved, or arms could diverge on them."""
+    from roast_my_harness.adapter.command import FAIRNESS_FLAGS
+    from roast_my_harness.spec.models import RESERVED_PI_FLAGS
+
+    fairness = frozenset(FAIRNESS_FLAGS.split())
+    assert fairness
+    assert fairness <= RESERVED_PI_FLAGS
+
+
 def test_needs_at_least_one_arm(tmp_path: Path):
     with pytest.raises(SpecError, match="at least one"):
         load_experiment(write(tmp_path, """

@@ -10,10 +10,9 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
+from roast_my_harness.constants import CODEX_PROVIDER
 from roast_my_harness.errors import AuthError
 from roast_my_harness.files import atomic_write_text
-
-CODEX_PROVIDER = "openai-codex"
 
 
 def pi_auth_dir() -> Path:
