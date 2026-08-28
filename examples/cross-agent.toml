@@ -1,0 +1,33 @@
+# omp-default spec: every arm is oh-my-pi unless it opts out, and the
+# control opts back into pi. This is the mirror of omp-variant.toml:
+# there the default agent is pi and one arm opts into omp.
+#
+# `agent = "omp"` makes `agent_version` the effective pin for omp arms
+# (18.0.9 here; drop it to use the registry default). `pi_version` pins
+# the control. Same global [model] for all arms - comparisons are only
+# rendered at equal (task, model).
+schema_version = 1
+name = "cross-agent"
+agent = "omp"
+agent_version = "18.0.9"
+pi_version = "0.84.3"
+
+[model]
+id = "gpt-5.6-luna"
+provider = "openai-codex"
+
+[tasks]
+path = "~/datasets/my-tasks"
+include = ["*"]
+exclude = []
+
+[concurrency]
+per_variant = 2
+
+[control]
+enabled = true
+agent = "pi"
+
+[[variants]]
+id = "omp"
+name = "oh-my-pi 18"

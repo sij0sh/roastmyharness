@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "variant_id": "control",
+  "variant_hash": "b7046803e72eb4e0499f35e45ad23550e117451f176759592ca625a0fcda3dc1",
+  "pi_version": "0.84.3",
+  "agent": "pi",
+  "agent_version": "0.84.3",
+  "model_id": "openai-codex/gpt-5.6-luna",
+  "extensions": [],
+  "skills": [],
+  "npm_packages": [],
+  "env": {},
+  "env_from_host": [],
+  "setup": [],
+  "egress_urls": [],
+  "pi_flags": []
+}

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Multi-agent comparison arms. Specs may set `agent` globally or per
+  `[[variants]]` arm. The registry (`adapter/registry.py`) ships `pi`
+  and `omp` (oh-my-pi, a pi-family fork running on Bun). Per-arm
+  identity enters the variant hash, so cached homes never mix agents.
+- omp arms stage `models.yml` + `model-env.json` with bare env names.
+  pi arms keep `models.json` with `$VAR` refs. omp installs a pinned
+  Bun in-container. Fairness contracts are registry-owned per agent.
+  See `examples/omp-variant.toml` and `examples/cross-agent.toml`.
+
 ### Removed (breaking for [control] specs)
 
 Control reuse is retired: control arms always run fresh. `control_reuse`
