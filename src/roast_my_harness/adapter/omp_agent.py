@@ -108,13 +108,21 @@ class OmpAgent(PiAgent):
     def install_spec(self) -> AgentInstallSpec:
         """Bun first (omp is a Bun app), then the pinned omp package.
 
-        Some task images configure npm to omit optional dependencies,
-        which breaks bun's platform-binary postinstall; force them on.
+        Task images may configure npm to omit optional dependencies and
+        bundle their own older bun; install the pinned bun's native ELF
+        directly over every bun on PATH and verify the version.
         """
         spec = super().install_spec()
         bun_run = (
-            "set -e; export npm_config_include_optional=true npm_config_omit=; "
-            f"npm install -g bun@{BUN_VERSION} && bun --version"
+            "set -e; export npm_config_omit=; "
+            f"npm install -g bun@{BUN_VERSION}; "
+            'REAL="$(npm root -g)/bun/bin/bun.exe"; "$REAL" --version; '
+            "mkdir -p /root/.bun/bin; "
+            "for p in /root/.bun/bin/bun /usr/local/bin/bun /usr/bin/bun; do "
+            '[ -e "$p" ] && install -m0755 "$REAL" "$p" || true; done; '
+            "ln -sf bun /root/.bun/bin/bunx 2>/dev/null || true; hash -r; "
+            'echo "bun $(command -v bun): $(bun --version)"; '
+            f'[ "$(bun --version)" = "{BUN_VERSION}" ]'
         )
         return AgentInstallSpec(
             agent_name=spec.agent_name,
