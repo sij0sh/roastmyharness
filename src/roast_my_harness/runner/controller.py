@@ -136,6 +136,7 @@ class ExperimentController:
                 build.path,
                 self.run_dir / "staging" / variant.id,
                 self.spec,
+                agent_id=build.manifest.agent,
             )
             self._stage_env(staged, variant)
             manifest_path = staged / "variant.json"

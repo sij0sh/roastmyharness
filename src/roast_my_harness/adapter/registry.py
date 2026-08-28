@@ -45,6 +45,17 @@ AGENTS: dict[str, AgentDef] = {
         fairness_flags=FAIRNESS_FLAGS,
         default_version=DEFAULT_PI_VERSION,
     ),
+    "omp": AgentDef(
+        id="omp",
+        family="pi",
+        import_path="roast_my_harness.adapter.omp_agent:OmpAgent",
+        npm_package="@oh-my-pi/pi-coding-agent",
+        binary="omp",
+        home_env="PI_CODING_AGENT_DIR",
+        version_field="agent_version",
+        fairness_flags="--no-skills",
+        default_version="18.0.9",
+    ),
 }
 
 

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from roast_my_harness import __version__
+from roast_my_harness.adapter.registry import get_agent
 from roast_my_harness.auth import service as auth_service
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.spec.models import ExperimentSpec
@@ -143,6 +144,10 @@ def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
             for variant in spec.arms()
             for step in variant.setup
             if step.handler == "npm_pi_install"
+        }
+        | {
+            f"{get_agent(agent_id).npm_package}@{spec.agent_version_for(agent_id)}"
+            for agent_id in spec.resolved_agents().values()
         }
     )
     if not packages:

@@ -35,7 +35,11 @@ from pier.utils.trajectory_metrics import populate_context_from_final_metrics
 from roast_my_harness.adapter import command as cmd
 from roast_my_harness.adapter import setup_handlers
 from roast_my_harness.adapter.atif import write_trajectory
-from roast_my_harness.constants import CODEX_PROVIDER, DEFAULT_PI_VERSION
+from roast_my_harness.constants import (
+    CODEX_PROVIDER,
+    DEFAULT_PI_VERSION,
+    FAIRNESS_FLAGS,
+)
 
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
 
@@ -91,9 +95,16 @@ def _validate_pi_version(value: Any) -> str | None:
 
 
 class PiAgent(BaseInstalledAgent):
-    """The pi coding agent, driven headless via ``pi --mode json``."""
+    """The pi coding agent, driven headless via ``pi --mode json``.
+
+    Identity is class-level so pi-family forks (omp) override only the
+    package, binary, and fairness contract.
+    """
 
     SUPPORTS_ATIF: ClassVar[bool] = True
+    PACKAGE: ClassVar[str] = PI_PACKAGE
+    BINARY: ClassVar[str] = "pi"
+    FAIRNESS: ClassVar[str] = FAIRNESS_FLAGS
 
     def __init__(
         self,
@@ -127,7 +138,7 @@ class PiAgent(BaseInstalledAgent):
         return "pi"
 
     def get_version_command(self) -> str | None:
-        return "pi --version"
+        return f"{self.BINARY} --version"
 
     def parse_version(self, stdout: str) -> str:
         return stdout.strip().splitlines()[-1].strip() if stdout.strip() else "unknown"
@@ -218,7 +229,7 @@ class PiAgent(BaseInstalledAgent):
     # ---------------------------------------------------------- install ---
 
     def install_spec(self) -> AgentInstallSpec:
-        package = PI_PACKAGE
+        package = self.PACKAGE
         if self._pi_version:
             package += f"@{self._pi_version}"
         package = shlex.quote(package)
@@ -228,7 +239,9 @@ class PiAgent(BaseInstalledAgent):
             "then node --version; "
             "else apt-get update && apt-get install -y nodejs npm; fi"
         )
-        agent_run = f"set -e; npm install -g {package} && pi --version"
+        agent_run = (
+            f"set -e; npm install -g {package} && {self.BINARY} --version"
+        )
         return AgentInstallSpec(
             agent_name=self.name(),
             version=self._pi_version,
@@ -307,6 +320,8 @@ class PiAgent(BaseInstalledAgent):
             thinking=self._thinking,
             skill_paths=[s for s in skills if s],
             extra_flags=extra_flags,
+            fairness_flags=self.FAIRNESS,
+            binary=self.BINARY,
         )
         await self.exec_as_agent(environment, command=command, env=run_env)
 

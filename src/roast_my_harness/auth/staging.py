@@ -27,7 +27,7 @@ from roast_my_harness.spec.models import ExperimentSpec
 
 
 def stage_home(
-    cached_home: Path, dest: Path, spec: ExperimentSpec
+    cached_home: Path, dest: Path, spec: ExperimentSpec, agent_id: str = "pi"
 ) -> Path:
     """Copy cached home into a writable staging dir and add credentials."""
     if dest.exists():
@@ -36,14 +36,24 @@ def stage_home(
     shutil.copytree(cached_home, dest)
     _make_writable(dest)
 
-    _stage_model(spec, dest)
+    _stage_model(spec, dest, agent_id)
     return dest
 
 
-def _stage_model(spec: ExperimentSpec, dest: Path) -> None:
+def _strip_env_refs(value: str) -> tuple[str, str | None]:
+    """pi-style ``$VAR`` ref to omp's bare-name form; returns (value, name)."""
+    if value.startswith("$") and len(value) > 1:
+        return value[1:], value[1:]
+    return value, None
+
+
+def _stage_model(spec: ExperimentSpec, dest: Path, agent_id: str = "pi") -> None:
     """Stage the model credential/config the spec's provider needs.
 
-    The provider name drives staging, not the auth literal.
+    The provider name drives staging, not the auth literal. omp arms get
+    models.yml (JSON text is valid YAML) with bare env-name refs plus a
+    model-env.json name list the omp adapter resolves at run time; pi
+    arms keep models.json with ``$VAR`` refs.
     """
     model = spec.model
     if model.provider == CODEX_PROVIDER:
@@ -59,12 +69,15 @@ def _stage_model(spec: ExperimentSpec, dest: Path) -> None:
             raise AuthError("provider 'custom' requires models_json")
         if not model.models_json.is_file():
             raise AuthError(f"models.json missing: {model.models_json}")
+        if agent_id != "pi":
+            _stage_bare_env_models(dest, model.models_json.read_text())
+            return
         models_path = dest / "models.json"
         shutil.copy2(model.models_json, models_path)
         os.chmod(models_path, 0o600)
         return
-    # Host-configured provider: slice its block from the host models.json
-    # and its auth entry when one exists.
+    
+    
     block = host_provider_block(model.provider)
     if block is None:
         raise AuthError(
@@ -79,15 +92,54 @@ def _stage_model(spec: ExperimentSpec, dest: Path) -> None:
                 f"host provider '{model.provider}' changed since the spec was loaded; "
                 "reload the experiment before running or resuming"
             )
-    models_path = dest / "models.json"
-    atomic_write_text(
-        models_path,
-        json.dumps({"providers": {model.provider: block}}, indent=2) + "\n",
-        mode=0o600,
-    )
+    payload = json.dumps({"providers": {model.provider: block}}, indent=2) + "\n"
+    if agent_id != "pi":
+        _stage_bare_env_models(dest, payload)
+    else:
+        models_path = dest / "models.json"
+        atomic_write_text(models_path, payload, mode=0o600)
     entry = provider_credential(model.provider)
     if entry is not None:
         _write_auth_entry(dest, model.provider, entry)
+
+
+def _stage_bare_env_models(dest: Path, models_json_text: str) -> None:
+    """Stage models.yml + model-env.json for omp-family arms.
+
+    JSON text is valid YAML, so the staged file keeps the parsed shape.
+    ``$VAR`` apiKey/headers refs become bare ``VAR`` names (omp resolves
+    those from the environment); the names land in model-env.json for the
+    adapter to resolve into the run environment. Values are never staged.
+    """
+    config = json.loads(models_json_text)
+    env_names: list[str] = []
+    for provider in (config.get("providers") or {}).values():
+        if not isinstance(provider, dict):
+            continue
+        api_key = provider.get("apiKey")
+        if isinstance(api_key, str):
+            stripped, name = _strip_env_refs(api_key)
+            provider["apiKey"] = stripped
+            if name and name not in env_names:
+                env_names.append(name)
+        headers = provider.get("headers")
+        if isinstance(headers, dict):
+            for key, value in headers.items():
+                if isinstance(value, str):
+                    stripped, name = _strip_env_refs(value)
+                    headers[key] = stripped
+                    if name and name not in env_names:
+                        env_names.append(name)
+    atomic_write_text(
+        dest / "models.yml",
+        json.dumps(config, indent=2) + "\n",
+        mode=0o600,
+    )
+    atomic_write_text(
+        dest / "model-env.json",
+        json.dumps(env_names) + "\n",
+        mode=0o600,
+    )
 
 
 def _write_auth_entry(dest: Path, provider: str, entry: dict) -> None:
