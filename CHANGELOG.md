@@ -4,6 +4,18 @@
 
 ### Added
 
+### Changed
+
+- `/roastmyharness` no longer routes through the model. The command opens
+  the wizard directly; freeform text after the command prefills the
+  variant-request step. The isolated spec author stays the only model
+  call. The validated plan is shown in a wizard screen where
+  "Confirm and launch" (default) starts the experiment deterministically
+  and "Regenerate with feedback" re-runs the author with freeform
+  feedback. Live watch progress renders in a widget above the editor.
+  The `roast_harness` tool path is unchanged for model-initiated
+  authoring.
+
 - Multi-agent comparison arms. Specs may set `agent` globally or per
   `[[variants]]` arm. The registry (`adapter/registry.py`) ships `pi`
   and `omp` (oh-my-pi, a pi-family fork running on Bun). Per-arm
