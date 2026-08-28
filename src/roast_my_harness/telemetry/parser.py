@@ -83,7 +83,9 @@ def fold_event(m: dict[str, Any], event: dict[str, Any]) -> None:
         if usage:
             m["llm_calls"] += 1
             m["cache_write_tokens"] += int(usage.get("cacheWrite") or 0)
-            m["reasoning_tokens"] += int(usage.get("reasoning") or 0)
+            m["reasoning_tokens"] += int(
+                usage.get("reasoning") or usage.get("reasoningTokens") or 0
+            )
             peak = int(usage.get("input") or 0) + int(usage.get("cacheRead") or 0)
             m["_ctx_sum"] = m.get("_ctx_sum", 0) + peak
             m["_ctx_n"] = m.get("_ctx_n", 0) + 1
