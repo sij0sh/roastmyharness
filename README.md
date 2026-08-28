@@ -7,7 +7,8 @@ Pier tasks. Successor to the DSE-tests script harness.
 
 - One declarative TOML file defines control + variants (no Python edits).
 - Runs one Pier job per variant with the same model, thinking level, and
-  fairness flags (`-nc --no-skills --no-prompt-templates --no-themes`).
+  a per-agent fairness contract (pi:
+  `-nc --no-skills --no-prompt-templates --no-themes`).
 - Headless progress: `status <id>` prints the live matrix and totals;
   `watch <id>` streams a live ASCII matrix until the run finishes.
 - Ctrl-C or SIGTERM leaves completed trials resumable; `resume` runs only
@@ -119,6 +120,45 @@ default `openai-codex` (auth via `pi /login codex`), or `custom` with
 provider block is sliced per job, referenced env vars must be set, and
 `!command` apiKeys are rejected.
 
+## Agents
+
+Experiments can compare coding agents, not just extensions. Every arm
+resolves to `(agent, agent_version, model)`; the registry
+(`src/roast_my_harness/adapter/registry.py`) names the supported set.
+
+| agent | family | package | binary | version pin (spec key) | default |
+|---|---|---|---|---|---|
+| `pi` | `pi` | `@earendil-works/pi-coding-agent` | `pi` | `pi_version` (global) | 0.84.3 |
+| `omp` | `pi` | `@oh-my-pi/pi-coding-agent` | `omp` | `agent_version` when `agent = "omp"` is the spec default | 18.0.9 |
+
+Rules that keep arms comparable:
+
+- All arms run the same global `[model]` and thinking level; reports
+  render comparisons at equal (task, model).
+- Each agent's fairness contract is registry-owned, never spec-owned:
+  pi runs `--no-skills --no-prompt-templates --no-themes -nc`; omp runs
+  `--no-skills` plus a staged `config.yml` that disables implicit
+  provider configs (AGENTS.md/claude/codex/... auto-loading); the
+  container installs Bun (pinned) because omp needs it.
+- Cached homes never mix agents: `(agent, agent_version)` is part of the
+  variant hash.
+- `pi`-only features (extensions, skills, `pi_flags`, `npm_pi_install`
+  setup) are rejected on other families with a naming error.
+
+Credential staging per agent:
+
+- `pi`: host provider block sliced into the staged home as `models.json`
+  with `$VAR` refs (values resolved at run time), plus `auth.json`
+  entries (Codex OAuth via `pi /login codex`) staged 0600 per job.
+- `omp`: same providers, staged as `models.yml` with bare env names plus
+  a `model-env.json` name list; the adapter resolves names into the run
+  environment. Values never land in cached homes.
+
+Example specs: `examples/omp-variant.toml` (pi control vs omp arm) and
+`examples/cross-agent.toml` (omp-default spec with a pi control). Adding
+an agent means one registry entry plus an adapter subclassing pier's
+agent class; codex/gemini/opencode would follow that pattern.
+
 ## Status (build phases)
 
 - Phase 0-3: done (spec, homes, adapter, headless runner, telemetry,
@@ -137,4 +177,6 @@ summary.csv carries a tool-owned schema; columns may change between
 releases. The legacy DSE-parity golden tests were removed.
 
 Deferred by design (plan section 2): remote fan-out, non-Pier benchmarks,
-other agents, web dashboards, cloud storage, automatic stopping.
+agents beyond the registry (codex, gemini, opencode - the registry/adapter
+pattern is in place for them), web dashboards, cloud storage, automatic
+stopping.

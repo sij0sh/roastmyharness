@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "variant_id": "omp",
+  "variant_hash": "f198bf3bff4e4f2565fdb9774a5d1ffd16a4ea653ab72c560a72304943dcf705",
+  "pi_version": "0.84.3",
+  "agent": "omp",
+  "agent_version": "18.0.9",
+  "model_id": "openai-codex/gpt-5.6-luna",
+  "extensions": [],
+  "skills": [],
+  "npm_packages": [],
+  "env": {},
+  "env_from_host": [],
+  "setup": [],
+  "egress_urls": [],
+  "pi_flags": []
+}
