@@ -117,9 +117,8 @@ provider block is sliced per job, referenced env vars must be set, and
   store, reuse planning, and the sentinel drift gate are gone; `[control]`
   accepts only `enabled`.
 
-Golden parity: `tests/golden/test_dse_parity.py` reproduces legacy
-DSE-tests collect.py values on a scrubbed real trial
-(bare/datacurve/abs-stepped-slices).
+summary.csv carries a tool-owned schema; columns may change between
+releases. The legacy DSE-parity golden tests were removed.
 
 Deferred by design (plan section 2): remote fan-out, non-Pier benchmarks,
 other agents, web dashboards, cloud storage, automatic stopping.

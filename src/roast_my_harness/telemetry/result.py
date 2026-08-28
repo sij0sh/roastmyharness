@@ -1,4 +1,4 @@
-"""Trial directory -> one summary row. Schema-compatible with DSE-tests."""
+"""Trial directory -> one summary row of the tool-owned CSV schema."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""summary.csv (DSE-compatible schema) and summary.json exports."""
+"""summary.csv (tool-owned schema) and summary.json exports."""
 
 from __future__ import annotations
 

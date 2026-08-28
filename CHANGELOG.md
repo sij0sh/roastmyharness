@@ -14,6 +14,8 @@ planning, and the sentinel drift gate are gone.
 - A migration drops the `control_observations` table and deletes old rows.
 - Status matrices no longer render `H` (reused) control cells; resumed runs
   that reused controls show those cells as pending.
+- summary.csv is no longer bound to the legacy DSE-tests schema; the column
+  set is tool-owned and may change between releases.
 
 ### Added
 
