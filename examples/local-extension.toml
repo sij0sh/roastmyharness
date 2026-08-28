@@ -17,7 +17,6 @@ per_variant = 2
 
 [control]
 enabled = true
-reuse = "never"
 
 [[variants]]
 id = "my-ext"

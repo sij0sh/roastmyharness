@@ -7,10 +7,7 @@ import json
 from typing import Any
 
 from roast_my_harness import ADAPTER_PROTOCOL_VERSION
-from roast_my_harness.spec.models import ExperimentSpec, ModelSpec, VariantSpec
-
-# The control cohort key includes prompt isolation; it never changes in V1.
-PROMPT_ISOLATION = "pi-fairness-v1"
+from roast_my_harness.spec.models import ExperimentSpec, VariantSpec
 
 
 def canonical_json_bytes(obj: Any) -> bytes:
@@ -67,27 +64,5 @@ def variant_hash(
             "sources": source_hashes or {},
             "pi_version": pi_version,
             "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
-        }
-    )
-
-
-def control_cohort_key(
-    control_hash: str,
-    model: ModelSpec,
-    thinking: str,
-    pi_version: str,
-    task_hash: str,
-) -> str:
-    return sha256_canonical(
-        {
-            "control_hash": control_hash,
-            "provider": model.provider,
-            "provider_id": model.provider_id,
-            "model_id": model.id,
-            "thinking": thinking,
-            "pi_version": pi_version,
-            "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
-            "task_hash": task_hash,
-            "prompt_isolation": PROMPT_ISOLATION,
         }
     )

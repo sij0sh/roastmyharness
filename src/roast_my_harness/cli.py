@@ -54,11 +54,7 @@ exclude = []
 per_variant = 2
 
 [control]
-enabled = true                  # bare Pi control arm
-reuse = "never"                 
-minimum_runs_per_task = 10
-maximum_age_days = 30
-sentinel_tasks = 6              
+enabled = true                  
 
 # One [[variants]] block per arm. Local extension example:
 [[variants]]
@@ -117,13 +113,7 @@ def _exit_for_final_state(experiment_id: str, final: str) -> int:
     return code
 
 
-def _ask_reuse(message: str) -> bool:
-    """Interactive ask-mode prompt for control reuse (plan section 16)."""
-    typer.echo(message)
-    return typer.confirm("Reuse this historic control pool?")
 
-
-# ------------------------------------------------------------------ init --
 
 
 @app.command()
@@ -197,8 +187,6 @@ def run(
     experiment_id, final = agent_service.run_experiment(
         spec_path,
         progress=_print_progress,
-        ask=_ask_reuse if (sys.stdin.isatty() and not yes) else None,
-        interactive=sys.stdin.isatty() and not yes,
     )
     raise typer.Exit(_exit_for_final_state(experiment_id, final))
 

@@ -42,12 +42,6 @@ def test_per_variant_below_one_rejected(tmp_path: Path):
         load_experiment(path)
 
 
-def test_min_runs_below_one_rejected(tmp_path: Path):
-    path = spec_text(tmp_path, "[control]\nminimum_runs_per_task = 0")
-    with pytest.raises(SpecError, match="greater than or equal to 1"):
-        load_experiment(path)
-
-
 def test_http_egress_url_rejected(tmp_path: Path):
     path = spec_text(tmp_path, "")
     text = path.read_text().replace(

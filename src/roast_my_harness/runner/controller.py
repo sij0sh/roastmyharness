@@ -34,8 +34,6 @@ from roast_my_harness.spec.hashes import experiment_hash as compute_experiment_h
 from roast_my_harness.spec.hashes import spec_hash as compute_spec_hash
 from roast_my_harness.spec.models import ExperimentSpec
 from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
-from roast_my_harness.store import controls as controls_mod
-from roast_my_harness.store.controls import ReuseDecision
 from roast_my_harness.store.repository import Repository
 from roast_my_harness.tasks.discover import discover_tasks
 from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
@@ -43,7 +41,6 @@ from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 POLL_INTERVAL_SEC = 2.0
 
 ProgressCallback = Callable[[str], None]
-AskCallback = Callable[[str], bool]
 
 
 # ---------------------------------------------------------- controller ----
@@ -65,29 +62,18 @@ class ExperimentController:
         run_dir: Path,
         store: Repository,
         progress: ProgressCallback | None = None,
-        ask: AskCallback | None = None,
     ):
         self.spec = spec
         self.experiment_id = experiment_id
         self.run_dir = run_dir
         self.store = store
         self.progress = progress
-        self.ask = ask
         self.state = "DRAFT"
         self.jobs: dict[str, VariantJob] = {}
         self.cells: dict[str, dict[str, Cell]] = {}
         self._cancel_event = asyncio.Event()
         self._logger = RunLogger(self.run_dir / "logs" / "run.jsonl", experiment_id)
 
-        self._control_hash: str | None = None
-        self._cohort_keys: dict[str, str] = {}  
-        self._task_hashes: dict[str, str] = {}  
-        self._reuse_plan: ReuseDecision | None = None
-        self._reuse_enabled = True  
-        self._reuse_accepted: bool | None = None  
-        self._sentinel_verdict: dict | None = None
-        self._own_trial_ids: set[str] = set()
-        self._observed_reused_tasks: set[str] = set()
         self._observed_task_ids: list[str] | None = None
         self.smoke_result: probe_mod.ProbeResult | None = None
 
@@ -168,7 +154,6 @@ class ExperimentController:
             )
 
         self._write_manifest(tasks)
-        self._plan_control_reuse(tasks)
         self._set_state("READY")
 
         if probe_mod.should_probe(self.spec):
@@ -257,9 +242,6 @@ class ExperimentController:
             task_map = manifest.get("tasks") or {}
             if isinstance(task_map, dict):
                 self._observed_task_ids = list(task_map)
-            reuse = manifest.get("control_reuse") or {}
-            if isinstance(reuse, dict) and reuse.get("accepted") is True:
-                self._observed_reused_tasks = set(reuse.get("reused_tasks", []))
 
     def cleanup_staging(self) -> None:
         """Remove all staged homes, including partially prepared variants."""
@@ -272,48 +254,6 @@ class ExperimentController:
             self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
         )
         return [task.task_id for task in tasks]
-
-    def _plan_control_reuse(self, tasks) -> None:
-        """Compute cohort keys and the reuse plan for an enabled control."""
-        self._reuse_plan = None
-        self._reuse_accepted = None
-        self._sentinel_verdict = None
-        control = self.spec.control
-        if control is None or not control.enabled:
-            return
-        control_variant = next((v for v in self.spec.arms() if v.id == "control"), None)
-        if control_variant is None:
-            return
-        build = build_home(control_variant, self.spec, homes_cache_dir())
-        self._control_hash = build.variant_hash
-        self._task_hashes = {
-            t.task_id: compute_task_hash(t.path) for t in tasks
-        }
-        self._cohort_keys = {
-            task_id: controls_mod.cohort_key_for_task(
-                control_variant_hash=self._control_hash,
-                spec=self.spec,
-                task_hash=task_hash,
-            )
-            for task_id, task_hash in self._task_hashes.items()
-        }
-        pools_by_task: dict[str, list] = {}
-        for task_id, task_hash in self._task_hashes.items():
-            pools_by_task[task_id] = self.store.control_pool(
-                self._cohort_keys[task_id], task_hash
-            )
-        seed = int(compute_spec_hash(self.spec)[:8], 16)
-        sentinel_ids = controls_mod.sentinel_sample(
-            list(self._task_hashes), control.sentinel_tasks, seed
-        )
-        self._sentinel_task_ids = sentinel_ids
-        self._reuse_plan = controls_mod.plan_reuse(
-            policy=control.reuse,
-            pools=pools_by_task,
-            minimum_runs=control.minimum_runs_per_task,
-            maximum_age_days=control.maximum_age_days,
-            sentinel_tasks=sentinel_ids,
-        )
 
     def _write_manifest(self, tasks) -> None:
         manifest = {
@@ -355,11 +295,6 @@ class ExperimentController:
         self._set_state("RUNNING")
         try:
             await self._watch()
-            if self._held_controls_pending():
-                self._evaluate_sentinel()
-                if self._reuse_accepted is not True:
-                    self._launch()
-                    await self._watch()
         except asyncio.CancelledError:
             await self._cancel("CANCELLED")
             raise
@@ -373,101 +308,6 @@ class ExperimentController:
             self._finalize()
         return self.state
 
-    def enforce_reuse_policy(self, *, interactive: bool) -> bool:
-        """Apply ControlSpec.reuse before launch (plan section 16).
-
-        require: fail when nothing is reusable.
-        ask: show the pool and confirm; non-interactive falls back to fresh.
-        """
-        if self._reuse_plan is None:
-            return True
-        
-        tasks = discover_tasks(
-            self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
-        )
-        self._plan_control_reuse(tasks)
-        reusable = [t for t, r in self._reuse_plan.reuse_by_task.items() if r]
-        control = self.spec.control
-        assert control is not None
-        if control.reuse == "require" and not reusable:
-            raise ValueError(
-                "control reuse = require but no task meets "
-                f"minimum_runs_per_task={control.minimum_runs_per_task} "
-                f"within maximum_age_days={control.maximum_age_days}"
-            )
-        if control.reuse == "ask" and reusable:
-            if not interactive:
-                self._reuse_enabled = False
-                return True
-            
-            
-            
-            
-            
-            counts = self._reuse_plan.pool_counts
-            lines = [
-                f"historic control pool: {len(reusable)} task(s) meet "
-                f"minimum_runs={control.minimum_runs_per_task} "
-                f"within {control.maximum_age_days}d"
-            ]
-            for task in sorted(reusable):
-                lo, hi = self._reuse_plan.pool_date_ranges.get(task, ("", ""))
-                span = f" {lo[:10]}..{hi[:10]}" if lo else ""
-                lines.append(f"  {task}: {counts.get(task, 0)} observations{span}")
-            lines.append("(a sentinel subset still runs fresh to detect drift)")
-            message = "\n".join(lines)
-            if self.ask is None:
-                self._reuse_enabled = False
-                self._progress(
-                    "control reuse disabled (non-interactive); all control tasks run fresh"
-                )
-            elif self.ask(message):
-                self._progress("control reuse accepted; sentinel subset runs fresh")
-            else:
-                self._reuse_enabled = False
-                self._progress("control reuse disabled; all control tasks run fresh")
-            return True
-        return True
-
-    def _held_controls_pending(self) -> bool:
-        """True when reuse-planned control tasks are held for the sentinel."""
-        return (
-            self._reuse_plan is not None
-            and self._reuse_enabled
-            and self._reuse_accepted is None
-            and any(self._reuse_plan.reuse_by_task.values())
-        )
-
-    def _evaluate_sentinel(self) -> None:
-        """Gate reuse on fresh sentinel outcomes vs pooled history."""
-        assert self._reuse_plan is not None
-        fresh: list[tuple[str, bool]] = []
-        for task_id in getattr(self, "_sentinel_task_ids", []):
-            cell = self.cells.get("control", {}).get(task_id)
-            if cell is not None and cell.status in ("pass", "fail"):
-                fresh.append((task_id, cell.status == "pass"))
-        historic: dict[str, list[bool]] = {}
-        for task_id in self._task_hashes:
-            rows = self.store.control_pool(
-                self._cohort_keys[task_id], self._task_hashes[task_id]
-            )
-            terminal = [
-                r for r in rows
-                if r["resolved"] is not None
-                and r["trial_id"] not in self._own_trial_ids
-            ]
-            historic[task_id] = [bool(r["resolved"]) for r in terminal]
-        verdict = controls_mod.sentinel_verdict(fresh=fresh, historic=historic)
-        self._sentinel_verdict = verdict
-        if verdict["reject"]:
-            self._reuse_accepted = False
-        elif not verdict["informative"] and self.spec.control is not None \
-                and self.spec.control.reuse != "never":
-            
-            self._reuse_accepted = False
-        else:
-            self._reuse_accepted = True
-
     def _launch(self) -> None:
         """Prepare process objects per variant with only missing tasks."""
         tasks = discover_tasks(
@@ -475,12 +315,9 @@ class ExperimentController:
         )
         all_ids = [t.task_id for t in tasks]
         self._refresh_cells()
-        held = self._held_tasks() if self._held_controls_pending() else set()
         missing_by_job: dict[str, list[str]] = {}
         for job in self.jobs.values():
             missing = missing_tasks(self.cells.get(job.variant_id, {}), all_ids)
-            if job.variant_id == "control" and self._reuse_plan is not None:
-                missing = [t for t in missing if t not in held]
             if missing:
                 missing_by_job[job.variant_id] = missing
         n_concurrent = self.spec.concurrency.effective_per_variant(
@@ -507,17 +344,6 @@ class ExperimentController:
                 f"launch {job.variant_id}: {len(missing)} task(s), "
                 f"{n_concurrent} concurrent"
             )
-
-    def _held_tasks(self) -> set[str]:
-        """Control tasks whose history satisfies reuse while the sentinel gate
-        is still undecided."""
-        if self._reuse_plan is None:
-            return set()
-        return {
-            task_id
-            for task_id, reuse in self._reuse_plan.reuse_by_task.items()
-            if reuse
-        }
 
     async def _watch(self) -> None:
         env = self._pier_env()
@@ -551,7 +377,7 @@ class ExperimentController:
                 key = (variant_id, task_id)
                 if previous.get(key) == cell.status:
                     continue
-                trial_id = self.store.upsert_reconciled_trial(
+                self.store.upsert_reconciled_trial(
                     experiment_id=self.experiment_id,
                     variant_id=variant_id,
                     task_id=task_id,
@@ -563,8 +389,6 @@ class ExperimentController:
                     metrics=None,
                     finished_at=cell.finished_at,
                 )
-                self._own_trial_ids.add(trial_id)
-                self._record_control_observation(variant_id, task_id, cell, trial_id)
                 self._logger.emit(
                     "trial",
                     variant=variant_id,
@@ -593,25 +417,6 @@ class ExperimentController:
             self.cells[variant_id] = reconcile_variant(
                 variant_id, self.run_dir / "jobs" / variant_id, known
             )
-
-    def _record_control_observation(
-        self, variant_id: str, task_id: str, cell: Cell, trial_id: str
-    ) -> None:
-        """Fresh terminal control outcomes feed the reusable pool."""
-        if variant_id != "control" or cell.status not in ("pass", "fail"):
-            return
-        if self._reuse_plan is None or self._cohort_keys.get(task_id) is None:
-            return
-        self.store.record_control_observation(
-            cohort_key=self._cohort_keys[task_id],
-            task_hash=self._task_hashes[task_id],
-            trial_id=trial_id,
-            resolved=cell.status == "pass",
-            reward=cell.reward if cell.reward is not None else 0.0,
-            observed_at=cell.finished_at or datetime.now(UTC).isoformat(),
-            eligible=True,
-            source=f"experiment:{self.experiment_id}",
-        )
 
 
     # ----------------------------------------------------------- cancel --
@@ -665,7 +470,7 @@ class ExperimentController:
     def _record_all_cells(self) -> None:
         for variant_id, cells in self.cells.items():
             for task_id, cell in cells.items():
-                trial_id = self.store.upsert_reconciled_trial(
+                self.store.upsert_reconciled_trial(
                     experiment_id=self.experiment_id,
                     variant_id=variant_id,
                     task_id=task_id,
@@ -677,8 +482,6 @@ class ExperimentController:
                     metrics=None,
                     finished_at=cell.finished_at,
                 )
-                self._own_trial_ids.add(trial_id)
-                self._record_control_observation(variant_id, task_id, cell, trial_id)
 
     def _provenance(self, secret_hits: list[str]) -> dict[str, Any]:
         manifest: dict[str, Any] = {}
@@ -691,45 +494,11 @@ class ExperimentController:
         manifest["finished_at"] = datetime.now(UTC).isoformat()
         manifest["secret_scan_scope"] = "all regular run artifacts after staging cleanup"
         manifest["secret_scan_hits"] = secret_hits
-        manifest["control_reuse"] = self.reuse_summary()
-        manifest["reused_control_observations"] = self.reuse_summary().get(
-            "total_reused", 0
-        )
-        # Persist the merged manifest so `report <id>` reproduces this
-        # provenance (and the control-reuse disclosure) byte for byte.
         atomic_write_text(
             self.run_dir / "manifest.json",
             json.dumps(manifest, indent=2) + "\n",
         )
         return manifest
-
-    def reuse_summary(self) -> dict[str, Any]:
-        """Disclosure payload for the report (plan section 16)."""
-        if self._reuse_plan is None:
-            return {"enabled": False, "total_reused": 0}
-        reused = self._reused_tasks() if self._reuse_accepted else set()
-        counts = {
-            task: self._reuse_plan.pool_counts.get(task, 0)
-            for task in reused
-        }
-        ranges = {
-            task: list(self._reuse_plan.pool_date_ranges.get(task, ("", "")))
-            for task in reused
-        }
-        fresh_control = sorted(set(self._reuse_plan.reuse_by_task) - reused)
-        summary: dict[str, Any] = {
-            "enabled": True,
-            "policy": self.spec.control.reuse if self.spec.control else "never",
-            "accepted": self._reuse_accepted,
-            "reused_tasks": sorted(reused),
-            "reused_counts": counts,
-            "reused_date_ranges": ranges,
-            "fresh_control_tasks": fresh_control,
-            "total_reused": sum(counts.values()),
-        }
-        if self._sentinel_verdict is not None:
-            summary["sentinel"] = self._sentinel_verdict
-        return summary
 
     def fail_setup(self, error: Exception) -> None:
         """Record a preparation failure and remove partial staged homes."""
@@ -767,8 +536,6 @@ class ExperimentController:
         all_ids = self._task_ids()
         matrix: dict[str, dict[str, str]] = {}
         matrix_rewards: dict[str, dict[str, float]] = {}
-        held = self._held_tasks() if self._held_controls_pending() else set()
-        reused = self._reused_tasks()
         for variant_id in self.jobs:
             cells = self.cells.get(variant_id, {})
             row: dict[str, str] = {}
@@ -777,10 +544,6 @@ class ExperimentController:
                 if task_id in cells:
                     row[task_id] = cells[task_id].status[0].upper()
                     rewards[task_id] = cells[task_id].reward
-                elif variant_id == "control" and task_id in reused:
-                    row[task_id] = "H"
-                elif variant_id == "control" and task_id in held:
-                    row[task_id] = "."
                 else:
                     row[task_id] = _running_or_pending(
                         self.run_dir / "jobs" / variant_id, task_id
@@ -792,18 +555,6 @@ class ExperimentController:
             "matrix": matrix,
             "rewards": matrix_rewards,
             "tasks": all_ids,
-        }
-
-    def _reused_tasks(self) -> set[str]:
-        """Control tasks covered by accepted history after the sentinel gate."""
-        if self._reuse_plan is None:
-            return self._observed_reused_tasks
-        if self._reuse_accepted is not True:
-            return set()
-        return {
-            task_id
-            for task_id, reuse in self._reuse_plan.reuse_by_task.items()
-            if reuse
         }
 
 

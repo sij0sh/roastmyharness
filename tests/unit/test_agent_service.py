@@ -77,8 +77,7 @@ def test_prepare_ready_for_confirmation(tmp_path, green_preflight):
     assert result.experiment.name == "svc"
     assert result.experiment.pi_version == "0.84.3"
     assert result.experiment.thinking == "high"
-    assert result.experiment.control == "historic"
-    assert result.experiment.control_reuse == "ask"
+    assert result.experiment.control == "fresh"
     assert result.experiment.task_ids == ["t1"]
     assert result.experiment.tasks_path == str((tmp_path / "dataset").resolve())
     assert result.experiment.arm_ids == ["control", "bare"]

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Removed (breaking for [control] specs)
+
+Control reuse is retired: control arms always run fresh. `control_reuse`
+never fired across every recorded experiment, so the observation pool, reuse
+planning, and the sentinel drift gate are gone.
+
+- `[control]` now accepts only `enabled`. The `reuse`,
+  `minimum_runs_per_task`, `maximum_age_days`, and `sentinel_tasks` keys are
+  rejected; remove them from existing specs.
+- A migration drops the `control_observations` table and deletes old rows.
+- Status matrices no longer render `H` (reused) control cells; resumed runs
+  that reused controls show those cells as pending.
+
 ### Added
 
 - The Pi integration now provides the `/roastmyharness` command.

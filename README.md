@@ -57,7 +57,7 @@ The command follows
 a fixed wizard:
 
 1. Describe which variants to run and how many.
-2. Include or exclude a control. An included control can be fresh or historic.
+2. Include or exclude a control. An included control always runs fresh.
 3. Select an available Pi model.
 4. Select a supported thinking level.
 5. Select one task, the full task set, or a custom task count.
@@ -112,10 +112,10 @@ provider block is sliced per job, referenced env vars must be set, and
   gone and bare `roastmyharness` prints help.
 - Phase 5 (auth): Phase A done (reuse pi Codex OAuth, status, staging).
   Integrated OAuth bridge is a follow-up; use `pi /login codex`.
-- Phase 6 (historic controls): done - eligible-pool reuse planning
-  (minimum runs, age limits, never/ask/require), sentinel-gated release
-  with exact Poisson-binomial drift test, H-cell matrix state, and report
-  disclosure.
+- Phase 6 (historic controls): removed - control reuse never fired in
+  practice, so controls always run fresh. The `control_observations`
+  store, reuse planning, and the sentinel drift gate are gone; `[control]`
+  accepts only `enabled`.
 
 Golden parity: `tests/golden/test_dse_parity.py` reproduces legacy
 DSE-tests collect.py values on a scrubbed real trial

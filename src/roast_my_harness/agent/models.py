@@ -29,7 +29,6 @@ class ExperimentSummary(_Response):
     pi_version: str | None = None
     thinking: str = "high"
     control: str = "excluded"
-    control_reuse: Literal["never", "ask", "require"] | None = None
     task_ids: list[str] = []
     tasks_path: str | None = None
     arm_ids: list[str] = []

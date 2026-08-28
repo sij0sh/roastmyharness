@@ -95,13 +95,3 @@ def test_experiment_lock_is_exclusive(tmp_path: Path):
                 pass
 
 
-def test_control_pool_roundtrip(tmp_path: Path):
-    repo = Repository(tmp_path / "t.db")
-    repo.create_experiment(
-        experiment_id="e", name="n", spec={}, spec_hash="h", run_dir="/tmp",
-    )
-    repo.record_control_observation("k", "t", "trial-1", True, 1.0, "2026-01-01")
-    repo.record_control_observation("k", "t", "trial-1", True, 1.0, "2026-01-01")
-    pool = repo.control_pool("k", "t")
-    assert len(pool) == 1
-    repo.close()

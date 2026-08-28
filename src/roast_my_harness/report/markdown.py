@@ -77,13 +77,6 @@ def generate_report(
             f"{wall / 60:.0f}m |"
         )
     lines.append("")
-    reuse = provenance.get("control_reuse") or {}
-    if reuse.get("enabled") and reuse.get("total_reused"):
-        lines.append(
-            "Control resolve rates use fresh current-run trials only. "
-            "Historic control observations are disclosed separately below."
-        )
-        lines.append("")
 
     flips = paired_flips(rows)
     if flips:
@@ -173,51 +166,7 @@ def generate_report(
             )
         lines.append("")
 
-    # 9. Historical control disclosure.    
-    lines.append("## Historical control disclosure\n")
-    reuse = provenance.get("control_reuse") or {}
-    reused = provenance.get("reused_control_observations", 0)
-    if reuse.get("enabled") and reuse.get("accepted") and reused:
-        lines.append(
-            f"- {reused} historic control observations were reused across "
-            f"{len(reuse.get('reused_tasks', []))} tasks."
-        )
-        counts = reuse.get("reused_counts", {})
-        ranges = reuse.get("reused_date_ranges", {})
-        for task in sorted(counts):
-            lo, hi = ranges.get(task, ["", ""])
-            span = f" ({lo[:10]}..{hi[:10]})" if lo else ""
-            lines.append(f"  - {task}: {counts[task]} observations{span}")
-        lines.append(
-            "- Reused controls are NOT contemporaneous paired observations; "
-            "paired-flip tables cover only run-matched pairs."
-        )
-        fresh = reuse.get("fresh_control_tasks", [])
-        if fresh:
-            lines.append(
-                f"- Control tasks run fresh (insufficient "
-                f"history): {', '.join(fresh)}."
-            )
-        sentinel = reuse.get("sentinel")
-        if sentinel:
-            verdict = "REJECTED (drift suspected)" if sentinel.get("reject") \
-                else "passed"
-            if not sentinel.get("informative"):
-                verdict += " but sample too small to be informative"
-            lines.append(
-                f"- Sentinel check: {sentinel.get('matches')}/"
-                f"{sentinel.get('total')} agreed, p={sentinel.get('p_value')}. "
-                f"Result: {verdict}."
-            )
-    elif reuse.get("enabled"):
-        lines.append(
-            "- No historic control observations were reused for this run "
-            f"(policy={reuse.get('policy')}, accepted={reuse.get('accepted')})."
-        )
-    else:
-        lines.append("- No historic control observations were reused for this run.")
-
-    # 10. Interpretation guide.
+    
     lines.append("\n## Interpretation guide\n")
     lines.append(
         "- At small task counts, resolve-rate differences alone are not "

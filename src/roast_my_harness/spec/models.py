@@ -332,20 +332,11 @@ class TaskSelection(BaseModel):
 
 
 class ControlSpec(BaseModel):
+    """Bare Pi control arm. Controls always run fresh."""
+
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    reuse: Literal["never", "ask", "require"] = "ask"
-    minimum_runs_per_task: int = Field(default=10, ge=1)
-    maximum_age_days: int = Field(default=30, ge=1)
-    sentinel_tasks: int = 6
-
-    @field_validator("sentinel_tasks")
-    @classmethod
-    def _sentinels(cls, value: int) -> int:
-        if value < 0:
-            raise ValueError("sentinel_tasks must be >= 0")
-        return value
 
 
 class ConcurrencySpec(BaseModel):

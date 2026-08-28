@@ -158,9 +158,6 @@ class Repository:
             )
         return trial_id
 
-
-    # ------------------------------------------------------ control pool --
-
     def upsert_reconciled_trial(
         self, *, experiment_id: str, variant_id: str, task_id: str,
         status: str, job_path: str | None, reward: float | None,
@@ -192,30 +189,5 @@ class Repository:
             metrics=metrics,
             finished_at=finished_at,
         )
-
-    def record_control_observation(
-        self, cohort_key: str, task_hash: str, trial_id: str,
-        resolved: bool, reward: float, observed_at: str,
-        *, eligible: bool = True, source: str = "run",
-    ) -> None:
-        with self.conn:
-            self.conn.execute(
-                "INSERT OR IGNORE INTO control_observations "
-                "(cohort_key, task_hash, trial_id, observed_at, resolved, "
-                "reward, eligible, source) VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    cohort_key, task_hash, trial_id, observed_at,
-                    int(resolved), reward, int(eligible), source,
-                ),
-            )
-
-    def control_pool(
-        self, cohort_key: str, task_hash: str
-    ) -> list[sqlite3.Row]:
-        query = (
-            "SELECT * FROM control_observations "
-            "WHERE cohort_key=? AND task_hash=? AND eligible=1"
-        )
-        return self.conn.execute(query, (cohort_key, task_hash)).fetchall()
 
 
