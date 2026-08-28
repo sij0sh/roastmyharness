@@ -55,7 +55,6 @@ interface RoastResponse {
 		pi_version?: string;
 		thinking?: string;
 		control?: string;
-		control_reuse?: "never" | "ask" | "require" | null;
 		task_ids?: string[];
 		tasks_path?: string;
 		arm_ids?: string[];
@@ -100,7 +99,7 @@ interface AuthorDetails {
 	activities: string[];
 	output: string;
 	model?: string;
-	yaml_preview?: string;
+	spec_preview?: string;
 	prepared?: RoastResponse;
 }
 
@@ -562,13 +561,10 @@ function renderWatchResult(
 	}
 
 	for (const [variant, counts] of Object.entries(details.totals ?? {})) {
-		const historic = Object.values(details.matrix?.[variant] ?? {})
-			.filter((status) => status === "H").length;
 		text += `\n  ${theme.fg("accent", variant)}: ` +
 			theme.fg("success", `P ${counts.P ?? 0}`) + " " +
 			theme.fg("error", `F ${counts.F ?? 0}`) + " " +
-			theme.fg("warning", `E ${counts.E ?? 0}`) + " " +
-			theme.fg("muted", `H ${historic}`);
+			theme.fg("warning", `E ${counts.E ?? 0}`);
 	}
 
 	if (details.running?.length) {
@@ -601,7 +597,7 @@ function renderWatchResult(
 	return new Text(text, 0, 0);
 }
 
-type ControlMode = "excluded" | "fresh" | "historic";
+type ControlMode = "excluded" | "fresh";
 type TaskMode = "one" | "full" | "custom";
 
 interface WizardAnswers {
@@ -628,7 +624,7 @@ interface AuthorRequest {
 		variant_request: string;
 	};
 	discovered_local_pi_packages: LocalPiPackage[];
-	current_yaml?: string;
+	current_spec?: string;
 	validation_problem?: string;
 }
 
@@ -640,8 +636,8 @@ interface LocalPiPackage {
 	entries: string[];
 }
 
-const SPEC_AUTHOR_PROMPT = `You author RoastMyHarness schema-version-1 YAML experiment files.
-Return only one YAML document. Do not use Markdown fences or commentary.
+const SPEC_AUTHOR_PROMPT = `You author RoastMyHarness schema-version-1 TOML experiment files.
+Return only one TOML document. Do not use Markdown fences or commentary.
 Use your read-only filesystem tools to verify sources that are not in the supplied local package catalog.
 Prefer a verified local Pi package when its name matches the requested variant. Use its absolute
 path and package.json pi.extensions entry. Never convert a local or private package into an npm
@@ -654,15 +650,14 @@ A local extension is {kind: local, path: string, entry: relative-file}; an npm e
 {kind: npm, package: exact-name@x.y.z}; a local skill is {kind: local, path: string} under
 its variant's skills list. Do not invent credentials, setup handlers, environment values,
 paths, package versions, or variants. Omit fields that the request does not supply.
-Use concurrency.per_variant = 2. A fresh control uses reuse: never. A historic control uses
-reuse: require, minimum_runs_per_task: 10, maximum_age_days: 30, and sentinel_tasks no larger
-than the selected task count. An excluded control uses enabled: false.
+Use concurrency.per_variant = 2. An included control runs fresh: enabled = true. An
+excluded control uses enabled = false.
 A full task suite uses tasks.include = ["*"]; a smaller suite lists the exact pre-sampled task
 ids supplied in the request.
 Required top-level fields are schema_version, name, pi_version, thinking, model, tasks,
 control, concurrency, and variants.
-When current_yaml and validation_problem are present, repair only that problem and preserve all
-wizard selections. The host writes and validates your returned YAML.`;
+When current_spec and validation_problem are present, repair only that problem and preserve all
+wizard selections. The host writes and validates your returned TOML.`;
 
 function expandPath(value: string, cwd: string): string {
 	const trimmed = value.trim();
@@ -786,7 +781,7 @@ async function localPiPackages(cwd: string): Promise<LocalPiPackage[]> {
 
 function stripCodeFence(text: string): string {
 	const trimmed = text.trim();
-	const match = trimmed.match(/^```(?:yaml|yml)?\s*\n([\s\S]*?)\n```$/i);
+	const match = trimmed.match(/^```(?:toml)?\s*\n([\s\S]*?)\n```$/i);
 	return `${match ? match[1].trim() : trimmed}\n`;
 }
 
@@ -822,7 +817,7 @@ function appendActivity(details: AuthorDetails, activity: string): void {
 
 function authorUpdate(details: AuthorDetails): AgentToolResult<AuthorDetails> {
 	return {
-		content: [{ type: "text", text: `${details.phase}: ${details.spec_path ?? "experiment YAML"}` }],
+		content: [{ type: "text", text: `${details.phase}: ${details.spec_path ?? "experiment spec"}` }],
 		details: { ...details, activities: [...details.activities] },
 	};
 }
@@ -990,7 +985,7 @@ async function runAuthorChild(
 		child.on("close", (code) => {
 			buffer += decoder.end();
 			if (buffer.trim()) consume(buffer);
-			if (aborted) finish(new Error("YAML authoring cancelled"));
+			if (aborted) finish(new Error("Spec authoring cancelled"));
 			else if (code !== 0) finish(new Error(stderr.trim() || `Pi author exited with code ${code}`));
 			else finish();
 		});
@@ -1003,7 +998,7 @@ async function runAuthorChild(
 	if (childFailure) throw new Error(childFailure);
 	if (!finalOutput.trim()) {
 		const malformed = malformedLines ? ` (${malformedLines} malformed stream lines)` : "";
-		throw new Error(`Pi author returned no YAML${malformed}`);
+		throw new Error(`Pi author returned no spec${malformed}`);
 	}
 	return stripCodeFence(finalOutput);
 }
@@ -1049,12 +1044,6 @@ function choiceMismatch(prepared: RoastResponse, answers: WizardAnswers): string
 	}
 	if (experiment.thinking !== answers.thinking) problems.push(`thinking must be ${answers.thinking}`);
 	if (experiment.control !== answers.control) problems.push(`control must be ${answers.control}`);
-	const expectedReuse = answers.control === "historic"
-		? "require"
-		: answers.control === "fresh" ? "never" : null;
-	if (experiment.control_reuse !== undefined && experiment.control_reuse !== expectedReuse) {
-		problems.push(`control reuse must be ${expectedReuse ?? "disabled"}`);
-	}
 	if (experiment.tasks_path && resolve(experiment.tasks_path) !== resolve(answers.taskRoot)) {
 		problems.push(`task root must be ${answers.taskRoot}`);
 	}
@@ -1073,8 +1062,8 @@ function outputPathFor(ctx: ExtensionContext, specPath: string): string {
 	const root = resolve(ctx.cwd, ".pi-files", "roastmyharness");
 	const output = resolve(ctx.cwd, specPath.replace(/^@/, ""));
 	const rel = relative(root, output);
-	if (rel.startsWith("..") || resolve(root, rel) !== output || ![".yaml", ".yml"].includes(extname(output))) {
-		throw new Error("YAML output must be inside .pi-files/roastmyharness");
+	if (rel.startsWith("..") || resolve(root, rel) !== output || extname(output) !== ".toml") {
+		throw new Error("Spec output must be inside .pi-files/roastmyharness");
 	}
 	return output;
 }
@@ -1094,25 +1083,30 @@ async function recentTaskRoots(): Promise<string[]> {
 	} catch {
 		return [];
 	}
-	const specs = new Map<string, number>();
+	const roots = new Map<string, number>();
 	for (const entry of runDirs) {
 		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-		const specPath = join(runsRoot(), entry.name, "experiment.toml");
+		const manifestPath = join(runsRoot(), entry.name, "manifest.json");
 		let text: string;
 		let mtime: number;
 		try {
-			text = await readFile(specPath, "utf8");
-			mtime = (await stat(specPath)).mtimeMs;
+			text = await readFile(manifestPath, "utf8");
+			mtime = (await stat(manifestPath)).mtimeMs;
 		} catch {
 			continue;
 		}
-		const match = text.match(/\[tasks\][^\[]*?path\s*=\s*"([^"]+)"/s);
-		if (!match) continue;
-		const root = expandPath(match[1], process.cwd());
-		const known = specs.get(root);
-		if (known === undefined || mtime > known) specs.set(root, mtime);
+		let tasksPath: unknown;
+		try {
+			tasksPath = (JSON.parse(text) as { tasks_path?: unknown }).tasks_path;
+		} catch {
+			continue;
+		}
+		if (typeof tasksPath !== "string" || !tasksPath) continue;
+		const root = expandPath(tasksPath, process.cwd());
+		const known = roots.get(root);
+		if (known === undefined || mtime > known) roots.set(root, mtime);
 	}
-	return [...specs.entries()]
+	return [...roots.entries()]
 		.sort((a, b) => b[1] - a[1])
 		.map(([root]) => root);
 }
@@ -1180,7 +1174,7 @@ async function collectWizard(
 	ctx: ExtensionContext,
 ): Promise<{ answers: WizardAnswers; request: AuthorRequest } | null> {
 	if (!ctx.hasUI) {
-		throw new Error("YAML authoring requires an interactive Pi session");
+		throw new Error("Spec authoring requires an interactive Pi session");
 	}
 
 	const variantRequest = await ctx.ui.editor(
@@ -1196,15 +1190,7 @@ async function collectWizard(
 		["Include a control", "Exclude the control"],
 	);
 	if (includeControl === undefined) return null;
-	let control: ControlMode = "excluded";
-	if (includeControl === "Include a control") {
-		const source = await ctx.ui.select(
-			"Step 2/5 - Control source",
-			["Fresh control", "Historic control"],
-		);
-		if (source === undefined) return null;
-		control = source === "Fresh control" ? "fresh" : "historic";
-	}
+	const control: ControlMode = includeControl === "Include a control" ? "fresh" : "excluded";
 
 	const scoped = ctx.scopedModels.map((item) => item.model);
 	const candidates = scoped.length ? scoped : ctx.modelRegistry.getAvailable();
@@ -1246,7 +1232,7 @@ async function collectWizard(
 	const experimentName = `roast-${stamp.toLowerCase()}`;
 	const outputDir = join(ctx.cwd, ".pi-files", "roastmyharness");
 	await mkdir(outputDir, { recursive: true });
-	const specPath = outputPathFor(ctx, join(outputDir, `${experimentName}.yaml`));
+	const specPath = outputPathFor(ctx, join(outputDir, `${experimentName}.toml`));
 	const answers: WizardAnswers = {
 		variantRequest: variantRequest.trim(),
 		control,
@@ -1289,7 +1275,7 @@ async function authorExperiment(
 	const collected = await collectWizard(taskRoot, ctx);
 	if (!collected) {
 		return {
-			content: [{ type: "text", text: "YAML authoring cancelled by user" }],
+			content: [{ type: "text", text: "Spec authoring cancelled by user" }],
 			details: {
 				kind: "author",
 				phase: "cancelled",
@@ -1323,17 +1309,17 @@ async function authorExperiment(
 		details.prepared = undefined;
 		if (attempt > 1) {
 			const previous = request.validation_problem ?? "validation failed";
-			appendActivity(details, `Repair YAML (attempt ${attempt}): ${compactText(previous, 160)}`);
+			appendActivity(details, `Repair spec (attempt ${attempt}): ${compactText(previous, 160)}`);
 		} else {
-			appendActivity(details, "Draft experiment YAML");
+			appendActivity(details, "Draft experiment spec");
 		}
 		onUpdate?.(authorUpdate(details));
 
-		const yaml = await runAuthorChild(ctx, request, signal, onUpdate, details, usage);
+		const specText = await runAuthorChild(ctx, request, signal, onUpdate, details, usage);
 		await withFileMutationQueue(request.output_path, async () => {
-			await writeFile(request.output_path, yaml, { encoding: "utf8", mode: 0o600 });
+			await writeFile(request.output_path, specText, { encoding: "utf8", mode: 0o600 });
 		});
-		details.yaml_preview = yaml.slice(0, AUTHOR_OUTPUT_LIMIT);
+		details.spec_preview = specText.slice(0, AUTHOR_OUTPUT_LIMIT);
 		details.phase = "validating";
 		appendActivity(details, "Validate the generated experiment");
 		onUpdate?.(authorUpdate(details));
@@ -1362,16 +1348,16 @@ async function authorExperiment(
 		}
 		request = {
 			...collected.request,
-			current_yaml: yaml,
+			current_spec: specText,
 			validation_problem: specProblem ? prepareProblem(prepared) : mismatch,
 		};
 	}
 
-	if (!prepared) throw new Error("YAML validation returned no result");
+	if (!prepared) throw new Error("Spec validation returned no result");
 	details.final = true;
 	details.phase = prepared.state === "ready_for_confirmation" ? "ready" : "needs_input";
 	details.output = prepared.state === "ready_for_confirmation"
-		? "YAML is valid. Review the plan and approve it before launch."
+		? "Spec is valid. Review the plan and approve it before launch."
 		: prepareProblem(prepared) || summarize(prepared);
 	onUpdate?.(authorUpdate(details));
 	return {
@@ -1413,7 +1399,7 @@ function renderAuthorResult(
 		: details.phase === "needs_input"
 			? "NEEDS INPUT"
 			: details.phase.toUpperCase();
-	let text = `${icon} ${theme.fg("toolTitle", theme.bold("YAML author"))}` +
+	let text = `${icon} ${theme.fg("toolTitle", theme.bold("Spec author"))}` +
 		theme.fg(details.phase === "ready" ? "success" : "muted", ` · ${label}`);
 	if (details.spec_path) text += `\n  ${theme.fg("dim", details.spec_path)}`;
 
@@ -1440,7 +1426,6 @@ function renderAuthorResult(
 		}
 		if (experiment.control && experiment.control !== "excluded") {
 			text += `\n  ${theme.fg("muted", "control ")}${experiment.control}`;
-			if (experiment.control_reuse) text += theme.fg("dim", ` · reuse ${experiment.control_reuse}`);
 		}
 	}
 	for (const warning of details.prepared?.warnings ?? []) {
@@ -1456,12 +1441,12 @@ function renderAuthorResult(
 		const visible = expanded ? lines : lines.slice(-4);
 		text += `\n${visible.map((line) => `  ${theme.fg("toolOutput", line)}`).join("\n")}`;
 	}
-	if (expanded && details.yaml_preview) {
-		text += `\n${theme.fg("muted", "  --- YAML preview ---")}`;
-		text += `\n${details.yaml_preview.split("\n").map((line) => `  ${theme.fg("dim", line)}`).join("\n")}`;
+	if (expanded && details.spec_preview) {
+		text += `\n${theme.fg("muted", "  --- Spec preview ---")}`;
+		text += `\n${details.spec_preview.split("\n").map((line) => `  ${theme.fg("dim", line)}`).join("\n")}`;
 	}
-	if (!expanded && details.final && details.yaml_preview) {
-		text += `\n  ${theme.fg("muted", keyHint("app.tools.expand", "to show YAML"))}`;
+	if (!expanded && details.final && details.spec_preview) {
+		text += `\n  ${theme.fg("muted", keyHint("app.tools.expand", "to show spec"))}`;
 	}
 	return new Text(text, 0, 0);
 }
@@ -1483,7 +1468,7 @@ export default function (pi: ExtensionAPI) {
 			customType: "roastmyharness-wizard",
 			content:
 				`Immediately call roast_harness with action \"author\" and task_root ${JSON.stringify(args.trim())}. ` +
-				"Do not describe the call first. The tool will run the wizard, author and validate the YAML. " +
+				"Do not describe the call first. The tool will run the wizard, author and validate the spec. " +
 				"When it returns ready_for_confirmation, present its plan and wait for explicit user approval. " +
 				"After approval, call roast_harness start with the returned plan_id and leave watch enabled.",
 			display: false,
@@ -1500,14 +1485,14 @@ export default function (pi: ExtensionAPI) {
 		label: "RoastMyHarness",
 		description:
 			"Configure and run harness-comparison experiments. author opens the wizard, uses an isolated " +
-			"Pi context to create YAML, and validates it; prepare validates an existing TOML or YAML file; " +
+			"Pi context to create the spec, and validates it; prepare validates an existing TOML file; " +
 			"start launches an approved plan_id and streams live progress until completion " +
 			"(watch=false returns after launch); watch attaches to a running experiment; status polls once; " +
 			"cancel requests graceful cancellation; report regenerates artifacts.",
 		promptSnippet:
 			"Author, validate, launch, monitor, and report harness-comparison experiments",
 		promptGuidelines: [
-			"When /roastmyharness requests action author, call roast_harness author immediately; the tool owns the wizard and YAML creation.",
+			"When /roastmyharness requests action author, call roast_harness author immediately; the tool owns the wizard and spec creation.",
 			"After roast_harness author or prepare returns ready_for_confirmation, present the plan and wait for explicit user approval before calling start.",
 			"roast_harness start streams live progress until the experiment finishes; aborting only detaches the watch. Use cancel to stop a run.",
 			"Read roast_harness results as JSON. When validation returns needs_input, resolve listed questions instead of guessing.",
@@ -1520,7 +1505,7 @@ export default function (pi: ExtensionAPI) {
 				Type.String({ description: "Task dataset path hint for the author wizard." }),
 			),
 			spec_path: Type.Optional(
-				Type.String({ description: "Experiment TOML or YAML path (required for prepare)." }),
+				Type.String({ description: "Experiment TOML path (required for prepare)." }),
 			),
 			plan_id: Type.Optional(
 				Type.String({ description: "Plan id from prepare (required for start)." }),

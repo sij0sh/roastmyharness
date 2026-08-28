@@ -21,7 +21,7 @@ from roast_my_harness.agent.service import AgentService, ServiceError
 TOOL_NAME = "roast_harness"
 TOOL_DESCRIPTION = (
     "Run harness-comparison experiments via the roastmyharness service. "
-    "prepare validates an experiment TOML or YAML file and returns a plan for user "
+    "prepare validates an experiment TOML file and returns a plan for user "
     "approval; start launches an approved plan_id in the background; status "
     "polls an experiment; cancel requests graceful cancellation; report "
     "regenerates artifacts."
@@ -38,7 +38,7 @@ TOOL_INPUT_SCHEMA: dict[str, Any] = {
         },
         "spec_path": {
             "type": "string",
-            "description": "Experiment TOML or YAML path (required for prepare).",
+            "description": "Experiment TOML path (required for prepare).",
         },
         "plan_id": {
             "type": "string",

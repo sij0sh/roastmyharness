@@ -45,38 +45,8 @@ def test_control_arm_added(tmp_path: Path):
     assert [v.id for v in spec.arms()] == ["control", "bareish"]
 
 
-def test_yaml_spec_loads(tmp_path: Path):
-    path = tmp_path / "experiment.yaml"
-    path.write_text(
-        """schema_version: 1
-name: yaml-demo
-tasks:
-  path: .
-control:
-  enabled: false
-variants:
-  - id: extension-a
-"""
-    )
-    spec = load_experiment(path)
-    assert spec.name == "yaml-demo"
-    assert spec.tasks.path == tmp_path.resolve()
-    assert [variant.id for variant in spec.arms()] == ["extension-a"]
-
-
-def test_yaml_requires_a_mapping(tmp_path: Path):
-    path = tmp_path / "experiment.yaml"
-    path.write_text("- not\n- a\n- mapping\n")
-    with pytest.raises(SpecError, match="expected a mapping"):
-        load_experiment(path)
-
-
 def test_validation_error_is_single_line(tmp_path: Path):
-    path = tmp_path / "experiment.yaml"
-    path.write_text(
-        "schema_version: 1\nname: demo\ntasks: {path: .}\n"
-        "the local `pi-polar` package is needed: true\n"
-    )
+    path = write(tmp_path, MINIMAL + "\nbogus_field = true\n")
     with pytest.raises(SpecError) as excinfo:
         load_experiment(path)
     message = str(excinfo.value)

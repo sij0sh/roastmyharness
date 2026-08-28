@@ -1,4 +1,4 @@
-"""TOML and YAML loading with path resolution."""
+"""TOML loading with path resolution."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import re
 import tomllib
 from pathlib import Path
 
-import yaml
 from pydantic import ValidationError
 
 from roast_my_harness.errors import SpecError
@@ -116,15 +115,12 @@ def compact_str(text: str, limit: int) -> str:
 
 
 def load_experiment(path: Path) -> ExperimentSpec:
-    """Load and validate a TOML or YAML experiment. Resolve all paths."""
+    """Load and validate a TOML experiment. Resolve all paths."""
     path = path.expanduser().resolve()
     try:
         text = path.read_text()
-        if path.suffix.lower() in (".yaml", ".yml"):
-            raw = yaml.safe_load(text)
-        else:
-            raw = tomllib.loads(text)
-    except (OSError, tomllib.TOMLDecodeError, yaml.YAMLError) as e:
+        raw = tomllib.loads(text)
+    except (OSError, tomllib.TOMLDecodeError) as e:
         raise SpecError(f"cannot read experiment file {path}: {e}") from e
     if not isinstance(raw, dict):
         raise SpecError(f"invalid experiment spec in {path}: expected a mapping")

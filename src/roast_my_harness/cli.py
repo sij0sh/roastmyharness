@@ -137,7 +137,7 @@ def init(
 
 @app.command()
 def validate(
-    spec_path: Path = typer.Argument(..., help="Experiment TOML or YAML file."),
+    spec_path: Path = typer.Argument(..., help="Experiment TOML file."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable."),
 ) -> None:
     """Validate spec, discover tasks, check sources and environment."""
@@ -167,7 +167,7 @@ def validate(
 
 @app.command()
 def run(
-    spec_path: Path = typer.Argument(..., help="Experiment TOML or YAML file."),
+    spec_path: Path = typer.Argument(..., help="Experiment TOML file."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
     skip_docker: bool = typer.Option(False, help="Skip docker checks."),
 ) -> None:
@@ -417,7 +417,7 @@ def _tool_call(fn, *args, **kwargs):
 
 @tool_app.command("prepare")
 def tool_prepare(
-    spec_path: Path = typer.Argument(..., help="Experiment TOML or YAML file."),
+    spec_path: Path = typer.Argument(..., help="Experiment TOML file."),
     skip_docker: bool = typer.Option(False, help="Skip docker checks."),
 ) -> None:
     """Validate and return a plan awaiting confirmation (JSON)."""

@@ -5,7 +5,7 @@ Pier tasks. Successor to the DSE-tests script harness.
 
 ## What it does
 
-- One declarative TOML or YAML file defines control + variants (no Python edits).
+- One declarative TOML file defines control + variants (no Python edits).
 - Runs one Pier job per variant with the same model, thinking level, and
   fairness flags (`-nc --no-skills --no-prompt-templates --no-themes`).
 - Headless progress: `status <id>` prints the live matrix and totals;
@@ -64,7 +64,7 @@ a fixed wizard:
 
 After the selections, a `roast_harness author` card appears in Pi's session.
 The card runs an ephemeral Pi child context with read-only filesystem tools,
-streams its source checks and YAML draft, writes the YAML under
+streams its source checks and spec draft, writes the TOML under
 `.pi-files/roastmyharness/`, and validates it. Invalid generated specs get up to
 two focused repair attempts. The parent session receives only the bounded tool
 result instead of the authoring conversation. No authoring status is shown in
@@ -89,7 +89,7 @@ the Claude MCP server idempotently:
 
 ## Experiment spec
 
-The loader accepts TOML and YAML. `roastmyharness init` still writes a
+The loader accepts TOML only. `roastmyharness init` still writes a
 commented TOML starter. See `examples/` for more TOML examples. Key sections
 are `[model]`, `[tasks]`,
 `[concurrency]`, `[control]`, and one `[[variants]]` block per arm with
