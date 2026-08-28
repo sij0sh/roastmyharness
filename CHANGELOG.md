@@ -19,6 +19,16 @@ planning, and the sentinel drift gate are gone.
 
 ### Added
 
+- The DeepSWE benchmark now ships inside the repo under `tasks/deepswe/` (117
+  Harbor tasks plus upstream README, PROVENANCE, and LICENSE). The Pi wizard
+  resolves it through its installed symlink and defaults to it; an explicit
+  `/roastmyharness <path>` argument still wins.
+- The Pi wizard asks for a curated test suite: GPT-5.6 Luna High or
+  GLM-5.3-Flash Max. It then offers one random task, the curated 30 (signal
+  screen), the curated 60 (signal + confirmation), the full task set, or a
+  custom random count.
+- Suite membership lives in `tasks/deepswe/suites.json`. The wizard validates
+  curated picks against the discovered task ids and aborts on missing ids.
 - The Pi integration now provides the `/roastmyharness` command.
 - The linear wizard collects variants, control mode, model, thinking mode, and
   task count. Its `roast_harness author` action now runs spec authoring in an

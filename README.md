@@ -60,7 +60,9 @@ a fixed wizard:
 2. Include or exclude a control. An included control always runs fresh.
 3. Select an available Pi model.
 4. Select a supported thinking level.
-5. Select one task, the full task set, or a custom task count.
+5. Select a curated test suite: GPT-5.6 Luna High or GLM-5.3-Flash Max.
+6. Select one random task, the curated 30 (signal screen), the curated 60
+   (signal + confirmation), the full task set, or a custom random count.
 
 After the selections, a `roast_harness author` card appears in Pi's session.
 The card runs an ephemeral Pi child context with read-only filesystem tools,
@@ -86,6 +88,20 @@ the Claude MCP server idempotently:
     roastmyharness setup --agent pi --scope user
     roastmyharness setup --agent claude --scope project
     roastmyharness doctor
+
+## Bundled DeepSWE benchmark
+
+The DeepSWE task corpus lives in this repo under `tasks/deepswe/` (117 Harbor
+format tasks with `task.toml`, `instruction.md`, `environment/`, `tests/`, and
+`solution/`; see `tasks/deepswe/README.md` and `PROVENANCE.md`). The Pi
+extension resolves the benchmark relative to its own installed symlink, so the
+wizard defaults to these local tasks with no external checkout or network
+access. Curated suite membership lives in `tasks/deepswe/suites.json`: per
+model (Luna High, GLM-5.3-Flash Max), a 30-task signal screen of frontier tasks
+(1/4-3/4 historical rollout outcomes) plus a 30-task confirmation extension
+with regression/floor anchors. Passing `/roastmyharness <path>` still overrides
+the bundled root, and other task roots are discovered from the working directory
+and recent runs.
 
 ## Experiment spec
 
