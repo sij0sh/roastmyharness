@@ -183,8 +183,21 @@ def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
 
 
 def _auth(spec: ExperimentSpec) -> list[CheckResult]:
+    """Credential checks for the global model plus every distinct arm model."""
+    results = _model_auth(spec.model, "auth")
+    default = spec.model.full_id()
+    for arm in spec.arms():
+        model = spec.model_for(arm)
+        if model.full_id() == default and model.models_json is None:
+            continue
+        if any(r.name == f"auth[{arm.id}]" for r in results):
+            continue
+        results.extend(_model_auth(model, f"auth[{arm.id}]"))
+    return results
+
+
+def _model_auth(model, label: str) -> list[CheckResult]:
     results = []
-    model = spec.model
     if model.provider == "openai-codex":
         cred = auth_service.codex_credential()
         if cred is None:

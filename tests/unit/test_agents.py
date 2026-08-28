@@ -69,7 +69,7 @@ def test_pi_registry_entry():
 
 
 def test_get_agent_unknown_lists_known():
-    with pytest.raises(ValueError, match="known agents: omp, pi"):
+    with pytest.raises(ValueError, match="known agents: claude, omp, pi"):
         get_agent("nope")
 
 
@@ -95,7 +95,7 @@ def test_variant_agent_override(tmp_path: Path):
 
 def test_unknown_agent_on_spec_rejected(tmp_path: Path):
     with pytest.raises(Exception, match="unknown agent"):
-        load_experiment(write(tmp_path, spec_toml(top='agent = "claude"')))
+        load_experiment(write(tmp_path, spec_toml(top='agent = "nope"')))
 
 
 def test_unknown_agent_on_variant_rejected(tmp_path: Path):
