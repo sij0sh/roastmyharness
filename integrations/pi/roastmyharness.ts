@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
@@ -31,6 +31,12 @@ const AUTHOR_OUTPUT_LIMIT = 12_000;
 const STDERR_LIMIT = 8_000;
 const AUTHOR_CHILD_ENV = "ROAST_MY_HARNESS_AUTHOR_CHILD";
 const DEFAULT_PI_VERSION = "0.84.3";
+const SUITE_SCREEN_SIZE = 30;
+
+interface DeepSweSuites {
+	root: string;
+	suites: Record<string, { label: string; signal: string[]; confirmation: string[] }>;
+}
 
 type ThemeFn = (color: any, text: string) => string;
 interface ThemeLike {
@@ -696,7 +702,7 @@ function renderWatchResult(
 }
 
 type ControlMode = "excluded" | "fresh";
-type TaskMode = "one" | "full" | "custom";
+type TaskMode = "one" | "curated30" | "curated60" | "full" | "custom";
 
 interface WizardAnswers {
 	variantRequest: string;
@@ -790,6 +796,25 @@ async function discoverTaskIds(root: string): Promise<string[]> {
 }
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+
+async function bundledDeepSwe(): Promise<DeepSweSuites | undefined> {
+	let source: string;
+	try {
+		source = realpathSync(fileURLToPath(import.meta.url));
+	} catch {
+		return undefined;
+	}
+	const root = resolve(dirname(source), "..", "..", "tasks", "deepswe");
+	if (!existsSync(join(root, "tasks"))) return undefined;
+	const parsed = await readJson(join(root, "suites.json"));
+	const suites = parsed?.suites as DeepSweSuites["suites"] | undefined;
+	if (!suites || typeof suites !== "object") return undefined;
+	for (const suite of Object.values(suites)) {
+		if (!Array.isArray(suite.signal) || !Array.isArray(suite.confirmation)) return undefined;
+	}
+	return { root, suites };
+}
 
 
 function supportedThinkingLevels(model: Model<Api>): string[] {
@@ -1218,6 +1243,8 @@ async function discoverTaskRoot(
 		if (!candidates.includes(candidate)) candidates.push(candidate);
 	};
 	if (argument.trim()) add(expandPath(argument, ctx.cwd));
+	const bundled = await bundledDeepSwe();
+	if (bundled) add(join(bundled.root, "tasks"));
 	add(ctx.cwd);
 	for (const recent of await recentTaskRoots()) add(recent);
 	for (const candidate of candidates) {
@@ -1243,8 +1270,22 @@ async function chooseTasks(
 	ctx: ExtensionContext,
 	mode: TaskMode,
 	available: string[],
+	curated?: string[],
 ): Promise<{ ids: string[]; includeAll: boolean } | null> {
 	if (mode === "full") return { ids: available, includeAll: true };
+	if (mode === "curated30" || mode === "curated60") {
+		if (!curated) return null;
+		const missing = curated.filter((id) => !available.includes(id));
+		if (missing.length) {
+			ctx.ui.notify(
+				`Curated suite tasks missing from ${available.length} discovered tasks: ${missing.join(", ")}`,
+				"warning",
+			);
+			return null;
+		}
+		const size = mode === "curated30" ? Math.min(SUITE_SCREEN_SIZE, curated.length) : curated.length;
+		return { ids: [...curated].slice(0, size).sort((a, b) => a.localeCompare(b)), includeAll: false };
+	}
 	if (mode === "one") {
 		return available.length === 1
 			? { ids: available, includeAll: false }
@@ -1276,7 +1317,7 @@ async function collectWizard(
 	}
 
 	const variantRequest = await ctx.ui.editor(
-		"Step 1/5 - Which variants should run? " +
+		"Step 1/6 - Which variants should run? " +
 			"Accepted: a local extension path with its entry file, a pinned npm package, or a skill path. " +
 			"The coding harness uses this data to search up the exact paths.",
 		"",
@@ -1284,7 +1325,7 @@ async function collectWizard(
 	if (variantRequest === undefined || !variantRequest.trim()) return null;
 
 	const includeControl = await ctx.ui.select(
-		"Step 2/5 - Control",
+		"Step 2/6 - Control",
 		["Include a control", "Exclude the control"],
 	);
 	if (includeControl === undefined) return null;
@@ -1301,7 +1342,7 @@ async function collectWizard(
 		return a.localeCompare(b);
 	});
 	if (!modelIds.length) throw new Error("Pi has no authenticated models available");
-	const modelChoice = await ctx.ui.select("Step 3/5 - Model", modelIds);
+	const modelChoice = await ctx.ui.select("Step 3/6 - Model", modelIds);
 	if (modelChoice === undefined) return null;
 	const selectedModel = models.get(modelChoice) as Model<Api>;
 	const thinkingOptions = supportedThinkingLevels(selectedModel);
@@ -1309,21 +1350,45 @@ async function collectWizard(
 	if (thinkingOptions.length === 1) {
 		thinking = thinkingOptions[0];
 	} else {
-		const chosen = await ctx.ui.select("Step 4/5 - Thinking mode", thinkingOptions);
+		const chosen = await ctx.ui.select("Step 4/6 - Thinking mode", thinkingOptions);
 		if (chosen === undefined) return null;
 		thinking = chosen;
 	}
 
+	const bundled = await bundledDeepSwe();
+	let curated: string[] | undefined;
+	if (bundled) {
+		const suiteChoice = await ctx.ui.select(
+			"Step 5/6 - Test suite",
+			Object.entries(bundled.suites).map(([id, suite]) => `${suite.label} (${id})`),
+		);
+		if (suiteChoice === undefined) return null;
+		const suite = Object.values(bundled.suites).find((entry) => suiteChoice.startsWith(entry.label));
+		if (!suite) throw new Error(`Unknown test suite: ${suiteChoice}`);
+		curated = [...suite.signal, ...suite.confirmation];
+	}
+
 	const taskModeChoice = await ctx.ui.select(
-		"Step 5/5 - How many tasks?",
-		["1 task", "Full task set", "Custom count"],
+		"Step 6/6 - How many tasks?",
+		bundled
+			? [
+				"1 task (random)",
+				`${SUITE_SCREEN_SIZE} tasks (curated)`,
+				`${curated?.length} tasks (curated)`,
+				"Full task set",
+				"Custom count (random)",
+			]
+			: ["1 task", "Full task set", "Custom count"],
 	);
 	if (taskModeChoice === undefined) return null;
-	const taskMode: TaskMode = taskModeChoice === "1 task"
+	const taskMode: TaskMode = taskModeChoice === "1 task" || taskModeChoice === "1 task (random)"
 		? "one"
-		: taskModeChoice === "Full task set" ? "full" : "custom";
+		: taskModeChoice === "Full task set" ? "full"
+		: taskModeChoice === `${SUITE_SCREEN_SIZE} tasks (curated)` ? "curated30"
+		: taskModeChoice?.endsWith("tasks (curated)") ? "curated60"
+		: "custom";
 	const discovered = await discoverTaskRoot(ctx, args);
-	const taskSelection = await chooseTasks(ctx, taskMode, discovered.ids);
+	const taskSelection = await chooseTasks(ctx, taskMode, discovered.ids, curated);
 	if (!taskSelection) return null;
 
 	const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
