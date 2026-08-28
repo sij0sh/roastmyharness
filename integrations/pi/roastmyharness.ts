@@ -1472,7 +1472,15 @@ async function authorLoop(
 		}
 		onUpdate?.(authorUpdate(details));
 
-		specText = await runAuthorChild(ctx, request, signal, onUpdate, details, usage);
+		try {
+			specText = await runAuthorChild(ctx, request, signal, onUpdate, details, usage);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			appendActivity(details, `Author attempt ${attempt} failed: ${compactText(message, 160)}`);
+			details.output = message.slice(-AUTHOR_OUTPUT_LIMIT);
+			onUpdate?.(authorUpdate(details));
+			throw error;
+		}
 		await withFileMutationQueue(request.output_path, async () => {
 			await writeFile(request.output_path, specText, { encoding: "utf8", mode: 0o600 });
 		});
@@ -1666,14 +1674,23 @@ async function runCommandFlow(pi: ExtensionAPI, args: string, ctx: ExtensionCont
 			collected.answers,
 			request,
 			undefined,
-			(update) =>
-				ctx.ui.setStatus(WIDGET_ID, `${update.details.phase} (attempt ${update.details.attempt})`),
+			(update) => {
+				ctx.ui.setStatus(WIDGET_ID, `${update.details.phase} (attempt ${update.details.attempt})`);
+				ctx.ui.setWidget(
+					WIDGET_ID,
+					(_tui, theme) =>
+						renderAuthorResult(update.details, { expanded: true, isPartial: true }, theme),
+				);
+			},
 			false,
 		);
 		request = outcome.request;
 		specText = outcome.spec_text;
 		const ready = outcome.prepared.state === "ready_for_confirmation" &&
 			Boolean(outcome.prepared.plan_id);
+		if (!ready) {
+			outcome.details.output = prepareProblem(outcome.prepared) || summarize(outcome.prepared);
+		}
 		const next = await presentPlan(ctx, outcome.details, ready);
 		if (next === "launch") {
 			await launchExperiment(pi, ctx, outcome.prepared.plan_id as string);
@@ -1794,6 +1811,8 @@ export default function (pi: ExtensionAPI) {
 		try {
 			await runCommandFlow(pi, args, ctx);
 		} catch (error) {
+			ctx.ui.setStatus(WIDGET_ID, undefined);
+			ctx.ui.setWidget(WIDGET_ID, undefined);
 			ctx.ui.notify(
 				`RoastMyHarness failed: ${error instanceof Error ? error.message : String(error)}`,
 				"error",
