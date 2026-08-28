@@ -15,17 +15,13 @@ from roast_my_harness import __version__
 from roast_my_harness.agent import service as agent_service
 from roast_my_harness.auth import service as auth_service
 from roast_my_harness.errors import RoastMyHarnessError
-from roast_my_harness.paths import database_path, run_dir
+from roast_my_harness.paths import database_path
 from roast_my_harness.runner import preflight
 from roast_my_harness.runner.controller import ExperimentController
 from roast_my_harness.runner.signals import install_cancel_handlers
-from roast_my_harness.spec.hashes import experiment_hash as compute_experiment_hash
 from roast_my_harness.spec.load import load_experiment
-from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
 from roast_my_harness.store.locking import ExperimentLock
 from roast_my_harness.store.repository import Repository
-from roast_my_harness.tasks.discover import discover_tasks
-from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 
 app = typer.Typer(
     name="roastmyharness",
@@ -200,43 +196,12 @@ def run(
     if not yes and sys.stdin.isatty():
         if not typer.confirm("Launch now?"):
             raise typer.Exit(0)
-    experiment_id = make_experiment_id(
-        spec.name,
-        compute_experiment_hash(
-            spec,
-            [
-                (t.task_id, compute_task_hash(t.path))
-                for t in discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
-            ],
-        ),
-    )
-    repo = _repo()
-    controller = ExperimentController(
-        spec,
-        experiment_id,
-        run_dir(experiment_id),
-        repo,
+    experiment_id, final = agent_service.run_experiment(
+        spec_path,
         progress=_print_progress,
         ask=_ask_reuse if (sys.stdin.isatty() and not yes) else None,
+        interactive=sys.stdin.isatty() and not yes,
     )
-    with ExperimentLock(controller.run_dir):
-        loop = asyncio.new_event_loop()
-        cleanup = install_cancel_handlers(loop, controller.request_cancel)
-        try:
-            try:
-                controller.prepare(spec_path)
-                controller.enforce_reuse_policy(interactive=sys.stdin.isatty() and not yes)
-            except Exception as error:
-                controller.fail_setup(error)
-                raise
-            except BaseException:
-                controller.cleanup_staging()
-                raise
-            main_task = loop.create_task(controller.run())
-            final = loop.run_until_complete(main_task)
-        finally:
-            cleanup()
-            loop.close()
     raise typer.Exit(_exit_for_final_state(experiment_id, final))
 
 

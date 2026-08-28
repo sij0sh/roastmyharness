@@ -16,7 +16,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -652,8 +652,18 @@ class AgentService:
         return json.loads(path.read_text())
 
 
-def run_experiment_worker(spec_path: Path, *, skip_docker: bool = False) -> int:
-    """Headless run of one prepared experiment; returns a process exit code."""
+def run_experiment(
+    spec_path: Path,
+    *,
+    progress: Callable[[str], None] | None = None,
+    ask: Callable[[str], bool] | None = None,
+    interactive: bool = False,
+) -> tuple[str, str]:
+    """Run one experiment headless; return (experiment_id, final state).
+
+    The single orchestration body shared by `roastmyharness run` and the
+    detached worker. Callers own exit-code mapping and final-state reporting.
+    """
     spec = load_experiment(spec_path)
     tasks = discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
     experiment_id = make_experiment_id(
@@ -665,7 +675,7 @@ def run_experiment_worker(spec_path: Path, *, skip_docker: bool = False) -> int:
     )
     repo = Repository(database_path())
     controller = ExperimentController(
-        spec, experiment_id, run_dir(experiment_id), repo, None, ask=None
+        spec, experiment_id, run_dir(experiment_id), repo, progress=progress, ask=ask
     )
     with ExperimentLock(controller.run_dir):
         loop = asyncio.new_event_loop()
@@ -673,7 +683,7 @@ def run_experiment_worker(spec_path: Path, *, skip_docker: bool = False) -> int:
         try:
             try:
                 controller.prepare(spec_path)
-                controller.enforce_reuse_policy(interactive=False)
+                controller.enforce_reuse_policy(interactive=interactive)
             except Exception as error:
                 controller.fail_setup(error)
                 raise
@@ -684,4 +694,10 @@ def run_experiment_worker(spec_path: Path, *, skip_docker: bool = False) -> int:
         finally:
             cleanup()
             loop.close()
+    return experiment_id, final
+
+
+def run_experiment_worker(spec_path: Path, *, skip_docker: bool = False) -> int:
+    """Headless run of one prepared experiment; returns a process exit code."""
+    _experiment_id, final = run_experiment(spec_path)
     return EXIT_CODES.get(final, 0)
