@@ -67,11 +67,14 @@ a fixed wizard:
    (signal + confirmation), the full task set, or a custom random count.
 
 After the selections, one ephemeral Pi child context with read-only filesystem
-tools authors the spec. It streams its source checks and spec draft into the
-author card (`roast_harness author`) or, when the command runs the wizard,
-into Pi's footer status, writes the TOML under `.pi-files/roastmyharness/`,
-and validates it. Invalid generated specs get up to two focused repair
-attempts. This author child is the only model call in the command flow.
+tools authors the spec. It streams its source checks, tool activity, and spec
+draft into the author card (`roast_harness author`) or, when the command runs
+the wizard, into a live card above the editor (footer status shows the phase
+and attempt). It writes the TOML under `.pi-files/roastmyharness/` and
+validates it. Invalid generated specs get up to two focused repair attempts.
+Author-child failures surface their error message in the card and the
+failure notification. This author child is the only model call in the
+command flow.
 
 Schema, source, auth, and pinned npm availability checks gate launch. The
 validated plan appears in a wizard screen with three choices: "Confirm and
