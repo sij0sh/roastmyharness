@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from roast_my_harness.constants import DEFAULT_PI_VERSION, FAIRNESS_FLAGS
+from roast_my_harness.observability import SECRET_KEY_WORDS
 
 SCHEMA_VERSION = 1
 RESERVED_VARIANT_IDS = {"control"}
@@ -40,21 +41,6 @@ _CONSTRUCTION_PI_FLAGS = {
     "--no-extensions",
 }
 RESERVED_PI_FLAGS = _FAIRNESS_FLAG_NAMES | _CONSTRUCTION_PI_FLAGS
-
-_SECRET_ENV_KEYS = (
-    "access",
-    "refresh",
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "apikey",
-    "api_key",
-    "authorization",
-    "credential",
-    "private_key",
-)
-
 
 def _safe_relative_component(value: str, field: str) -> str:
     """One slug-safe destination component: no separators, no dot specials."""
@@ -284,7 +270,7 @@ class VariantSpec(BaseModel):
         for key, item in value.items():
             _safe_env_name(key)
             lowered = key.lower().replace("-", "_")
-            if any(word in lowered for word in _SECRET_ENV_KEYS):
+            if any(word in lowered for word in SECRET_KEY_WORDS):
                 raise ValueError(
                     f"env key {key!r} looks like a credential; pass secrets via "
                     'env_from_host = ["NAME"] instead of literal values'

@@ -13,7 +13,24 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)[^\s,;]+"),
     re.compile(r"\bsk-[A-Za-z0-9_-]+"),
 )
-_SECRET_KEYS = {"access", "refresh", "token", "apikey", "api_key", "authorization"}
+
+
+
+SECRET_KEY_WORDS = frozenset(
+    {
+        "access",
+        "refresh",
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "apikey",
+        "api_key",
+        "authorization",
+        "credential",
+        "private_key",
+    }
+)
 
 
 def redact_text(value: str) -> str:
@@ -35,7 +52,7 @@ def contains_secret(value: str) -> bool:
 
 def redact_value(value: Any, *, key: str | None = None) -> Any:
     """Recursively redact credential-shaped mapping values."""
-    if key and key.lower().replace("-", "_") in _SECRET_KEYS:
+    if key and key.lower().replace("-", "_") in SECRET_KEY_WORDS:
         return "[REDACTED]"
     if isinstance(value, str):
         return redact_text(value)
