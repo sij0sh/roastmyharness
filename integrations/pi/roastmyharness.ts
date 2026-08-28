@@ -1311,6 +1311,7 @@ async function chooseTasks(
 async function collectWizard(
 	args: string,
 	ctx: ExtensionContext,
+	prefill = "",
 ): Promise<{ answers: WizardAnswers; request: AuthorRequest } | null> {
 	if (!ctx.hasUI) {
 		throw new Error("Spec authoring requires an interactive Pi session");
@@ -1320,7 +1321,7 @@ async function collectWizard(
 		"Step 1/6 - Which variants should run? " +
 			"Accepted: a local extension path with its entry file, a pinned npm package, or a skill path. " +
 			"The coding harness uses this data to search up the exact paths.",
-		"",
+		prefill,
 	);
 	if (variantRequest === undefined || !variantRequest.trim()) return null;
 
@@ -1427,31 +1428,23 @@ async function collectWizard(
 	return { answers, request };
 }
 
-async function authorExperiment(
+interface AuthorOutcome {
+	prepared: RoastResponse;
+	request: AuthorRequest;
+	spec_text: string;
+	details: AuthorDetails;
+	usage: Usage;
+}
+
+async function authorLoop(
 	pi: ExtensionAPI,
-	taskRoot: string,
 	ctx: ExtensionContext,
+	answers: WizardAnswers,
+	request: AuthorRequest,
 	signal: AbortSignal | undefined,
 	onUpdate: AgentToolUpdateCallback<AuthorDetails> | undefined,
 	skipDocker: boolean,
-): Promise<AgentToolResult<AuthorDetails>> {
-	const collected = await collectWizard(taskRoot, ctx);
-	if (!collected) {
-		return {
-			content: [{ type: "text", text: "Spec authoring cancelled by user" }],
-			details: {
-				kind: "author",
-				phase: "cancelled",
-				final: true,
-				attempt: 0,
-				activities: [],
-				output: "Wizard cancelled.",
-			},
-		};
-	}
-
-	const { answers } = collected;
-	let request = collected.request;
+): Promise<AuthorOutcome> {
 	const details: AuthorDetails = {
 		kind: "author",
 		phase: "starting",
@@ -1465,6 +1458,7 @@ async function authorExperiment(
 	onUpdate?.(authorUpdate(details));
 
 	let prepared: RoastResponse | undefined;
+	let specText = "";
 	for (let attempt = 1; attempt <= 3; attempt++) {
 		details.attempt = attempt;
 		details.phase = "authoring";
@@ -1478,7 +1472,7 @@ async function authorExperiment(
 		}
 		onUpdate?.(authorUpdate(details));
 
-		const specText = await runAuthorChild(ctx, request, signal, onUpdate, details, usage);
+		specText = await runAuthorChild(ctx, request, signal, onUpdate, details, usage);
 		await withFileMutationQueue(request.output_path, async () => {
 			await writeFile(request.output_path, specText, { encoding: "utf8", mode: 0o600 });
 		});
@@ -1510,13 +1504,48 @@ async function authorExperiment(
 			break;
 		}
 		request = {
-			...collected.request,
+			...request,
 			current_spec: specText,
 			validation_problem: specProblem ? prepareProblem(prepared) : mismatch,
 		};
 	}
 
 	if (!prepared) throw new Error("Spec validation returned no result");
+	return { prepared, request, spec_text: specText, details, usage };
+}
+
+async function authorExperiment(
+	pi: ExtensionAPI,
+	taskRoot: string,
+	ctx: ExtensionContext,
+	signal: AbortSignal | undefined,
+	onUpdate: AgentToolUpdateCallback<AuthorDetails> | undefined,
+	skipDocker: boolean,
+): Promise<AgentToolResult<AuthorDetails>> {
+	const collected = await collectWizard(taskRoot, ctx);
+	if (!collected) {
+		return {
+			content: [{ type: "text", text: "Spec authoring cancelled by user" }],
+			details: {
+				kind: "author",
+				phase: "cancelled",
+				final: true,
+				attempt: 0,
+				activities: [],
+				output: "Wizard cancelled.",
+			},
+		};
+	}
+
+	const { prepared, request, details, usage } = await authorLoop(
+		pi,
+		ctx,
+		collected.answers,
+		collected.request,
+		signal,
+		onUpdate,
+		skipDocker,
+	);
 	details.final = true;
 	details.phase = prepared.state === "ready_for_confirmation" ? "ready" : "needs_input";
 	details.output = prepared.state === "ready_for_confirmation"
@@ -1541,6 +1570,136 @@ async function authorExperiment(
 		details: { ...details, activities: [...details.activities] },
 		usage,
 	};
+}
+
+const WIDGET_ID = "roastmyharness";
+
+async function presentPlan(
+	ctx: ExtensionContext,
+	details: AuthorDetails,
+	ready: boolean,
+): Promise<"launch" | "regenerate" | "cancel"> {
+	ctx.ui.setStatus(WIDGET_ID, undefined);
+	ctx.ui.setWidget(
+		WIDGET_ID,
+		(_tui, theme) => renderAuthorResult(details, { expanded: true, isPartial: false }, theme),
+	);
+	const choice = await ctx.ui.select(
+		ready
+			? "RoastMyHarness plan ready - Confirm and launch is the default"
+			: "RoastMyHarness spec needs changes",
+		ready
+			? ["Confirm and launch", "Regenerate with feedback", "Cancel"]
+			: ["Regenerate with feedback", "Cancel"],
+	);
+	ctx.ui.setWidget(WIDGET_ID, undefined);
+	if (choice === "Confirm and launch") return "launch";
+	if (choice === "Regenerate with feedback") return "regenerate";
+	return "cancel";
+}
+
+async function launchExperiment(pi: ExtensionAPI, ctx: ExtensionContext, planId: string): Promise<void> {
+	ctx.ui.setStatus(WIDGET_ID, `launching plan ${planId}...`);
+	let result;
+	try {
+		result = await pi.exec(roastBinary(), buildArgs({ action: "start", plan_id: planId }), {
+			timeout: 120_000,
+		});
+	} catch (error) {
+		ctx.ui.setStatus(WIDGET_ID, undefined);
+		ctx.ui.notify(
+			`failed to run ${roastBinary()}: ${error instanceof Error ? error.message : String(error)}`,
+			"error",
+		);
+		return;
+	}
+	ctx.ui.setStatus(WIDGET_ID, undefined);
+	const stdout = result.stdout.trim();
+	let parsed: RoastResponse | undefined;
+	try {
+		if (stdout) parsed = JSON.parse(stdout) as RoastResponse;
+	} catch {
+	}
+	if (result.code !== 0 && parsed?.error) {
+		ctx.ui.notify(`error ${parsed.error.code ?? "unknown"}: ${parsed.error.message ?? stdout}`, "error");
+		return;
+	}
+	if (!parsed?.experiment_id) {
+		ctx.ui.notify(
+			(result.stderr.trim() || stdout || summarize(parsed ?? { state: "unknown" })).slice(0, 4000),
+			"warning",
+		);
+		return;
+	}
+	const experimentId = parsed.experiment_id;
+	try {
+		const watched = await streamStartedExperiment(experimentId, {}, undefined, (update) => {
+			ctx.ui.setWidget(
+				WIDGET_ID,
+				(_tui, theme) => renderWatchResult(update.details, { expanded: false }, theme),
+			);
+		});
+		ctx.ui.notify(finalText(watched.details), "info");
+	} catch (error) {
+		ctx.ui.notify(
+			`watch failed for ${experimentId} (it may still be running): ` +
+				(error instanceof Error ? error.message : String(error)),
+			"warning",
+		);
+	} finally {
+		ctx.ui.setWidget(WIDGET_ID, undefined);
+	}
+}
+
+async function runCommandFlow(pi: ExtensionAPI, args: string, ctx: ExtensionContext): Promise<void> {
+	const collected = await collectWizard(args, ctx, args.trim());
+	if (!collected) {
+		ctx.ui.notify("RoastMyHarness wizard cancelled.", "info");
+		return;
+	}
+	let request = collected.request;
+	let specText: string | undefined;
+	while (true) {
+		const outcome = await authorLoop(
+			pi,
+			ctx,
+			collected.answers,
+			request,
+			undefined,
+			(update) =>
+				ctx.ui.setStatus(WIDGET_ID, `${update.details.phase} (attempt ${update.details.attempt})`),
+			false,
+		);
+		request = outcome.request;
+		specText = outcome.spec_text;
+		const ready = outcome.prepared.state === "ready_for_confirmation" &&
+			Boolean(outcome.prepared.plan_id);
+		const next = await presentPlan(ctx, outcome.details, ready);
+		if (next === "launch") {
+			await launchExperiment(pi, ctx, outcome.prepared.plan_id as string);
+			return;
+		}
+		if (next === "cancel") {
+			ctx.ui.notify(
+				ready ? `Plan kept on disk: ${request.output_path}` : "RoastMyHarness cancelled.",
+				"info",
+			);
+			return;
+		}
+		const feedback = await ctx.ui.input(
+			"What should change in the experiment spec?",
+			"Freeform feedback; the author will revise the current spec",
+		);
+		if (feedback === undefined || !feedback.trim()) {
+			ctx.ui.notify("RoastMyHarness cancelled.", "info");
+			return;
+		}
+		request = {
+			...collected.request,
+			current_spec: specText,
+			validation_problem: feedback.trim(),
+		};
+	}
 }
 
 function renderAuthorResult(
@@ -1627,15 +1786,21 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.notify("Wait for the current agent turn to finish.", "warning");
 			return;
 		}
-		pi.sendMessage({
-			customType: "roastmyharness-wizard",
-			content:
-				`Immediately call roast_harness with action \"author\" and task_root ${JSON.stringify(args.trim())}. ` +
-				"Do not describe the call first. The tool will run the wizard, author and validate the spec. " +
-				"When it returns ready_for_confirmation, present its plan and wait for explicit user approval. " +
-				"After approval, call roast_harness start with the returned plan_id and leave watch enabled.",
-			display: false,
-		}, { triggerTurn: true });
+		if (wizardRunning) {
+			ctx.ui.notify("The RoastMyHarness wizard is already open.", "warning");
+			return;
+		}
+		wizardRunning = true;
+		try {
+			await runCommandFlow(pi, args, ctx);
+		} catch (error) {
+			ctx.ui.notify(
+				`RoastMyHarness failed: ${error instanceof Error ? error.message : String(error)}`,
+				"error",
+			);
+		} finally {
+			wizardRunning = false;
+		}
 	};
 	const command = {
 		description: "Configure, validate, and launch a harness comparison",
@@ -1655,7 +1820,7 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet:
 			"Author, validate, launch, monitor, and report harness-comparison experiments",
 		promptGuidelines: [
-			"When /roastmyharness requests action author, call roast_harness author immediately; the tool owns the wizard and spec creation.",
+			"The /roastmyharness command runs its own wizard with no model call; roast_harness author is only for model-initiated authoring.",
 			"After roast_harness author or prepare returns ready_for_confirmation, present the plan and wait for explicit user approval before calling start.",
 			"roast_harness start streams live progress until the experiment finishes; aborting only detaches the watch. Use cancel to stop a run.",
 			"Read roast_harness results as JSON. When validation returns needs_input, resolve listed questions instead of guessing.",

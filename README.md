@@ -53,8 +53,9 @@ Other commands: `resume <id>`, `status <id>`, `report <id>`, `list`,
 
 ## Pi slash command and integrations
 
-The Pi extension provides `/roastmyharness [task-root]`.
-The command follows
+The Pi extension provides `/roastmyharness [text]`.
+The command opens the wizard directly with no model call; freeform text
+prefills step 1 (and still hints the task root). The command follows
 a fixed wizard:
 
 1. Describe which variants to run and how many.
@@ -65,19 +66,25 @@ a fixed wizard:
 6. Select one random task, the curated 30 (signal screen), the curated 60
    (signal + confirmation), the full task set, or a custom random count.
 
-After the selections, a `roast_harness author` card appears in Pi's session.
-The card runs an ephemeral Pi child context with read-only filesystem tools,
-streams its source checks and spec draft, writes the TOML under
-`.pi-files/roastmyharness/`, and validates it. Invalid generated specs get up to
-two focused repair attempts. The parent session receives only the bounded tool
-result instead of the authoring conversation. No authoring status is shown in
-Pi's footer.
+After the selections, one ephemeral Pi child context with read-only filesystem
+tools authors the spec. It streams its source checks and spec draft into the
+author card (`roast_harness author`) or, when the command runs the wizard,
+into Pi's footer status, writes the TOML under `.pi-files/roastmyharness/`,
+and validates it. Invalid generated specs get up to two focused repair
+attempts. This author child is the only model call in the command flow.
 
-Schema, source, auth, and pinned npm availability checks gate approval. The
-agent presents the validated plan and must receive explicit approval before it
-calls `roast_harness start`.
+Schema, source, auth, and pinned npm availability checks gate launch. The
+validated plan appears in a wizard screen with three choices: "Confirm and
+launch" (the default; starts the experiment immediately with no further
+model call), "Regenerate with feedback" (sends freeform feedback to the
+author child for a revised spec), and "Cancel" (keeps the plan on disk).
+The model-facing `roast_harness` tool keeps its own flow: the agent presents
+the plan and must receive explicit approval before it calls
+`roast_harness start`.
 
-The `start` and `watch` actions render a second live session card. It updates
+The `start` and `watch` actions render a second live session card (the
+command wizard shows the same live progress in a widget above the editor
+plus a final notification). It updates
 in place with completion percentage, per-variant counts, active cells, recent
 trial results, final aggregates, and report paths. Expand the card with Pi's
 configured tool-expand key to see the task matrix. Aborting the card detaches
