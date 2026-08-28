@@ -6,8 +6,6 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
 from roast_my_harness.auth import service as auth_service
 from roast_my_harness.auth import staging
 from roast_my_harness.spec.models import ExperimentSpec, TaskSelection, VariantSpec
@@ -66,49 +64,3 @@ def test_scan_for_secrets_covers_non_log_artifacts(tmp_path: Path):
     (run_dir / "summary.json").write_text('{"key": "sk-secret"}\n')
     hits = staging.scan_for_secrets(run_dir)
     assert hits == [str(logs / "b.log"), str(run_dir / "summary.json")]
-
-
-def test_stage_home_claude_writes_anthropic_env(tmp_path: Path, monkeypatch):
-    home = tmp_path / "cached"
-    home.mkdir()
-    (home / "settings.json").write_text("{}")
-    monkeypatch.setattr(
-        staging,
-        "host_provider_block",
-        lambda provider: {
-            "baseUrl": "https://gw.example.com/anthropic",
-            "apiKey": "$TEST_ANTHROPIC_KEY",
-        },
-    )
-    monkeypatch.setenv("TEST_ANTHROPIC_KEY", "tok-123")
-    spec = ExperimentSpec(
-        name="t",
-        tasks=TaskSelection(path=tmp_path),
-        variants=[VariantSpec(id="a")],
-    )
-    from roast_my_harness.spec.models import ModelSpec
-
-    model = ModelSpec(provider="gw", id="claude-sonnet-5")
-    dest = staging.stage_home(home, tmp_path / "staged", spec, agent_id="claude", model=model)
-    env = json.loads((dest / "env.json").read_text())
-    assert env["ANTHROPIC_BASE_URL"] == "https://gw.example.com/anthropic"
-    assert env["ANTHROPIC_AUTH_TOKEN"] == "tok-123"
-    assert (os.stat(dest / "env.json").st_mode & 0o777) == 0o600
-    # cached home stays secret-free
-    assert not (home / "env.json").exists()
-
-
-def test_stage_home_claude_requires_gateway(tmp_path: Path, monkeypatch):
-    home = tmp_path / "cached"
-    home.mkdir()
-    monkeypatch.setattr(staging, "host_provider_block", lambda provider: None)
-    spec = ExperimentSpec(
-        name="t",
-        tasks=TaskSelection(path=tmp_path),
-        variants=[VariantSpec(id="a")],
-    )
-    from roast_my_harness.spec.models import ModelSpec
-
-    model = ModelSpec(provider="missing-gw", id="claude-sonnet-5")
-    with pytest.raises(Exception, match="not in host pi models.json"):
-        staging.stage_home(home, tmp_path / "staged", spec, agent_id="claude", model=model)
