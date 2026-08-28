@@ -137,7 +137,6 @@ class ExperimentController:
                 self.run_dir / "staging" / variant.id,
                 self.spec,
                 agent_id=build.manifest.agent,
-                model=self.spec.model_for(variant),
             )
             self._stage_env(staged, variant)
             manifest_path = staged / "variant.json"
@@ -213,15 +212,11 @@ class ExperimentController:
         """
         if not variant.env:
             return
-        env_path = staged / "env.json"
-        env: dict = {}
-        if env_path.is_file():
-            try:
-                env = json.loads(env_path.read_text())
-            except json.JSONDecodeError:
-                env = {}
-        env.update(dict(variant.env))
-        atomic_write_text(env_path, json.dumps(env) + "\n", mode=0o600)
+        atomic_write_text(
+            staged / "env.json",
+            json.dumps(dict(variant.env)) + "\n",
+            mode=0o600,
+        )
 
     def load_for_observation(self) -> None:
         """Load an existing run without rebuilding homes or changing state."""
@@ -333,7 +328,6 @@ class ExperimentController:
         all_ids = [t.task_id for t in tasks]
         self._refresh_cells()
         agents = self.spec.resolved_agents()
-        arm_by_id = {arm.id: arm for arm in self.spec.arms()}
         missing_by_job: dict[str, list[str]] = {}
         for job in self.jobs.values():
             missing = missing_tasks(self.cells.get(job.variant_id, {}), all_ids)
@@ -352,7 +346,7 @@ class ExperimentController:
                 jobs_dir=self.run_dir / "jobs" / job.variant_id,
                 job_name=f"{self.experiment_id}-{job.variant_id}",
                 manifest_path=job.manifest_path,
-                model_id=self.spec.model_for(arm_by_id[job.variant_id]).full_id(),
+                model_id=self.spec.model.full_id(),
                 thinking=self.spec.thinking,
                 pi_version=self.spec.agent_version_for(agent_id),
                 n_concurrent=n_concurrent,

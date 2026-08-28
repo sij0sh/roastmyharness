@@ -253,7 +253,6 @@ class VariantSpec(BaseModel):
     id: str
     name: str | None = None
     agent: str | None = None
-    model: ModelSpec | None = None
     extensions: list[ExtensionSpec] = Field(default_factory=list)
     skills: list[SkillSpec] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
@@ -489,11 +488,6 @@ class ExperimentSpec(BaseModel):
             for v in self.variants
         )
         return arms
-
-    def model_for(self, variant: VariantSpec) -> ModelSpec:
-        """The arm's effective model: the variant override when set, else
-        the global [model]."""
-        return variant.model or self.model
 
     @model_validator(mode="after")
     def _validate_agent_arms(self) -> ExperimentSpec:

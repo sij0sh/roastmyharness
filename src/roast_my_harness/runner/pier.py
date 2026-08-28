@@ -83,11 +83,6 @@ def build_run_args(
     ``pi_version=``).
     """
     agent_def = get_agent(agent)
-    if agent_def.family == "claude-code":
-        # pier's ClaudeCode maps --model onto ANTHROPIC_MODEL verbatim;
-        # gateways expect the bare model id, so strip the provider prefix.
-        # The manifest keeps the full provider/model id for provenance.
-        model_id = model_id.rsplit("/", 1)[-1]
     args = [
         pier_executable(), "run",
         "--path", str(task_root),

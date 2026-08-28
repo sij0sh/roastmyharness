@@ -176,9 +176,6 @@ def test_preflight_fails_on_expired_oauth(monkeypatch, tmp_path):
     class Spec:
         model = ModelSpec(provider="openai-codex", id="gpt-5")
 
-        def arms(self):
-            return []
-
     results = preflight._auth(Spec())
     assert len(results) == 1
     assert results[0].status == "fail"
@@ -200,9 +197,6 @@ def test_preflight_ok_on_valid_oauth(monkeypatch, tmp_path):
 
     class Spec:
         model = ModelSpec(provider="openai-codex", id="gpt-5")
-
-        def arms(self):
-            return []
 
     results = preflight._auth(Spec())
     assert len(results) == 1
