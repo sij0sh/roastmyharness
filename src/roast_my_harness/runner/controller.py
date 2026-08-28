@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from roast_my_harness import ADAPTER_PROTOCOL_VERSION, __version__
+from roast_my_harness.adapter.registry import get_agent
 from roast_my_harness.auth import staging
 from roast_my_harness.errors import PierError
 from roast_my_harness.files import atomic_write_text
@@ -256,6 +257,7 @@ class ExperimentController:
         return [task.task_id for task in tasks]
 
     def _write_manifest(self, tasks) -> None:
+        agents = self.spec.resolved_agents()
         manifest = {
             "experiment_id": self.experiment_id,
             "spec_hash": compute_spec_hash(self.spec),
@@ -268,10 +270,19 @@ class ExperimentController:
             "created_at": datetime.now(UTC).isoformat(),
             "tasks_path": str(self.spec.tasks.path),
             "tasks": {t.task_id: compute_task_hash(t.path) for t in tasks},
+            "agents": {
+                agent_id: {
+                    "family": get_agent(agent_id).family,
+                    "import_path": get_agent(agent_id).import_path,
+                    "agent_version": self.spec.agent_version_for(agent_id),
+                }
+                for agent_id in sorted(set(agents.values()))
+            },
             "variants": {
                 v.variant_id: {
                     "variant_hash": _hash_of(self, v.variant_id),
                     "manifest": str(v.manifest_path),
+                    "agent": agents[v.variant_id],
                 }
                 for v in self.jobs.values()
             },
@@ -315,6 +326,7 @@ class ExperimentController:
         )
         all_ids = [t.task_id for t in tasks]
         self._refresh_cells()
+        agents = self.spec.resolved_agents()
         missing_by_job: dict[str, list[str]] = {}
         for job in self.jobs.values():
             missing = missing_tasks(self.cells.get(job.variant_id, {}), all_ids)
@@ -327,6 +339,7 @@ class ExperimentController:
             missing = missing_by_job.get(job.variant_id)
             if not missing:
                 continue
+            agent_id = agents[job.variant_id]
             argv = pier_mod.build_run_args(
                 task_root=self.spec.tasks.path,
                 jobs_dir=self.run_dir / "jobs" / job.variant_id,
@@ -334,9 +347,10 @@ class ExperimentController:
                 manifest_path=job.manifest_path,
                 model_id=self.spec.model.full_id(),
                 thinking=self.spec.thinking,
-                pi_version=self.spec.pi_version,
+                pi_version=self.spec.agent_version_for(agent_id),
                 n_concurrent=n_concurrent,
                 include_tasks=missing,
+                agent=agent_id,
             )
             log = self.run_dir / "logs" / f"{job.variant_id}.log"
             job.proc = process_mod.VariantProcess(job.variant_id, argv, log)

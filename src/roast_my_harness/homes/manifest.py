@@ -27,6 +27,8 @@ class VariantManifest(BaseModel):
     variant_id: str
     variant_hash: str
     pi_version: str
+    agent: str = "pi"
+    agent_version: str | None = None
     model_id: str  # complete provider/model string
     extensions: list[ManifestExtension] = Field(default_factory=list)
     skills: list[ManifestSkill] = Field(default_factory=list)

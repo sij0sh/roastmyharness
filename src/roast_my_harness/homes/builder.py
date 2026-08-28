@@ -70,8 +70,26 @@ def compute_source_hashes(variant: VariantSpec) -> dict[str, str]:
     return hashes
 
 
-def compute_variant_hash(variant: VariantSpec, pi_version: str) -> str:
-    return variant_hash(variant, pi_version, compute_source_hashes(variant))
+def compute_variant_hash(
+    variant: VariantSpec,
+    pi_version: str,
+    *,
+    agent: str = "pi",
+    agent_version: str | None = None,
+) -> str:
+    return variant_hash(
+        variant,
+        pi_version,
+        compute_source_hashes(variant),
+        agent=agent,
+        agent_version=agent_version,
+    )
+
+
+def resolve_arm_agent(spec: ExperimentSpec, variant: VariantSpec) -> tuple[str, str]:
+    """The (agent id, agent version) pin one arm runs."""
+    agent_id = variant.agent or spec.agent
+    return agent_id, spec.agent_version_for(agent_id)
 
 
 def build_home(
@@ -80,7 +98,10 @@ def build_home(
     homes_root: Path,
 ) -> HomeBuild:
     """Build (or return cached) home for one variant arm."""
-    v_hash = compute_variant_hash(variant, spec.pi_version)
+    agent_id, agent_version = resolve_arm_agent(spec, variant)
+    v_hash = compute_variant_hash(
+        variant, spec.pi_version, agent=agent_id, agent_version=agent_version
+    )
     home = homes_root / v_hash[:16]
     manifest_path = home / "build-manifest.json"
 
@@ -152,6 +173,8 @@ def build_home(
             variant_id=variant.id,
             variant_hash=v_hash,
             pi_version=spec.pi_version,
+            agent=agent_id,
+            agent_version=agent_version,
             model_id=spec.model.full_id(),
             extensions=manifest_exts,
             skills=skills,
@@ -171,6 +194,8 @@ def build_home(
                     "variant_hash": v_hash,
                     "variant_id": variant.id,
                     "pi_version": spec.pi_version,
+                    "agent": agent_id,
+                    "agent_version": agent_version,
                     "source_hashes": source_hashes,
                 },
                 indent=2,

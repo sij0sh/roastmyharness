@@ -63,7 +63,14 @@ def load_variant_manifest(path: str) -> dict[str, Any]:
         raise ValueError(f"corrupt variant manifest {manifest_path}: {e}") from e
     if not isinstance(manifest, dict):
         raise ValueError(f"variant manifest {manifest_path} must be a JSON object")
-    required = ("variant_id", "variant_hash", "pi_version", "model_id")
+    required = (
+        "variant_id",
+        "variant_hash",
+        "pi_version",
+        "model_id",
+        "agent",
+        "agent_version",
+    )
     missing = [key for key in required if key not in manifest]
     if missing:
         raise ValueError(

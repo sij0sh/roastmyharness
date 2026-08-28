@@ -7,9 +7,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from roast_my_harness.adapter.registry import get_agent
 from roast_my_harness.errors import PierError
-
-AGENT_IMPORT_PATH = "roast_my_harness.adapter.pi_agent:PiAgent"
 
 
 def pier_executable() -> str:
@@ -75,8 +74,15 @@ def build_run_args(
     pi_version: str,
     n_concurrent: int,
     include_tasks: list[str] | None = None,
+    agent: str = "pi",
 ) -> list[str]:
-    """Build the `pier run` argv for one variant job."""
+    """Build the `pier run` argv for one variant job.
+
+    pi_version is the arm's pinned agent version; agent selects the
+    adapter, which also decides the version kwarg name (pi stays
+    ``pi_version=``).
+    """
+    agent_def = get_agent(agent)
     args = [
         pier_executable(), "run",
         "--path", str(task_root),
@@ -84,10 +90,10 @@ def build_run_args(
     for task in include_tasks or []:
         args += ["--include-task-name", task]
     args += [
-        "--agent-import-path", AGENT_IMPORT_PATH,
+        "--agent-import-path", agent_def.import_path,
         "--ak", f"variant_manifest={manifest_path}",
         "--ak", f"thinking={thinking}",
-        "--ak", f"pi_version={pi_version}",
+        "--ak", f"{agent_def.version_field}={pi_version}",
         "--model", model_id,
         "--n-concurrent", str(n_concurrent),
         "--jobs-dir", str(jobs_dir),

@@ -46,6 +46,7 @@ def probe_argv(
 ) -> list[str]:
     """Pier argv for a one-task, one-concurrent probe run."""
     job = jobs[variant_id]
+    agent_id = spec.resolved_agents()[variant_id]
     return pier_mod.build_run_args(
         task_root=spec.tasks.path,
         jobs_dir=job.staged.parent / "probe-jobs",
@@ -53,9 +54,10 @@ def probe_argv(
         manifest_path=job.manifest_path,
         model_id=spec.model.full_id(),
         thinking=spec.thinking,
-        pi_version=spec.pi_version,
+        pi_version=spec.agent_version_for(agent_id),
         n_concurrent=1,
         include_tasks=[task_id],
+        agent=agent_id,
     )
 
 

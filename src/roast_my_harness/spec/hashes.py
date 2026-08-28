@@ -44,11 +44,17 @@ def variant_hash(
     variant: VariantSpec,
     pi_version: str,
     source_hashes: dict[str, str] | None = None,
+    *,
+    agent: str = "pi",
+    agent_version: str | None = None,
 ) -> str:
     """Hash of the normalized variant, its copied sources, and pin versions.
 
     source_hashes maps a stable source key (extension/skill name) to the
     content hash of the tree that will be copied into the home.
+
+    agent and agent_version key the cache by resolved agent identity so
+    cached homes never mix agents or versions.
 
     Literal env values never enter the hash input: cached homes do not
     contain them (values are staged per run), so homes differing only in
@@ -63,6 +69,8 @@ def variant_hash(
             "env_from_host": sorted(variant.env_from_host),
             "sources": source_hashes or {},
             "pi_version": pi_version,
+            "agent": agent,
+            "agent_version": agent_version,
             "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
         }
     )
