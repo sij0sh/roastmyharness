@@ -164,9 +164,9 @@ async function authorLoop(
 		if (skipDocker) prepareArgs.push("--skip-docker");
 		prepared = await runRoastJson(pi, prepareArgs, signal);
 		details.prepared = prepared;
-		const specProblem = prepared.state === "needs_input" &&
-			(prepared.questions ?? []).some((question) =>
-				/^(spec|variants?|tasks?|control|model|pi_version)(\.|$)/.test(question.field));
+		// Every needs_input question prepare emits (spec, tasks.path, preflight.*)
+		// is repairable by the author; missing this dead-ends after one attempt.
+		const specProblem = prepared.state === "needs_input" && (prepared.questions ?? []).length > 0;
 		const mismatch = choiceMismatch(prepared, answers);
 		if (!specProblem && !mismatch) break;
 		if (attempt === 3) {
