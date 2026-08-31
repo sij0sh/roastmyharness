@@ -230,20 +230,20 @@ export function formatAggregates(
 	return lines.join("\n");
 }
 
-function statusIcon(status: string, fg: ThemeFn): string {
+function statusIcon(status: string, theme: ThemeLike): string {
 	switch (status) {
 		case "P":
-			return fg("success", "P");
+			return theme.fg("success", "P");
 		case "F":
-			return fg("error", "F");
+			return theme.fg("error", "F");
 		case "E":
-			return fg("warning", "E");
+			return theme.fg("warning", "E");
 		case "~":
-			return fg("accent", "~");
+			return theme.fg("accent", "~");
 		case "H":
-			return fg("muted", "H");
+			return theme.fg("muted", "H");
 		default:
-			return fg("dim", ".");
+			return theme.fg("dim", ".");
 	}
 }
 
@@ -271,7 +271,7 @@ export function renderMatrix(
 		const cells = variants
 			.map((v) => {
 				const symbol = matrix[v][task] ?? ".";
-				return statusIcon(symbol, theme.fg) + " ".repeat(colWidth - 1);
+				return statusIcon(symbol, theme) + " ".repeat(colWidth - 1);
 			});
 		text += `\n  ${theme.fg("dim", label)}${cells.join("")}`;
 	}
@@ -285,7 +285,7 @@ export function renderTrials(trials: TrialEvent[], theme: ThemeLike, limit?: num
 	const shown = limit ? trials.slice(-limit) : trials;
 	return shown
 		.map((t) => {
-			const icon = statusIcon(t.status, theme.fg);
+			const icon = statusIcon(t.status, theme);
 			const reward =
 				t.reward !== undefined ? theme.fg("dim", ` reward=${t.reward}`) : "";
 			return `  ${icon} ${theme.fg("accent", t.variant)}/${t.task}${reward}`;
@@ -315,7 +315,7 @@ export function renderTrialSummaries(summaries: TrialEvent[], theme: ThemeLike):
 				: "warning";
 		const reward = s.reward !== undefined ? ` · reward ${s.reward}` : "";
 		lines.push(
-			`  ${statusIcon(s.status, theme.fg)} ${theme.fg("accent", s.variant)}` +
+			`  ${statusIcon(s.status, theme)} ${theme.fg("accent", s.variant)}` +
 				theme.fg("dim", "/") +
 				`${s.task}` +
 				theme.fg(color, ` · ${word}`) +
