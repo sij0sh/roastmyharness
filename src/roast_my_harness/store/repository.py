@@ -190,4 +190,48 @@ class Repository:
             finished_at=finished_at,
         )
 
+    # ------------------------------------------------------ control pool --
+
+    def record_control_observation(
+        self, cohort_key: str, task_hash: str, trial_id: str,
+        resolved: bool, reward: float, observed_at: str,
+        *, eligible: bool = True, source: str = "run",
+    ) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO control_observations "
+                "(cohort_key, task_hash, trial_id, observed_at, resolved, "
+                "reward, eligible, source) VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    cohort_key, task_hash, trial_id, observed_at,
+                    int(resolved), reward, int(eligible), source,
+                ),
+            )
+
+    def control_pool(
+        self, cohort_key: str, task_hash: str, *,
+        exclude_experiment_id: str | None = None,
+    ) -> list[sqlite3.Row]:
+        query = (
+            "SELECT * FROM control_observations "
+            "WHERE cohort_key=? AND task_hash=? AND eligible=1"
+        )
+        args: list[Any] = [cohort_key, task_hash]
+        if exclude_experiment_id is not None:
+            query += " AND source != ?"
+            args.append(f"experiment:{exclude_experiment_id}")
+        return self.conn.execute(query, args).fetchall()
+
+    def control_pools(
+        self, cohort_keys: dict[str, str], task_hashes: dict[str, str], *,
+        exclude_experiment_id: str | None = None,
+    ) -> dict[str, list[sqlite3.Row]]:
+        """Return eligible observations keyed by task id for reuse planning."""
+        return {
+            task_id: self.control_pool(
+                cohort_keys[task_id], task_hash,
+                exclude_experiment_id=exclude_experiment_id,
+            )
+            for task_id, task_hash in task_hashes.items()
+        }
 

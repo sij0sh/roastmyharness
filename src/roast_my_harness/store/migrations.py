@@ -75,6 +75,21 @@ MIGRATIONS: dict[int, str] = {
     DROP INDEX IF EXISTS idx_control_pool;
     DROP TABLE IF EXISTS control_observations;
     """,
+    4: """
+    CREATE TABLE control_observations (
+        cohort_key TEXT NOT NULL,
+        task_hash TEXT NOT NULL,
+        trial_id TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        resolved INTEGER,
+        reward REAL,
+        eligible INTEGER NOT NULL DEFAULT 1,
+        source TEXT NOT NULL DEFAULT 'run',
+        PRIMARY KEY (cohort_key, trial_id)
+    );
+    CREATE INDEX idx_control_pool
+        ON control_observations (cohort_key, task_hash, eligible, resolved);
+    """,
 }
 
 
