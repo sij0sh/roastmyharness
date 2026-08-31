@@ -148,10 +148,12 @@ def setup(
 
     results: list[ActionResult] = []
     extension_source = root / "integrations/pi/roastmyharness.ts"
+    extension_modules = root / "integrations/pi/roastmyharness"
 
     if agent == "pi":
         base = home / ".pi/agent" if scope == "user" else root / ".pi"
         results.append(_link(extension_source, base / "extensions/roastmyharness.ts"))
+        results.append(_link(extension_modules, base / "extensions/roastmyharness"))
         results.append(_remove_obsolete_skill(base / "skills" / OBSOLETE_SKILL_NAME))
     else:
         base = home / ".claude" if scope == "user" else root / ".claude"
@@ -217,15 +219,29 @@ def run_doctor(
     home = home or Path.home()
     if pi and root is not None:
         candidates = [
-            home / ".pi/agent/extensions/roastmyharness.ts",
-            root / ".pi/extensions/roastmyharness.ts",
+            (
+                home / ".pi/agent/extensions/roastmyharness.ts",
+                home / ".pi/agent/extensions/roastmyharness",
+            ),
+            (
+                root / ".pi/extensions/roastmyharness.ts",
+                root / ".pi/extensions/roastmyharness",
+            ),
         ]
-        installed = next((p for p in candidates if p.is_symlink() or p.exists()), None)
+        installed = next(
+            (
+                entry
+                for entry, modules in candidates
+                if (entry.is_symlink() or entry.exists())
+                and (modules.is_symlink() or modules.exists())
+            ),
+            None,
+        )
         results.append(
             preflight._ok("extension", str(installed))
             if installed
             else preflight._warn(
-                "extension", "not installed; run roastmyharness setup --agent pi"
+                "extension", "not installed or incomplete; run roastmyharness setup --agent pi"
             )
         )
 
