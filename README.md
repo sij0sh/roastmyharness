@@ -119,8 +119,12 @@ and recent runs.
 The loader accepts TOML only. `roastmyharness init` still writes a
 commented TOML starter. See `examples/` for more TOML examples. Key sections
 are `[model]`, `[tasks]`,
-`[concurrency]`, `[control]`, and one `[[variants]]` block per arm with
-local extensions (`kind = "local"`), pinned npm packages (`kind = "npm"`),
+`[concurrency]`, `[control]`, and one `[[variants]]` block per arm. Controls
+run fresh by default. Set `reuse = "ask"` for an interactive pool choice or
+`reuse = "require"` to fail when no eligible history exists. Reuse also accepts
+`minimum_runs_per_task`, `maximum_age_days`, and `sentinel_tasks`. Accepted
+history appears as `H`; reports disclose its age, counts, and drift verdict.
+Variant blocks support local extensions (`kind = "local"`), pinned npm packages (`kind = "npm"`),
 skills, env pins, and typed setup handlers.
 
 `[model] provider` accepts any provider defined in the host pi
@@ -178,10 +182,9 @@ agent class; codex/gemini/opencode would follow that pattern.
   gone and bare `roastmyharness` prints help.
 - Phase 5 (auth): Phase A done (reuse pi Codex OAuth, status, staging).
   Integrated OAuth bridge is a follow-up; use `pi /login codex`.
-- Phase 6 (historic controls): removed - control reuse never fired in
-  practice, so controls always run fresh. The `control_observations`
-  store, reuse planning, and the sentinel drift gate are gone; `[control]`
-  accepts only `enabled`.
+- Phase 6 (historic controls): done. Explicit `ask` and `require` modes use
+  age-bounded observation pools and a fresh sentinel drift gate. The default
+  `never` mode preserves fresh control behavior.
 
 summary.csv carries a tool-owned schema; columns may change between
 releases. The legacy DSE-parity golden tests were removed.

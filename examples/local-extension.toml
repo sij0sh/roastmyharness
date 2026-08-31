@@ -17,6 +17,10 @@ per_variant = 2
 
 [control]
 enabled = true
+reuse = "never" # change to "ask" or "require" to use eligible history
+minimum_runs_per_task = 10
+maximum_age_days = 30
+sentinel_tasks = 6
 
 [[variants]]
 id = "my-ext"

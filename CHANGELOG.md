@@ -27,18 +27,20 @@
   Bun in-container. Fairness contracts are registry-owned per agent.
   See `examples/omp-variant.toml` and `examples/cross-agent.toml`.
 
-### Removed (breaking for [control] specs)
+### Restored
 
-Control reuse is retired: control arms always run fresh. `control_reuse`
-never fired across every recorded experiment, so the observation pool, reuse
-planning, and the sentinel drift gate are gone.
+- Historic control reuse is opt-in again. `[control]` supports `reuse =
+  "never" | "ask" | "require"`, pool depth and age limits, and sentinel tasks.
+  The default remains `never`, so existing controls still run fresh.
+- Migration 4 recreates `control_observations`. Reuse cohorts bind the resolved
+  control agent, agent version, model, thinking level, control home, and task.
+- Sentinel-gated two-wave execution records fresh controls, excludes the
+  current experiment from its own pool across resume, and renders accepted
+  historic cells as `H` in CLI and API status matrices.
+- Reports disclose reused counts, date ranges, fresh tasks, and sentinel verdicts.
 
-- `[control]` now accepts only `enabled`. The `reuse`,
-  `minimum_runs_per_task`, `maximum_age_days`, and `sentinel_tasks` keys are
-  rejected; remove them from existing specs.
-- A migration drops the `control_observations` table and deletes old rows.
-- Status matrices no longer render `H` (reused) control cells; resumed runs
-  that reused controls show those cells as pending.
+### Changed
+
 - summary.csv is no longer bound to the legacy DSE-tests schema; the column
   set is tool-owned and may change between releases.
 
