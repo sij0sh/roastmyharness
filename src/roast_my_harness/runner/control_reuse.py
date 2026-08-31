@@ -132,13 +132,17 @@ class ControlReuse:
             cell = cells.get("control", {}).get(task_id)
             if cell is not None and cell.status in ("pass", "fail"):
                 fresh.append((task_id, cell.status == "pass"))
+        maximum_age = self.spec.control.maximum_age_days
         historic = {
             task_id: [
                 bool(row["resolved"])
-                for row in self.store.control_pool(
-                    self.cohort_keys[task_id],
-                    self.task_hashes[task_id],
-                    exclude_experiment_id=self.experiment_id,
+                for row in controls.observations_within_age(
+                    self.store.control_pool(
+                        self.cohort_keys[task_id],
+                        self.task_hashes[task_id],
+                        exclude_experiment_id=self.experiment_id,
+                    ),
+                    maximum_age,
                 )
                 if row["resolved"] is not None
             ]
