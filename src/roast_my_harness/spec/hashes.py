@@ -7,7 +7,9 @@ import json
 from typing import Any
 
 from roast_my_harness import ADAPTER_PROTOCOL_VERSION
-from roast_my_harness.spec.models import ExperimentSpec, VariantSpec
+from roast_my_harness.spec.models import ExperimentSpec, ModelSpec, VariantSpec
+
+PROMPT_ISOLATION = "pi-fairness-v1"
 
 
 def canonical_json_bytes(obj: Any) -> bytes:
@@ -72,5 +74,34 @@ def variant_hash(
             "agent": agent,
             "agent_version": agent_version,
             "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
+        }
+    )
+
+
+def control_cohort_key(
+    control_hash: str,
+    model: ModelSpec,
+    thinking: str,
+    task_hash: str,
+    *,
+    agent: str,
+    agent_version: str,
+) -> str:
+    """Identity of comparable control observations for one task."""
+    return sha256_canonical(
+        {
+            "control_hash": control_hash,
+            "agent": agent,
+            "agent_version": agent_version,
+            "provider": model.provider,
+            "provider_id": model.provider_id,
+            "model_id": model.id,
+            "resolved_model": model.resolved_model.model_dump(mode="json")
+            if model.resolved_model
+            else None,
+            "thinking": thinking,
+            "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
+            "task_hash": task_hash,
+            "prompt_isolation": PROMPT_ISOLATION,
         }
     )

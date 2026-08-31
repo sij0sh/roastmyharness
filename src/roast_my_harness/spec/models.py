@@ -346,12 +346,16 @@ class TaskSelection(BaseModel):
 
 
 class ControlSpec(BaseModel):
-    """Bare-agent control arm. Controls always run fresh."""
+    """Bare-agent control arm with opt-in historic reuse."""
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
     agent: str | None = None
+    reuse: Literal["never", "ask", "require"] = "never"
+    minimum_runs_per_task: int = Field(default=10, ge=1)
+    maximum_age_days: int = Field(default=30, ge=1)
+    sentinel_tasks: int = Field(default=6, ge=0)
 
     @field_validator("agent")
     @classmethod
