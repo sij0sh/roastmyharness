@@ -13,7 +13,7 @@ import {
 	type AuthorDetails, type DeepSweSuites, type RoastResponse,
 } from "./core.ts";
 
-export type ControlMode = "excluded" | "fresh";
+export type ControlMode = "excluded" | "fresh" | "historic";
 export type TaskMode = "one" | "curated30" | "curated60" | "full" | "custom";
 
 export interface WizardAnswers {
@@ -68,8 +68,9 @@ A local extension is {kind: local, path: string, entry: relative-file}; an npm e
 {kind: npm, package: exact-name@x.y.z}; a local skill is {kind: local, path: string} under
 its variant's skills list. Do not invent credentials, setup handlers, environment values,
 paths, package versions, or variants. Omit fields that the request does not supply.
-Use concurrency.per_variant = 2. An included control runs fresh: enabled = true. An
-excluded control uses enabled = false.
+Use concurrency.per_variant = 2. A fresh control uses enabled = true and reuse = "never".
+A historic control uses enabled = true, reuse = "require", minimum_runs_per_task = 10,
+maximum_age_days = 30, and sentinel_tasks = 6. An excluded control uses enabled = false.
 A full task suite uses tasks.include = ["*"]; a smaller suite lists the exact pre-sampled task
 ids supplied in the request.
 Required top-level fields are schema_version, name, pi_version, thinking, model, tasks,

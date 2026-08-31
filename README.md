@@ -59,7 +59,7 @@ prefills step 1 (and still hints the task root). The command follows
 a fixed wizard:
 
 1. Describe which variants to run and how many.
-2. Include or exclude a control. An included control always runs fresh.
+2. Choose a fresh control, require matching historic controls, or exclude the control.
 3. Select an available Pi model.
 4. Select a supported thinking level.
 5. Select a curated test suite: GPT-5.6 Luna High or GLM-5.3-Flash Max.

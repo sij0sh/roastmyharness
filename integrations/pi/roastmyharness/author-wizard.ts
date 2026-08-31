@@ -165,12 +165,16 @@ export async function collectWizard(
 	);
 	if (variantRequest === undefined || !variantRequest.trim()) return null;
 
-	const includeControl = await ctx.ui.select(
+	const controlChoice = await ctx.ui.select(
 		"Step 2/6 - Control",
-		["Include a control", "Exclude the control"],
+		["Include a fresh control", "Reuse historic controls", "Exclude the control"],
 	);
-	if (includeControl === undefined) return null;
-	const control: ControlMode = includeControl === "Include a control" ? "fresh" : "excluded";
+	if (controlChoice === undefined) return null;
+	const control: ControlMode = controlChoice === "Include a fresh control"
+		? "fresh"
+		: controlChoice === "Reuse historic controls"
+			? "historic"
+			: "excluded";
 
 	const scoped = ctx.scopedModels.map((item) => item.model);
 	const candidates = scoped.length ? scoped : ctx.modelRegistry.getAvailable();
