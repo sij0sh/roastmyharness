@@ -230,6 +230,13 @@ class AgentService:
                     "excluded"
                     if spec.control is None or not spec.control.enabled
                     else "fresh"
+                    if spec.control.reuse == "never"
+                    else "historic"
+                ),
+                control_reuse=(
+                    spec.control.reuse
+                    if spec.control is not None and spec.control.enabled
+                    else None
                 ),
                 task_ids=[task.task_id for task in tasks],
                 tasks_path=str(spec.tasks.path),
@@ -381,7 +388,7 @@ class AgentService:
         snap = controller.snapshot()
         state = str(snap["state"])
         totals = {
-            variant: {s: sum(1 for c in cells.values() if c == s) for s in "PFE"}
+            variant: {s: sum(1 for c in cells.values() if c == s) for s in "PFEH"}
             for variant, cells in snap["matrix"].items()
         }
         aggregates = aggregate_by_variant(collect_rows(rd / "jobs"))
@@ -481,7 +488,7 @@ class AgentService:
     def _watch_snapshot(controller: ExperimentController) -> dict[str, Any]:
         snap = controller.snapshot()
         totals = {
-            variant: {s: sum(1 for c in cells.values() if c == s) for s in "PFE"}
+            variant: {s: sum(1 for c in cells.values() if c == s) for s in "PFEH"}
             for variant, cells in snap["matrix"].items()
         }
         running = [
@@ -690,6 +697,8 @@ def run_experiment(
     spec_path: Path,
     *,
     progress: Callable[[str], None] | None = None,
+    ask: Callable[[str], bool] | None = None,
+    interactive: bool = False,
 ) -> tuple[str, str]:
     """Run one experiment headless; return (experiment_id, final state).
 
@@ -707,7 +716,8 @@ def run_experiment(
     )
     repo = Repository(database_path())
     controller = ExperimentController(
-        spec, experiment_id, run_dir(experiment_id), repo, progress=progress
+        spec, experiment_id, run_dir(experiment_id), repo,
+        progress=progress, ask=ask,
     )
     with ExperimentLock(controller.run_dir):
         loop = asyncio.new_event_loop()
@@ -715,6 +725,7 @@ def run_experiment(
         try:
             try:
                 controller.prepare(spec_path)
+                controller.enforce_reuse_policy(interactive=interactive)
             except Exception as error:
                 controller.fail_setup(error)
                 raise
