@@ -249,6 +249,31 @@ async def test_policy_require_fails_without_history(env):
         controller.enforce_reuse_policy(interactive=False)
     repo.close()
 
+async def test_policy_ask_uses_callback(env):
+    spec_path = setup(env)
+    spec = load_experiment(spec_path)
+    spec = spec.model_copy(update={
+        "control": spec.control.model_copy(update={"reuse": "ask"})
+    })
+    repo = Repository(database_path())
+    exp_id = experiment_id(spec.name, spec_hash(spec))
+    prompts: list[str] = []
+
+    def accept(message: str) -> bool:
+        prompts.append(message)
+        return True
+
+    controller = ExperimentController(
+        spec, exp_id, env / "runs" / exp_id, repo, ask=accept
+    )
+    controller.prepare(spec_path)
+    seed_pool(repo, controller, ["t1", "t2", "t3"], resolved=True)
+    controller.enforce_reuse_policy(interactive=True)
+    assert prompts and "historic control pool" in prompts[0]
+    assert controller.control_reuse.enabled is True
+    repo.close()
+
+
 async def test_policy_require_excludes_same_experiment_history(env):
     spec_path = setup(env)
     spec = load_experiment(spec_path)
