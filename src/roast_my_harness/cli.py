@@ -54,7 +54,11 @@ exclude = []
 per_variant = 2
 
 [control]
-enabled = true                  
+enabled = true                  # bare-agent control arm
+reuse = "never"                 # never | ask | require
+minimum_runs_per_task = 10
+maximum_age_days = 30
+sentinel_tasks = 6
 
 # One [[variants]] block per arm. Local extension example:
 [[variants]]
@@ -113,7 +117,9 @@ def _exit_for_final_state(experiment_id: str, final: str) -> int:
     return code
 
 
-
+def _ask_reuse(message: str) -> bool:
+    typer.echo(message)
+    return typer.confirm("Reuse this historic control pool?")
 
 
 @app.command()
@@ -184,9 +190,12 @@ def run(
     if not yes and sys.stdin.isatty():
         if not typer.confirm("Launch now?"):
             raise typer.Exit(0)
+    interactive = sys.stdin.isatty() and not yes
     experiment_id, final = agent_service.run_experiment(
         spec_path,
         progress=_print_progress,
+        ask=_ask_reuse if interactive else None,
+        interactive=interactive,
     )
     raise typer.Exit(_exit_for_final_state(experiment_id, final))
 
@@ -208,7 +217,8 @@ def resume(
 
     spec = ExperimentSpec.model_validate(json.loads(row["spec_json"]))
     controller = ExperimentController(
-        spec, experiment_id, Path(row["run_dir"]), repo, _print_progress
+        spec, experiment_id, Path(row["run_dir"]), repo,
+        _print_progress, _ask_reuse if sys.stdin.isatty() else None,
     )
     with ExperimentLock(controller.run_dir):
         final = asyncio.run(_run_with_cancel(controller, prepare=True))
@@ -222,6 +232,7 @@ async def _run_with_cancel(controller: ExperimentController, *, prepare: bool = 
         if prepare:
             try:
                 controller.prepare()
+                controller.enforce_reuse_policy(interactive=sys.stdin.isatty())
             except Exception as error:
                 controller.fail_setup(error)
                 raise
