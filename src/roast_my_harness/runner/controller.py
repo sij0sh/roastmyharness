@@ -30,6 +30,7 @@ from roast_my_harness.report import markdown as report_markdown
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import probe as probe_mod
 from roast_my_harness.runner import process as process_mod
+from roast_my_harness.runner.control_reuse import ControlReuse
 from roast_my_harness.runner.reconcile import Cell, missing_tasks, reconcile_variant
 from roast_my_harness.spec.hashes import experiment_hash as compute_experiment_hash
 from roast_my_harness.spec.hashes import spec_hash as compute_spec_hash
@@ -42,6 +43,7 @@ from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 POLL_INTERVAL_SEC = 2.0
 
 ProgressCallback = Callable[[str], None]
+AskCallback = Callable[[str], bool]
 
 
 # ---------------------------------------------------------- controller ----
@@ -63,12 +65,15 @@ class ExperimentController:
         run_dir: Path,
         store: Repository,
         progress: ProgressCallback | None = None,
+        ask: AskCallback | None = None,
     ):
         self.spec = spec
         self.experiment_id = experiment_id
         self.run_dir = run_dir
         self.store = store
         self.progress = progress
+        self.ask = ask
+        self.control_reuse = ControlReuse(spec, experiment_id, store)
         self.state = "DRAFT"
         self.jobs: dict[str, VariantJob] = {}
         self.cells: dict[str, dict[str, Cell]] = {}
@@ -156,6 +161,8 @@ class ExperimentController:
             )
 
         self._write_manifest(tasks)
+        if "control" in self.jobs:
+            self.control_reuse.plan_for(tasks, _hash_of(self, "control"))
         self._set_state("READY")
 
         if probe_mod.should_probe(self.spec):
@@ -244,6 +251,7 @@ class ExperimentController:
             task_map = manifest.get("tasks") or {}
             if isinstance(task_map, dict):
                 self._observed_task_ids = list(task_map)
+            self.control_reuse.load_manifest(manifest)
 
     def cleanup_staging(self) -> None:
         """Remove all staged homes, including partially prepared variants."""
@@ -307,6 +315,11 @@ class ExperimentController:
         self._set_state("RUNNING")
         try:
             await self._watch()
+            if self.control_reuse.held_pending():
+                self.control_reuse.evaluate(self.cells)
+                if self.control_reuse.accepted is not True:
+                    self._launch()
+                    await self._watch()
         except asyncio.CancelledError:
             await self._cancel("CANCELLED")
             raise
@@ -320,6 +333,18 @@ class ExperimentController:
             self._finalize()
         return self.state
 
+    def enforce_reuse_policy(self, *, interactive: bool) -> None:
+        if "control" in self.jobs:
+            tasks = discover_tasks(
+                self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
+            )
+            self.control_reuse.plan_for(tasks, _hash_of(self, "control"))
+        self.control_reuse.enforce(
+            interactive=interactive,
+            ask=self.ask,
+            progress=self._progress,
+        )
+
     def _launch(self) -> None:
         """Prepare process objects per variant with only missing tasks."""
         tasks = discover_tasks(
@@ -328,9 +353,17 @@ class ExperimentController:
         all_ids = [t.task_id for t in tasks]
         self._refresh_cells()
         agents = self.spec.resolved_agents()
+        held = (
+            self.control_reuse.held_tasks()
+            if self.control_reuse.held_pending()
+            else set()
+        )
         missing_by_job: dict[str, list[str]] = {}
         for job in self.jobs.values():
+            job.proc = None
             missing = missing_tasks(self.cells.get(job.variant_id, {}), all_ids)
+            if job.variant_id == "control":
+                missing = [task_id for task_id in missing if task_id not in held]
             if missing:
                 missing_by_job[job.variant_id] = missing
         n_concurrent = self.spec.concurrency.effective_per_variant(
@@ -392,7 +425,7 @@ class ExperimentController:
                 key = (variant_id, task_id)
                 if previous.get(key) == cell.status:
                     continue
-                self.store.upsert_reconciled_trial(
+                trial_id = self.store.upsert_reconciled_trial(
                     experiment_id=self.experiment_id,
                     variant_id=variant_id,
                     task_id=task_id,
@@ -404,6 +437,7 @@ class ExperimentController:
                     metrics=None,
                     finished_at=cell.finished_at,
                 )
+                self.control_reuse.record(variant_id, task_id, cell, trial_id)
                 self._logger.emit(
                     "trial",
                     variant=variant_id,
@@ -485,7 +519,7 @@ class ExperimentController:
     def _record_all_cells(self) -> None:
         for variant_id, cells in self.cells.items():
             for task_id, cell in cells.items():
-                self.store.upsert_reconciled_trial(
+                trial_id = self.store.upsert_reconciled_trial(
                     experiment_id=self.experiment_id,
                     variant_id=variant_id,
                     task_id=task_id,
@@ -497,6 +531,7 @@ class ExperimentController:
                     metrics=None,
                     finished_at=cell.finished_at,
                 )
+                self.control_reuse.record(variant_id, task_id, cell, trial_id)
 
     def _provenance(self, secret_hits: list[str]) -> dict[str, Any]:
         manifest: dict[str, Any] = {}
@@ -509,11 +544,18 @@ class ExperimentController:
         manifest["finished_at"] = datetime.now(UTC).isoformat()
         manifest["secret_scan_scope"] = "all regular run artifacts after staging cleanup"
         manifest["secret_scan_hits"] = secret_hits
+        manifest["control_reuse"] = self.reuse_summary()
+        manifest["reused_control_observations"] = manifest["control_reuse"].get(
+            "total_reused", 0
+        )
         atomic_write_text(
             self.run_dir / "manifest.json",
             json.dumps(manifest, indent=2) + "\n",
         )
         return manifest
+
+    def reuse_summary(self) -> dict[str, Any]:
+        return self.control_reuse.summary()
 
     def fail_setup(self, error: Exception) -> None:
         """Record a preparation failure and remove partial staged homes."""
@@ -551,6 +593,12 @@ class ExperimentController:
         all_ids = self._task_ids()
         matrix: dict[str, dict[str, str]] = {}
         matrix_rewards: dict[str, dict[str, float]] = {}
+        held = (
+            self.control_reuse.held_tasks()
+            if self.control_reuse.held_pending()
+            else set()
+        )
+        reused = self.control_reuse.reused_tasks()
         for variant_id in self.jobs:
             cells = self.cells.get(variant_id, {})
             row: dict[str, str] = {}
@@ -559,6 +607,10 @@ class ExperimentController:
                 if task_id in cells:
                     row[task_id] = cells[task_id].status[0].upper()
                     rewards[task_id] = cells[task_id].reward
+                elif variant_id == "control" and task_id in reused:
+                    row[task_id] = "H"
+                elif variant_id == "control" and task_id in held:
+                    row[task_id] = "."
                 else:
                     row[task_id] = _running_or_pending(
                         self.run_dir / "jobs" / variant_id, task_id
