@@ -14,12 +14,13 @@ from roast_my_harness.adapter.registry import get_agent
 from roast_my_harness.constants import DEFAULT_PI_VERSION, FAIRNESS_FLAGS
 from roast_my_harness.homes.builder import build_home
 from roast_my_harness.runner import pier
-from roast_my_harness.spec.hashes import variant_hash
+from roast_my_harness.spec.hashes import control_cohort_key, variant_hash
 from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.spec.models import (
     ControlSpec,
     ExperimentSpec,
     LocalExtension,
+    ModelSpec,
     NpmPiInstall,
     TaskSelection,
     VariantSpec,
@@ -240,6 +241,19 @@ def test_build_run_args_unknown_agent_rejected(monkeypatch, tmp_path: Path):
             n_concurrent=1,
             agent="nope",
         )
+
+
+def test_control_cohort_distinguishes_resolved_agent_identity():
+    model = ModelSpec()
+    pi = control_cohort_key(
+        "control", model, "high", "task", agent="pi", agent_version="0.84.3"
+    )
+    assert pi != control_cohort_key(
+        "control", model, "high", "task", agent="omp", agent_version="18.0.9"
+    )
+    assert pi != control_cohort_key(
+        "control", model, "high", "task", agent="pi", agent_version="0.90.0"
+    )
 
 
 def test_variant_hash_distinguishes_agent_identity():
