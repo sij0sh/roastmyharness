@@ -12,6 +12,9 @@ def _make_repo(root: Path) -> Path:
     ext = root / "integrations/pi/roastmyharness.ts"
     ext.parent.mkdir(parents=True)
     ext.write_text("export default {};\n")
+    modules = root / "integrations/pi/roastmyharness"
+    modules.mkdir()
+    (modules / "extension.ts").write_text("export default {};\n")
     return root
 
 
@@ -21,6 +24,7 @@ def test_setup_pi_user_is_idempotent(tmp_path: Path) -> None:
         results = setup_mod.setup("pi", "user", root=root, home=home)
     assert not [r for r in results if r.problem]
     assert (home / ".pi/agent/extensions/roastmyharness.ts").is_symlink()
+    assert (home / ".pi/agent/extensions/roastmyharness").is_symlink()
     assert not (home / ".pi/agent/skills/roastmyharness").exists()
     assert not any(r.changed for r in results)
 
@@ -44,6 +48,8 @@ def test_setup_replaces_stale_symlink(tmp_path: Path) -> None:
     results = setup_mod.setup("pi", "user", root=root, home=home)
     assert not [r for r in results if r.problem]
     assert stale.resolve() == (root / "integrations/pi/roastmyharness.ts").resolve()
+    modules = home / ".pi/agent/extensions/roastmyharness"
+    assert modules.resolve() == (root / "integrations/pi/roastmyharness").resolve()
 
 
 def test_setup_removes_obsolete_skill_symlink(tmp_path: Path) -> None:
