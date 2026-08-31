@@ -41,13 +41,20 @@ class HomeBuild:
     variant_hash: str
 
 
+def _source_name(path: Path, fallback: str) -> str:
+    name = path.name
+    if name.startswith(".") and not name.startswith(".."):
+        name = name[1:]
+    return name or fallback
+
+
 def _extension_name(ext: LocalExtension, index: int) -> str:
-    name = ext.name or ext.path.name.lstrip(".") or f"extension-{index + 1}"
+    name = ext.name or _source_name(ext.path, f"extension-{index + 1}")
     return _checked_component(name, "extension name")
 
 
 def _skill_name(skill: SkillSpec) -> str:
-    name = skill.name or skill.path.name.lstrip(".") or "skill"
+    name = skill.name or _source_name(skill.path, "skill")
     return _checked_component(name, "skill name")
 
 
