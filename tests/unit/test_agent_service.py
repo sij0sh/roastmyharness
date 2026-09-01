@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -324,6 +328,168 @@ def test_cancel_unknown_experiment(tmp_path):
     )
     with pytest.raises(svc.UnknownExperimentError):
         service.cancel("nope")
+
+
+# --- Fix A: start marker rollback (probe-start-brick.py) -------------------
+
+
+def test_start_spawn_failure_rolls_back_marker(
+    tmp_path, green_preflight, monkeypatch
+):
+    """A failed spawn leaves no marker, no fd leak, and start stays possible."""
+    spec_path = make_spec(tmp_path)
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    prepared = service.prepare(spec_path)
+
+    def broken_spawn(*a, **k):
+        raise OSError("worker log mkdir failed")
+
+    monkeypatch.setattr(service, "_spawn_worker", broken_spawn)
+    fds_before = len(os.listdir("/proc/self/fd"))
+    with pytest.raises(OSError):
+        service.start(prepared.plan_id)
+    assert len(os.listdir("/proc/self/fd")) == fds_before
+    assert not (tmp_path / "plans" / f"{prepared.plan_id}.started").exists()
+
+    monkeypatch.setattr(service, "_spawn_worker", lambda *a, **k: 4242)
+    retry = service.start(prepared.plan_id)
+    assert retry.ok
+    assert retry.state == "running"
+    assert retry.started is True
+
+
+# --- Fix B: cancel lock probe (probe-cancel-pid-recycle.py) ----------------
+
+
+def _sleepy_helper() -> subprocess.Popen:
+    time.sleep(0.1)  # let the child exec so a SIGINT lands on python itself
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+
+
+def _seed_running_row(tmp_path: Path, experiment_id: str, run_dir: Path) -> None:
+    from roast_my_harness.store.repository import Repository
+
+    repo = Repository(tmp_path / "db.sqlite")
+    repo.create_experiment(
+        experiment_id=experiment_id,
+        name="svc",
+        spec=json.loads(
+            json.dumps(load_experiment(tmp_path / "exp.toml").model_dump(mode="json"))
+        ),
+        spec_hash="deadbeef",
+        run_dir=str(run_dir),
+        status="RUNNING",
+    )
+    repo.close()
+
+
+def test_cancel_refuses_when_marker_pid_belongs_to_another_process(
+    tmp_path, green_preflight, monkeypatch
+):
+    """Stale marker + OS pid reuse must not signal an unrelated process."""
+    spec_path = make_spec(tmp_path)
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    prepared = service.prepare(spec_path)
+    plan = json.loads((tmp_path / "plans" / f"{prepared.plan_id}.json").read_text())
+    experiment_id = plan["experiment_id"]
+    helper = _sleepy_helper()
+    try:
+        monkeypatch.setattr(service, "_spawn_worker", lambda *a, **k: helper.pid)
+        service.start(prepared.plan_id)
+        # Worker crashed mid-run: marker persists, row stuck at RUNNING,
+        # lock never held.
+        _seed_running_row(tmp_path, experiment_id, tmp_path / "run")
+
+        result = service.cancel(experiment_id)
+        assert result.ok
+        assert result.cancelled is False
+        assert "no live worker" in result.note
+        assert helper.poll() is None  # the unrelated process survived
+    finally:
+        helper.terminate()
+        helper.wait(timeout=10)
+
+
+def test_cancel_still_signals_worker_holding_lock(
+    tmp_path, green_preflight, monkeypatch
+):
+    """A genuine live worker (lock held) is still asked to cancel."""
+    from roast_my_harness.store.locking import ExperimentLock
+
+    spec_path = make_spec(tmp_path)
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    prepared = service.prepare(spec_path)
+    plan = json.loads((tmp_path / "plans" / f"{prepared.plan_id}.json").read_text())
+    experiment_id = plan["experiment_id"]
+    rd = tmp_path / "run"
+    helper = _sleepy_helper()
+    try:
+        with ExperimentLock(rd):
+            monkeypatch.setattr(
+                service, "_spawn_worker", lambda *a, **k: helper.pid
+            )
+            service.start(prepared.plan_id)
+            _seed_running_row(tmp_path, experiment_id, rd)
+            result = service.cancel(experiment_id)
+            assert result.cancelled is True
+            assert result.state == "CANCELLING"
+        helper.wait(timeout=10)
+        assert helper.returncode == -signal.SIGINT
+    finally:
+        if helper.poll() is None:
+            helper.kill()
+            helper.wait(timeout=10)
+
+
+def test_cancel_pid_dead_marker_refuses(tmp_path, green_preflight, monkeypatch):
+    """Control: a dead marker pid keeps the honest refusal."""
+    spec_path = make_spec(tmp_path)
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    prepared = service.prepare(spec_path)
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait(timeout=10)
+    monkeypatch.setattr(service, "_spawn_worker", lambda *a, **k: dead.pid)
+    service.start(prepared.plan_id)
+    plan = json.loads((tmp_path / "plans" / f"{prepared.plan_id}.json").read_text())
+    result = service.cancel(plan["experiment_id"])
+    assert result.ok
+    assert result.cancelled is False
+    assert "no live worker" in result.note
+
+
+def test_cancel_marker_only_starting_refuses_without_lock(
+    tmp_path, green_preflight, monkeypatch
+):
+    """Worker died before its DB row: a live pid at the marker is not ours."""
+    spec_path = make_spec(tmp_path)
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    prepared = service.prepare(spec_path)
+    plan = json.loads((tmp_path / "plans" / f"{prepared.plan_id}.json").read_text())
+    experiment_id = plan["experiment_id"]
+    helper = _sleepy_helper()
+    try:
+        monkeypatch.setattr(service, "_spawn_worker", lambda *a, **k: helper.pid)
+        service.start(prepared.plan_id)
+        monkeypatch.setenv("ROAST_MY_HARNESS_RUNS_DIR", str(tmp_path / "runs"))
+
+        result = service.cancel(experiment_id)
+        assert result.ok
+        assert result.state == "STARTING"
+        assert result.cancelled is False
+        assert helper.poll() is None
+    finally:
+        helper.terminate()
+        helper.wait(timeout=10)
 
 
 

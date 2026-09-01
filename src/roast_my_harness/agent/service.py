@@ -313,7 +313,23 @@ class AgentService:
                 experiment_id=self._marker_experiment_id(marker, experiment_id),
                 started=False,
             )
-        pid = self._spawn_worker(spec_path, experiment_id, skip_docker)
+        try:
+            pid = self._spawn_worker(spec_path, experiment_id, skip_docker)
+        except BaseException:
+            # Roll back the launch claim: an unstarted plan must stay
+            # startable (the deterministic plan_id cannot be re-prepared)
+            # and the marker fd must not leak. The size-0 guard fires only
+            # while the marker is still the empty file just created.
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                if marker.stat().st_size == 0:
+                    marker.unlink()
+            except OSError:
+                pass
+            raise
         with os.fdopen(fd, "w") as handle:
             handle.write(
                 json.dumps(
@@ -554,6 +570,18 @@ class AgentService:
             )
         pid = self._worker_pid(experiment_id)
         if pid is None:
+            return models.CancelResult(
+                ok=True,
+                experiment_id=experiment_id,
+                state=state,
+                cancelled=False,
+                note="no live worker found; use roastmyharness resume to continue",
+            )
+        rd = Path(row["run_dir"]) if row is not None else run_dir(experiment_id)
+        if lock_is_free(rd):
+            # The worker holds the experiment lock for its whole lifetime,
+            # so a free lock means the marker pid is OS pid reuse pointing
+            # at an unrelated process; signal only a lock-holding worker.
             return models.CancelResult(
                 ok=True,
                 experiment_id=experiment_id,
