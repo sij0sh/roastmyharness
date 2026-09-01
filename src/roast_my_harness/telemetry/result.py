@@ -64,8 +64,10 @@ def trial_row(result_path: Path, variant: str) -> dict[str, Any] | None:
         exception_info = {}
     exception_type = exception_info.get("exception_type") or exception_info.get("type", "")
     try:
-        reward = float(rewards.get("reward", 0) or 0)
+        reward = float(rewards.get("reward"))
     except (TypeError, ValueError):
+        # Incomplete, not terminal: reconcile_variant skips the same
+        # artifact, so telemetry must not score it as a fail either.
         if not exception_type:
             return None
         reward = 0.0

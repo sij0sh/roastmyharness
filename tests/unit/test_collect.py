@@ -34,3 +34,61 @@ def test_collect_rows_uses_newest_attempt(tmp_path: Path):
     rows = collect_rows(tmp_path)
     assert len(rows) == 1
     assert rows[0]["reward"] == 1.0
+
+
+# --- Fix C: telemetry mirrors reconcile on incomplete trials ---------------
+
+
+def _write_incomplete_trial(root: Path, job: str) -> Path:
+    trial = root / "a" / job
+    (trial / "agent").mkdir(parents=True)
+    (trial / "verifier").mkdir()
+    result = trial / "result.json"
+    result.write_text(
+        json.dumps(
+            {
+                "task_name": "t1",
+                "verifier_result": {"rewards": {}},
+                "exception_info": {},
+            }
+        )
+    )
+    return result
+
+
+def test_rewardless_trial_emits_no_row(tmp_path: Path):
+    """Reconcile skips reward-less artifacts; telemetry must mirror it."""
+    from roast_my_harness.runner.reconcile import reconcile_variant
+    from roast_my_harness.telemetry.result import trial_row
+
+    result = _write_incomplete_trial(tmp_path, "old")
+    assert trial_row(result, "a") is None
+    assert collect_rows(tmp_path) == []
+    assert reconcile_variant("a", tmp_path / "a", {"t1"}) == {}
+
+
+def test_explicit_zero_reward_still_counts_as_fail(tmp_path: Path):
+    _write_trial(tmp_path, "old", 0.0)
+    rows = collect_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["resolved"] == 0
+    assert rows[0]["reward"] == 0.0
+
+
+def test_exception_trial_still_counts_as_error(tmp_path: Path):
+    trial = tmp_path / "a" / "old"
+    (trial / "agent").mkdir(parents=True)
+    (trial / "verifier").mkdir()
+    (trial / "result.json").write_text(
+        json.dumps(
+            {
+                "task_name": "t1",
+                "verifier_result": {"rewards": {}},
+                "exception_info": {"exception_type": "AgentCrash"},
+            }
+        )
+    )
+    rows = collect_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["exception_type"] == "AgentCrash"
+    assert rows[0]["reward"] == 0.0
