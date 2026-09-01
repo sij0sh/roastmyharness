@@ -8,6 +8,7 @@ runtime packages -> variant.json + build-manifest.json -> assert entries
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -214,10 +215,20 @@ def build_home(
         _mark_readonly(tmp)
 
         if home.exists():
-            shutil.rmtree(home)
-        os.replace(tmp, home)
+            # A concurrent same-hash builder published first; content
+            # addressing makes its home equivalent. Cache hit, never clobber.
+            _discard_tree(tmp)
+            return _published_home(home, v_hash)
+        try:
+            os.replace(tmp, home)
+        except OSError as err:
+            if err.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+                raise
+            # Lost the replace race; the winner's home is equivalent.
+            _discard_tree(tmp)
+            return _published_home(home, v_hash)
     except BaseException:
-        shutil.rmtree(tmp, ignore_errors=True)
+        _discard_tree(tmp)
         raise
 
     return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash)
@@ -255,6 +266,28 @@ def _assert_no_instruction_leaks(home: Path) -> None:
     ]
     if leaked:
         raise HomeBuildError(f"instruction files leaked into home: {leaked}")
+
+
+def _published_home(home: Path, v_hash: str) -> HomeBuild:
+    """HomeBuild for an existing same-hash cache home; trusted on existence."""
+    manifest = VariantManifest.model_validate(
+        json.loads((home / "variant.json").read_text())
+    )
+    return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash)
+
+
+def _discard_tree(root: Path) -> None:
+    """Best-effort removal of a possibly read-only tree."""
+    try:
+        os.chmod(root, 0o700)
+        for path in root.rglob("*"):
+            try:
+                os.chmod(path, 0o700 if path.is_dir() else 0o600)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def _mark_readonly(root: Path) -> None:

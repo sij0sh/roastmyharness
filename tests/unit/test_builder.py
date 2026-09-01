@@ -172,3 +172,100 @@ def test_control_arm_builds_like_bare(tmp_path: Path):
     )
     home = build_home(spec.arms()[0], spec, tmp_path / "homes")
     assert home.manifest.variant_id == "control"
+
+
+# --- Fix D: idempotent home cache publish (probe-home-cache-publish-race.py)
+
+
+def test_concurrent_same_hash_publish_is_a_cache_hit(tmp_path, monkeypatch):
+    """Loser of a same-hash publish race gets the winner's home, not EACCES."""
+    import threading
+    import time
+
+    from roast_my_harness.homes import builder as builder_mod
+
+    spec = spec_for(tmp_path, [VariantSpec(id="a")])
+    homes = tmp_path / "homes"
+    ready = tmp_path / "ready"
+    go = tmp_path / "go"
+    gate = [True]
+    orig = builder_mod._mark_readonly
+
+    def gated_readonly(root):
+        orig(root)
+        if gate[0]:
+            ready.write_text("loser at the publish gate")
+            deadline = time.monotonic() + 30
+            while not go.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+    monkeypatch.setattr(builder_mod, "_mark_readonly", gated_readonly)
+    loser_out: list = []
+
+    def loser():
+        try:
+            loser_out.append(build_home(spec.variants[0], spec, homes))
+        except BaseException as err:
+            loser_out.append(err)
+
+    thread = threading.Thread(target=loser)
+    thread.start()
+    deadline = time.monotonic() + 30
+    while not ready.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ready.exists(), "loser never reached the publish gate"
+    gate[0] = False
+    winner = build_home(spec.variants[0], spec, homes)
+    go.write_text("go")
+    thread.join(timeout=60)
+
+    assert loser_out and isinstance(loser_out[0], object)
+    lost = loser_out[0]
+    assert not isinstance(lost, BaseException), f"loser failed: {lost!r}"
+    assert lost.path == winner.path
+    assert lost.variant_hash == winner.variant_hash
+    assert lost.manifest.variant_id == "a"
+    assert not [p for p in homes.iterdir() if p.name.startswith(".build-")]
+    assert [p for p in homes.iterdir() if p.is_dir()] == [winner.path]
+
+
+def test_replace_race_loss_treated_as_cache_hit(tmp_path, monkeypatch):
+    """Losing os.replace to a concurrent publish is a hit, not an error."""
+    import errno
+
+    from roast_my_harness.homes import builder as builder_mod
+
+    spec = spec_for(tmp_path, [VariantSpec(id="a")])
+    homes = tmp_path / "homes"
+    first = build_home(spec.variants[0], spec, homes)
+    staging = homes / f".{first.path.name}.away"
+    first.path.rename(staging)  # a builder that missed the cache
+
+    def losing_replace(src, dst, *args, **kwargs):
+        staging.rename(dst)  # the concurrent winner publishes first
+        raise OSError(errno.ENOTEMPTY, "simulated publish race loss")
+
+    monkeypatch.setattr(builder_mod.os, "replace", losing_replace)
+    rebuilt = build_home(spec.variants[0], spec, homes)
+    assert rebuilt.path == first.path
+    assert rebuilt.variant_hash == first.variant_hash
+    assert rebuilt.manifest.variant_id == "a"
+    assert not [p for p in homes.iterdir() if p.name.startswith(".build-")]
+
+
+def test_failed_publish_leaves_no_tmp_dir(tmp_path, monkeypatch):
+    """A read-only tmp tree must not leak when the build fails late."""
+    import errno
+
+    from roast_my_harness.homes import builder as builder_mod
+
+    spec = spec_for(tmp_path, [VariantSpec(id="a")])
+    homes = tmp_path / "homes"
+
+    def failing_replace(src, dst, *args, **kwargs):
+        raise OSError(errno.EACCES, "simulated publish failure")
+
+    monkeypatch.setattr(builder_mod.os, "replace", failing_replace)
+    with pytest.raises(OSError):
+        build_home(spec.variants[0], spec, homes)
+    assert not [p for p in homes.iterdir() if p.name.startswith(".build-")]
