@@ -16,6 +16,9 @@ from roast_my_harness.spec.models import ExperimentSpec
 from roast_my_harness.tasks.discover import discover_tasks
 
 MIN_FREE_GB = 5.0
+PREFLIGHT_MAX_WORKERS = 4
+PREFLIGHT_BUDGET_SEC = 30.0
+PREFLIGHT_PER_CALL_TIMEOUT = 60
 
 
 @dataclass(frozen=True)
@@ -133,22 +136,55 @@ def _sources(spec: ExperimentSpec) -> list[CheckResult]:
 
 def _agent_package_specs(spec):
     # Resolved agent pins; an unresolvable 'latest' becomes a failure.
-    packages = []
+    # Returns (trusted_exact, needs_check, failures): exact pins skip registry.
+    trusted = []
+    needs_check = []
     failures = []
     for agent_id in spec.resolved_agents().values():
         package = get_agent(agent_id).npm_package
+        try:
+            pin = spec.agent_version_for(agent_id)
+        except Exception:
+            pin = "latest"
         try:
             version = spec.resolved_version_for(agent_id)
         except RuntimeError as error:
             failures.append(_fail("npm package " + package, str(error)))
             continue
-        packages.append(package + "@" + version)
-    return packages, failures
+        full = package + "@" + version
+        from roast_my_harness.adapter.versions import is_latest as _is_latest
+        if _is_latest(pin):
+            needs_check.append(full)
+        else:
+            trusted.append(full)
+    return trusted, needs_check, failures
+
+
+def _check_one(npm: str, package: str) -> CheckResult:
+    import time as _time
+    start = _time.monotonic()
+    try:
+        proc = subprocess.run(
+            [npm, "view", package, "version", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=PREFLIGHT_PER_CALL_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return _fail(f"npm package {package}", str(error))
+    took = _time.monotonic() - start
+    if proc.returncode != 0:
+        return _fail(
+            f"npm package {package}",
+            "package or pinned version is not available from the npm registry",
+        )
+    return _ok(f"npm package {package}", f"available ({took:.1f}s)")
 
 
 def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
-    agent_packages, agent_failures = _agent_package_specs(spec)
-    packages = sorted(
+    trusted_exact, needs_check, agent_failures = _agent_package_specs(spec)
+    exact_pins = sorted(
         {
             extension.package
             for variant in spec.arms()
@@ -161,37 +197,34 @@ def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
             for step in variant.setup
             if step.handler == "npm_pi_install"
         }
-        | set(agent_packages)
+        | set(trusted_exact)
     )
-    if not packages:
-        return list(agent_failures)
-
+    results: list[CheckResult] = list(agent_failures)
+    for package in exact_pins:
+        results.append(_ok(f"npm package {package}", "pinned, trusted without registry check"))
+    to_check = sorted(set(needs_check))
+    if not to_check:
+        return results
     npm = shutil.which("npm")
     if npm is None:
-        return [_fail("npm", "npm not on PATH; cannot validate pinned packages")]
-
-    results: list[CheckResult] = list(agent_failures)
-    for package in packages:
-        try:
-            proc = subprocess.run(
-                [npm, "view", package, "version", "--json"],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            results.append(_fail(f"npm package {package}", str(error)))
-            continue
-        if proc.returncode != 0:
-            results.append(
-                _fail(
-                    f"npm package {package}",
-                    "package or pinned version is not available from the npm registry",
-                )
-            )
-        else:
-            results.append(_ok(f"npm package {package}", "available"))
+        return results + [_fail("npm", "npm not on PATH; cannot validate latest pins")]
+    import concurrent.futures as _fut
+    import time as _time
+    deadline = _time.monotonic() + PREFLIGHT_BUDGET_SEC
+    with _fut.ThreadPoolExecutor(max_workers=min(PREFLIGHT_MAX_WORKERS, len(to_check))) as pool:
+        future_map = {pool.submit(_check_one, npm, pkg): pkg for pkg in to_check}
+        for future in _fut.as_completed(future_map, timeout=PREFLIGHT_BUDGET_SEC):
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                results.append(future.result(timeout=max(0.1, remaining)))
+            except Exception as error:
+                results.append(_fail(f"npm package {future_map[future]}", str(error)))
+    done = {r.name.removeprefix("npm package ") for r in results if r.name.startswith("npm package ")}
+    for pkg in to_check:
+        if pkg not in done:
+            results.append(_fail(f"npm package {pkg}", f"preflight budget {PREFLIGHT_BUDGET_SEC:.0f}s exceeded"))
     return results
 
 
