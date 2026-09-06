@@ -109,3 +109,55 @@ def aggregate_by_variant(rows: list[dict[str, Any]]) -> dict[str, dict[str, floa
         agg["wall_sec"] = round(agg["wall_sec"], 1)
         agg["cost_usd"] = round(agg["cost_usd"], 4)
     return out
+
+def collect_rows_incremental(
+    jobs_root: Path,
+    known: dict[str, tuple[int, tuple[str, str], dict]],
+) -> tuple[list[dict], dict[str, tuple[int, tuple[str, str], dict]], int, int]:
+    """Incremental collect: reuse rows when result.json mtime is unchanged.
+
+    known maps result path -> (mtime_ns, (variant, task), row). Mutated in
+    place. Returns (rows, known, parsed_count, reused_count). Newest-wins
+    per (variant, task) matches collect_rows.
+    """
+    from roast_my_harness.telemetry.result import is_trial_dir, trial_row
+    parsed = 0
+    reused = 0
+    if not jobs_root.is_dir():
+        known.clear()
+        return [], known, 0, 0
+    seen: set[str] = set()
+    per_path: dict[str, tuple[int, tuple[str, str], dict]] = {}
+    for variant_dir in sorted(jobs_root.iterdir()):
+        if not variant_dir.is_dir():
+            continue
+        for result_path in sorted(variant_dir.rglob("result.json")):
+            if not is_trial_dir(result_path.parent):
+                continue
+            key = str(result_path)
+            seen.add(key)
+            try:
+                stamp = result_path.stat().st_mtime_ns
+            except OSError:
+                continue
+            cached = known.get(key)
+            if cached is not None and cached[0] == stamp:
+                per_path[key] = cached
+                reused += 1
+                continue
+            row = trial_row(result_path, variant_dir.name)
+            parsed += 1
+            if not row:
+                continue
+            task_id = str(row.get("task") or result_path.parent.name)
+            per_path[key] = (stamp, (variant_dir.name, task_id), row)
+    for stale in [k for k in known if k not in seen]:
+        del known[stale]
+    known.clear()
+    known.update(per_path)
+    selected: dict[tuple[str, str], tuple[int, dict]] = {}
+    for stamp, vtask, row in per_path.values():
+        if vtask not in selected or stamp >= selected[vtask][0]:
+            selected[vtask] = (stamp, row)
+    rows = [row for _, row in sorted(selected.values(), key=lambda item: (item[1]["variant"], item[1]["task"]))]
+    return rows, known, parsed, reused
