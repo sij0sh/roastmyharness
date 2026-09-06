@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 PASS_THRESHOLD = 0.999
+
+_log = logging.getLogger(__name__)
+
+_ATTEMPT_SEQ_RE = re.compile(r"(\d+)\s*$")
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,21 @@ def _mtime(path: Path) -> float:
         return 0.0
 
 
+def _attempt_seq(trial_dir: Path) -> int:
+    """Best-effort attempt order from the trial dir name, else -1.
+
+    True filesystem recency is unknowable when result.json mtimes tie,
+    so ties fall back to this sequence proxy (then path) for a stable winner.
+    """
+    match = _ATTEMPT_SEQ_RE.search(trial_dir.name)
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return -1
+    return -1
+
+
 def reconcile_variant(
     variant_id: str, jobs_dir: Path, known_tasks: set[str]
 ) -> dict[str, Cell]:
@@ -35,7 +56,7 @@ def reconcile_variant(
 
     A trial directory must contain agent/ and verifier/ plus result.json.
     """
-    cells: dict[str, tuple[float, Cell]] = {}
+    cells: dict[str, tuple[float, int, str, Cell]] = {}
     if not jobs_dir.is_dir():
         return {}
     for result_path in sorted(jobs_dir.rglob("result.json")):
@@ -48,17 +69,30 @@ def reconcile_variant(
             result = json.loads(result_path.read_text())
         except (json.JSONDecodeError, OSError):
             continue
-        task_id = str(result.get("task_name") or trial_dir.name)
+        raw_task = str(result.get("task_name") or trial_dir.name)
+        task_id = raw_task
         if known_tasks and task_id not in known_tasks:
-            
-            
-            
-            short = task_id.rsplit("/", 1)[-1]
+            short = raw_task.rsplit("/", 1)[-1]
             base = trial_dir.name.split("__", 1)[0]
-            for candidate in (short, base):
-                if candidate in known_tasks:
-                    task_id = candidate
-                    break
+            short_hit = short in known_tasks
+            base_hit = base in known_tasks
+            if base_hit and short_hit:
+                if short == base:
+                    task_id = base
+                else:
+                    _log.warning(
+                        "reconcile conflict: dir %s implies task %r but pier task_name %r "
+                        "implies %r; keeping dir task",
+                        trial_dir,
+                        base,
+                        raw_task,
+                        short,
+                    )
+                    task_id = base
+            elif base_hit:
+                task_id = base
+            elif short_hit:
+                task_id = short
             else:
                 continue
         exception_info = result.get("exception_info") or {}
@@ -95,7 +129,7 @@ def reconcile_variant(
             except (TypeError, ValueError):
                 continue
             status = "pass" if reward >= PASS_THRESHOLD else "fail"
-        timing = (result.get("agent_execution") or {})
+        timing = result.get("agent_execution") or {}
         finished = timing.get("finished_at")
         cell = Cell(
             variant_id=variant_id,
@@ -110,9 +144,11 @@ def reconcile_variant(
             exception_type=str(exception) if exception else None,
         )
         stamp = _mtime(result_path)
-        if task_id not in cells or stamp >= cells[task_id][0]:
-            cells[task_id] = (stamp, cell)
-    return {task: cell for task, (_, cell) in cells.items()}
+        key = (_attempt_seq(trial_dir), str(result_path))
+        prev = cells.get(task_id)
+        if prev is None or stamp > prev[0] or (stamp == prev[0] and key < (prev[1], prev[2])):
+            cells[task_id] = (stamp, key[0], key[1], cell)
+    return {task: cell for task, (_, _, _, cell) in cells.items()}
 
 
 def missing_tasks(cells: dict[str, Cell], all_tasks: list[str]) -> list[str]:
