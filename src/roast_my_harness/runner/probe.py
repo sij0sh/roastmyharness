@@ -107,7 +107,7 @@ async def run_probe(
             returncode = await proc.proc.wait()
         else:
             returncode = await asyncio.wait_for(proc.proc.wait(), timeout=timeout_sec)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - start
         await _kill_probe(proc)
         raise ProbeTimeoutError(
@@ -133,7 +133,7 @@ async def _kill_probe(proc: process_mod.VariantProcess) -> None:
         return
     try:
         await asyncio.wait_for(proc.proc.wait(), timeout=PROBE_KILL_GRACE_SEC)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             os.killpg(os.getpgid(proc.proc.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):

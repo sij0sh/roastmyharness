@@ -49,9 +49,7 @@ def _attempt_seq(trial_dir: Path) -> int:
     return -1
 
 
-def reconcile_variant(
-    variant_id: str, jobs_dir: Path, known_tasks: set[str]
-) -> dict[str, Cell]:
+def reconcile_variant(variant_id: str, jobs_dir: Path, known_tasks: set[str]) -> dict[str, Cell]:
     """Newest valid attempt per task from trial dirs under jobs/<variant>/.
 
     A trial directory must contain agent/ and verifier/ plus result.json.
@@ -61,9 +59,7 @@ def reconcile_variant(
         return {}
     for result_path in sorted(jobs_dir.rglob("result.json")):
         trial_dir = result_path.parent
-        if not (
-            (trial_dir / "agent").is_dir() and (trial_dir / "verifier").is_dir()
-        ):
+        if not ((trial_dir / "agent").is_dir() and (trial_dir / "verifier").is_dir()):
             continue  # job-level summary, not a trial
         try:
             result = json.loads(result_path.read_text())
@@ -116,9 +112,7 @@ def reconcile_variant(
                     try:
                         reward_data = json.loads(reward_path.read_text())
                         reward = (
-                            reward_data.get("reward")
-                            if isinstance(reward_data, dict)
-                            else None
+                            reward_data.get("reward") if isinstance(reward_data, dict) else None
                         )
                     except (json.JSONDecodeError, OSError):
                         reward = None
@@ -137,10 +131,7 @@ def reconcile_variant(
             status=status,
             reward=reward,
             job_path=str(trial_dir),
-            finished_at=finished
-            or datetime.fromtimestamp(
-                _mtime(result_path), tz=UTC
-            ).isoformat(),
+            finished_at=finished or datetime.fromtimestamp(_mtime(result_path), tz=UTC).isoformat(),
             exception_type=str(exception) if exception else None,
         )
         stamp = _mtime(result_path)
@@ -155,7 +146,17 @@ def missing_tasks(cells: dict[str, Cell], all_tasks: list[str]) -> list[str]:
     return [t for t in all_tasks if t not in cells]
 
 
-_THROTTLE_MARKERS = ("429", "throttl", "rate limit", "rate_limit", "too many requests", "quota", "overloaded", "capacity")
+_THROTTLE_MARKERS = (
+    "429",
+    "throttl",
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "quota",
+    "overloaded",
+    "capacity",
+)
+
 
 def is_throttle_error(exception_type: str | None) -> bool:
     """True when an error label looks like provider throttling, not a real failure."""
@@ -179,7 +180,10 @@ def _resolve_task_id(raw_task: str, trial_dir: Path, known_tasks: set[str]) -> s
                 _log.warning(
                     "reconcile conflict: dir %s implies task %r but pier task_name %r "
                     "implies %r; keeping dir task",
-                    trial_dir, base, raw_task, short,
+                    trial_dir,
+                    base,
+                    raw_task,
+                    short,
                 )
                 task_id = base
         elif base_hit:
@@ -191,7 +195,9 @@ def _resolve_task_id(raw_task: str, trial_dir: Path, known_tasks: set[str]) -> s
     return task_id
 
 
-def _cell_from_result(variant_id: str, trial_dir: Path, result: dict, task_id: str, stamp: float) -> Cell | None:
+def _cell_from_result(
+    variant_id: str, trial_dir: Path, result: dict, task_id: str, stamp: float
+) -> Cell | None:
     exception_info = result.get("exception_info") or {}
     if not isinstance(exception_info, dict):
         exception_info = {}

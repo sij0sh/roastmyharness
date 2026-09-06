@@ -68,9 +68,9 @@ def collect_rows(jobs_root: Path) -> list[dict[str, Any]]:
                 selected[key] = (stamp, row)
     return [
         row
-        for _, row in sorted(selected.values(), key=lambda item: (
-            item[1]["variant"], item[1]["task"]
-        ))
+        for _, row in sorted(
+            selected.values(), key=lambda item: (item[1]["variant"], item[1]["task"])
+        )
     ]
 
 
@@ -110,6 +110,7 @@ def aggregate_by_variant(rows: list[dict[str, Any]]) -> dict[str, dict[str, floa
         agg["cost_usd"] = round(agg["cost_usd"], 4)
     return out
 
+
 def collect_rows_incremental(
     jobs_root: Path,
     known: dict[str, tuple[int, tuple[str, str], dict]],
@@ -121,6 +122,7 @@ def collect_rows_incremental(
     per (variant, task) matches collect_rows.
     """
     from roast_my_harness.telemetry.result import is_trial_dir, trial_row
+
     parsed = 0
     reused = 0
     if not jobs_root.is_dir():
@@ -159,5 +161,10 @@ def collect_rows_incremental(
     for stamp, vtask, row in per_path.values():
         if vtask not in selected or stamp >= selected[vtask][0]:
             selected[vtask] = (stamp, row)
-    rows = [row for _, row in sorted(selected.values(), key=lambda item: (item[1]["variant"], item[1]["task"]))]
+    rows = [
+        row
+        for _, row in sorted(
+            selected.values(), key=lambda item: (item[1]["variant"], item[1]["task"])
+        )
+    ]
     return rows, known, parsed, reused

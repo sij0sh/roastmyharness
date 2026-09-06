@@ -31,7 +31,13 @@ from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import probe as probe_mod
 from roast_my_harness.runner import process as process_mod
 from roast_my_harness.runner.control_reuse import ControlReuse
-from roast_my_harness.runner.reconcile import Cell, is_throttle_error, missing_tasks, reconcile_variant, reconcile_variant_incremental
+from roast_my_harness.runner.reconcile import (
+    Cell,
+    is_throttle_error,
+    missing_tasks,
+    reconcile_variant,
+    reconcile_variant_incremental,
+)
 from roast_my_harness.spec.hashes import experiment_hash as compute_experiment_hash
 from roast_my_harness.spec.hashes import spec_hash as compute_spec_hash
 from roast_my_harness.spec.models import ExperimentSpec
@@ -189,7 +195,8 @@ class ExperimentController:
                 self._fail(PierError(str(e)))
                 return
             _probe_sec = _time.monotonic() - _probe_start
-            self._logger.emit("progress", state=self.state, message=f"smoke probe took {_probe_sec:.1f}s")
+            msg = f"smoke probe took {_probe_sec:.1f}s"
+            self._logger.emit("progress", state=self.state, message=msg)
             self._throw_if_cancelled()
             self.smoke_result = result
             if not result.ok:
@@ -445,7 +452,8 @@ class ExperimentController:
             nonlocal in_flight
             async with sem:
                 in_flight += 1
-                self._logger.emit("progress", state=self.state, message=f"launch gate in_flight={in_flight}/{cap} {proc.variant_id}")
+                msg = f"launch gate {in_flight}/{cap} {proc.variant_id}"
+                self._logger.emit("progress", state=self.state, message=msg)
                 try:
                     await proc.start(env)
                 finally:
@@ -475,11 +483,12 @@ class ExperimentController:
                 return
             import time as _time
             tick_start = _time.monotonic()
-            await asyncio.to_thread(self._poll_once, all_ids)
+            self._poll_once(all_ids)
             tick_sec = _time.monotonic() - tick_start
             if tick_sec > POLL_INTERVAL_SEC:
                 interval = min(POLL_MAX_INTERVAL_SEC, max(POLL_INTERVAL_SEC, tick_sec * 1.5))
-                self._logger.emit("progress", state=self.state, message=f"poll overrun {tick_sec:.2f}s, backing off to {interval:.1f}s")
+                msg = f"poll overrun {tick_sec:.2f}s, backoff {interval:.1f}s"
+                self._logger.emit("progress", state=self.state, message=msg)
             else:
                 interval = POLL_INTERVAL_SEC
             await asyncio.sleep(interval)

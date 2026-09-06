@@ -34,9 +34,7 @@ from roast_my_harness.observability import contains_secret
 from roast_my_harness.spec.models import ExperimentSpec
 
 
-def stage_home(
-    cached_home: Path, dest: Path, spec: ExperimentSpec, agent_id: str = "pi"
-) -> Path:
+def stage_home(cached_home: Path, dest: Path, spec: ExperimentSpec, agent_id: str = "pi") -> Path:
     """Copy cached home into a writable staging dir and add credentials."""
     if dest.exists():
         force_remove(dest)
@@ -65,9 +63,7 @@ def _stage_model(spec: ExperimentSpec, dest: Path, agent_id: str = "pi") -> None
     if model.provider == CODEX_PROVIDER:
         entry = codex_credential()
         if entry is None:
-            raise AuthError(
-                "no openai-codex credential in pi auth file; run pi /login codex"
-            )
+            raise AuthError("no openai-codex credential in pi auth file; run pi /login codex")
         _write_auth_entry(dest, CODEX_PROVIDER, entry)
         return
     provider, models_text = _resolve_models_text(spec)
@@ -220,6 +216,7 @@ def scan_for_secrets(run_dir: Path) -> list[str]:
             hits.append(str(path))
     return hits
 
+
 def scan_for_secrets_incremental(
     run_dir: Path,
     known: dict[str, tuple[float, int, bool]],
@@ -230,6 +227,7 @@ def scan_for_secrets_incremental(
     (all_hits, known, scanned, skipped); unchanged files reuse cached hits.
     """
     from roast_my_harness.observability import contains_secret as _contains
+
     hits: list[str] = []
     scanned = 0
     skipped = 0

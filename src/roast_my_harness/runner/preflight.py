@@ -69,9 +69,7 @@ def _pier(spec: ExperimentSpec) -> CheckResult:
     if version is None:
         return _warn("pier", f"found {exe} but could not read version")
     if not pier_mod.version_satisfies(version, spec.pier_version):
-        return _fail(
-            "pier", f"pier {version} does not satisfy {spec.pier_version}"
-        )
+        return _fail("pier", f"pier {version} does not satisfy {spec.pier_version}")
     return _ok("pier", f"{exe} {version}")
 
 
@@ -84,8 +82,11 @@ def _docker() -> list[CheckResult]:
     results.append(_ok("docker", exe))
     try:
         proc = subprocess.run(
-            [exe, "compose", "version"], capture_output=True, text=True,
-            timeout=60, check=False,
+            [exe, "compose", "version"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         results.append(_fail("docker compose", str(e)))
@@ -127,8 +128,7 @@ def _sources(spec: ExperimentSpec) -> list[CheckResult]:
             results.append(
                 _ok(
                     f"variant {variant.id}",
-                    f"{len(variant.extensions)} ext, "
-                    f"{len(variant.skills)} skills",
+                    f"{len(variant.extensions)} ext, {len(variant.skills)} skills",
                 )
             )
     return results
@@ -153,6 +153,7 @@ def _agent_package_specs(spec):
             continue
         full = package + "@" + version
         from roast_my_harness.adapter.versions import is_latest as _is_latest
+
         if _is_latest(pin):
             needs_check.append(full)
         else:
@@ -162,6 +163,7 @@ def _agent_package_specs(spec):
 
 def _check_one(npm: str, package: str) -> CheckResult:
     import time as _time
+
     start = _time.monotonic()
     try:
         proc = subprocess.run(
@@ -210,6 +212,7 @@ def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
         return results + [_fail("npm", "npm not on PATH; cannot validate latest pins")]
     import concurrent.futures as _fut
     import time as _time
+
     deadline = _time.monotonic() + PREFLIGHT_BUDGET_SEC
     with _fut.ThreadPoolExecutor(max_workers=min(PREFLIGHT_MAX_WORKERS, len(to_check))) as pool:
         future_map = {pool.submit(_check_one, npm, pkg): pkg for pkg in to_check}
@@ -221,10 +224,16 @@ def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
                 results.append(future.result(timeout=max(0.1, remaining)))
             except Exception as error:
                 results.append(_fail(f"npm package {future_map[future]}", str(error)))
-    done = {r.name.removeprefix("npm package ") for r in results if r.name.startswith("npm package ")}
+    done = {
+        r.name.removeprefix("npm package ") for r in results if r.name.startswith("npm package ")
+    }
     for pkg in to_check:
         if pkg not in done:
-            results.append(_fail(f"npm package {pkg}", f"preflight budget {PREFLIGHT_BUDGET_SEC:.0f}s exceeded"))
+            results.append(
+                _fail(
+                    f"npm package {pkg}", f"preflight budget {PREFLIGHT_BUDGET_SEC:.0f}s exceeded"
+                )
+            )
     return results
 
 
@@ -266,25 +275,30 @@ def _auth(spec: ExperimentSpec) -> list[CheckResult]:
     # host-only !command keys, env vars must resolve.
     block = auth_service.host_provider_block(model.provider)
     if block is None:
-        results.append(
-            _fail("auth", f"provider '{model.provider}' not in host pi models.json")
-        )
+        results.append(_fail("auth", f"provider '{model.provider}' not in host pi models.json"))
         return results
     if model.id not in auth_service.host_model_ids(model.provider):
         available = ", ".join(auth_service.host_model_ids(model.provider)[:8])
         results.append(
-            _fail("auth", f"model '{model.id}' not defined for host provider "
-                          f"'{model.provider}' (available: {available})")
+            _fail(
+                "auth",
+                f"model '{model.id}' not defined for host provider "
+                f"'{model.provider}' (available: {available})",
+            )
         )
         return results
     if auth_service.has_command_keys(block):
         results.append(
-            _fail("auth", f"provider '{model.provider}' uses !command apiKey "
-                          "values; host commands cannot run in-container")
+            _fail(
+                "auth",
+                f"provider '{model.provider}' uses !command apiKey "
+                "values; host commands cannot run in-container",
+            )
         )
         return results
     import json as _json
     import tempfile
+
     block_text = _json.dumps({"providers": {model.provider: block}})
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
         tf.write(block_text)
@@ -309,7 +323,6 @@ def _disk(spec: ExperimentSpec) -> CheckResult:
     if free_gb < MIN_FREE_GB:
         return _fail("disk", f"{free_gb:.1f} GB free, need {MIN_FREE_GB}")
     return _ok("disk", f"{free_gb:.0f} GB free")
-
 
 
 def format_table(results: list[CheckResult]) -> str:
