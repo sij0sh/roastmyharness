@@ -397,6 +397,7 @@ class ExperimentSpec(BaseModel):
     model: ModelSpec = Field(default_factory=ModelSpec)
     thinking: ThinkingLevel = "high"
     agent: str = "pi"
+    agent_versions: dict[str, str] = Field(default_factory=dict)
     agent_version: str | None = None
     pi_version: str = DEFAULT_PI_VERSION
     pier_version: str = ">=0.3,<0.4"
@@ -419,6 +420,14 @@ class ExperimentSpec(BaseModel):
     @classmethod
     def _safe_agent_version(cls, value: str | None) -> str | None:
         return None if value is None else _agent_version_pin(value, "agent_version")
+
+    @field_validator("agent_versions")
+    @classmethod
+    def _safe_agent_versions(cls, value: dict[str, str]) -> dict[str, str]:
+        for agent_id, pin in value.items():
+            get_agent(agent_id)
+            _agent_version_pin(pin, f"agent_versions.{agent_id}")
+        return value
 
     @field_validator("schema_version")
     @classmethod
@@ -465,9 +474,13 @@ class ExperimentSpec(BaseModel):
     def agent_version_for(self, agent_id: str) -> str:
         """Pinned version for one agent: 'latest' or an exact version.
 
-        Precedence: an explicit agent_version for the spec's default agent,
-        then pi_version as the legacy pi alias, then the registry default.
+        Precedence: per-agent agent_versions map, then deprecated aliases
+        (agent_version for the default agent, pi_version for pi), then the
+        registry default. Owner: spec. Decision: alias-bridge migration;
+        new pins use agent_versions, aliases stay until removal.
         """
+        if agent_id in self.agent_versions:
+            return self.agent_versions[agent_id]
         if self.agent_version is not None and agent_id == self.agent:
             return self.agent_version
         if agent_id == "pi":
@@ -516,9 +529,27 @@ class ExperimentSpec(BaseModel):
                 f"agent_version {self.agent_version!r} conflicts with "
                 f"pi_version {self.pi_version!r}; set one version pin only"
             )
+        if self.agent in self.agent_versions:
+            if (
+                self.agent_version is not None
+                and self.agent_versions[self.agent] != self.agent_version
+            ):
+                raise ValueError(
+                    f"agent_versions[{self.agent!r}] conflicts with agent_version; "
+                    "set one version pin only"
+                )
+            if self.agent == "pi" and self.agent_versions["pi"] != self.pi_version:
+                raise ValueError(
+                    "agent_versions['pi'] conflicts with pi_version; set one version pin only"
+                )
+        if "pi" in self.agent_versions and self.agent != "pi":
+            if self.agent_versions["pi"] != self.pi_version:
+                raise ValueError(
+                    "agent_versions['pi'] conflicts with pi_version; set one version pin only"
+                )
         for variant in self.variants:
             agent = get_agent(variant.agent or self.agent)
-            if agent.family == "pi":
+            if agent.supports_pi_features:
                 continue
             pi_only = [
                 feature

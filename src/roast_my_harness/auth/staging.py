@@ -3,6 +3,13 @@
 The runner copies the immutable cached home into <run>/staging/<variant>,
 drops in only the selected credential (mode 0600) and, for custom
 providers, models.json with $VAR references left unresolved.
+
+Resolve-then-render: provider branches resolve an opaque models-text
+payload, one family-keyed renderer stages it. Owner: auth. Decision:
+opaque per-kind payload, no unified credential model. Valid subset:
+codex stages auth.json only and ignores the agent format (codex x omp
+gap stays out of scope); custom/host render pi ($VAR models.json) or
+bare-env (models.yml plus model-env.json) via registry credential_format.
 """
 
 from __future__ import annotations
@@ -13,6 +20,7 @@ import shutil
 import stat
 from pathlib import Path
 
+from roast_my_harness.adapter.registry import get_agent
 from roast_my_harness.auth import service as auth_service
 from roast_my_harness.auth.service import (
     CODEX_PROVIDER,
@@ -50,10 +58,8 @@ def _strip_env_refs(value: str) -> tuple[str, str | None]:
 def _stage_model(spec: ExperimentSpec, dest: Path, agent_id: str = "pi") -> None:
     """Stage the model credential/config the spec's provider needs.
 
-    The provider name drives staging, not the auth literal. omp arms get
-    models.yml (JSON text is valid YAML) with bare env-name refs plus a
-    model-env.json name list the omp adapter resolves at run time; pi
-    arms keep models.json with ``$VAR`` refs.
+    The provider name drives staging, not the auth literal. The renderer
+    below is the single agent-format dispatch point.
     """
     model = spec.model
     if model.provider == CODEX_PROVIDER:
@@ -64,20 +70,22 @@ def _stage_model(spec: ExperimentSpec, dest: Path, agent_id: str = "pi") -> None
             )
         _write_auth_entry(dest, CODEX_PROVIDER, entry)
         return
+    provider, models_text = _resolve_models_text(spec)
+    _render_models_text(dest, agent_id, models_text)
+    entry = provider_credential(provider)
+    if entry is not None:
+        _write_auth_entry(dest, provider, entry)
+
+
+def _resolve_models_text(spec: ExperimentSpec) -> tuple[str, str]:
+    """Opaque provider payload: (provider, models JSON text)."""
+    model = spec.model
     if model.provider == "custom":
         if model.models_json is None:
             raise AuthError("provider 'custom' requires models_json")
         if not model.models_json.is_file():
             raise AuthError(f"models.json missing: {model.models_json}")
-        if agent_id != "pi":
-            _stage_bare_env_models(dest, model.models_json.read_text())
-            return
-        models_path = dest / "models.json"
-        shutil.copy2(model.models_json, models_path)
-        os.chmod(models_path, 0o600)
-        return
-    
-    
+        return ("custom", model.models_json.read_text())
     block = host_provider_block(model.provider)
     if block is None:
         raise AuthError(
@@ -92,15 +100,16 @@ def _stage_model(spec: ExperimentSpec, dest: Path, agent_id: str = "pi") -> None
                 f"host provider '{model.provider}' changed since the spec was loaded; "
                 "reload the experiment before running or resuming"
             )
-    payload = json.dumps({"providers": {model.provider: block}}, indent=2) + "\n"
-    if agent_id != "pi":
-        _stage_bare_env_models(dest, payload)
-    else:
-        models_path = dest / "models.json"
-        atomic_write_text(models_path, payload, mode=0o600)
-    entry = provider_credential(model.provider)
-    if entry is not None:
-        _write_auth_entry(dest, model.provider, entry)
+    return (model.provider, json.dumps({"providers": {model.provider: block}}, indent=2) + "\n")
+
+
+def _render_models_text(dest: Path, agent_id: str, models_json_text: str) -> None:
+    """Single agent-format dispatch point for custom/host payloads."""
+    if get_agent(agent_id).credential_format == "bare-env":
+        _stage_bare_env_models(dest, models_json_text)
+        return
+    models_path = dest / "models.json"
+    atomic_write_text(models_path, models_json_text, mode=0o600)
 
 
 def _stage_bare_env_models(dest: Path, models_json_text: str) -> None:

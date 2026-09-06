@@ -1,4 +1,10 @@
-"""Stable hashes over canonical JSON. SHA-256, sorted keys, UTF-8, no spaces."""
+"""Stable hashes over canonical JSON. SHA-256, sorted keys, UTF-8, no spaces.
+
+Content-vs-policy rule (owner: spec; approved, gated): home identity
+covers content fields only; run-policy fields travel the runner channel
+and stay out of the hash/manifest. Enforcement waits for the second
+runtime-policy field; until then variant_hash keeps its current input.
+"""
 
 from __future__ import annotations
 

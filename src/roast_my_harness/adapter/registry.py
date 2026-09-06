@@ -20,6 +20,13 @@ class AgentDef:
     family groups agents that share the pi home layout, run command shape,
     and event-stream format ("pi" family, e.g. forks); other families need
     their own adapter and home builder.
+
+    credential_format selects staged credential rendering: "pi" keeps
+    models.json with $VAR refs, "bare-env" stages models.yml plus
+    model-env.json with bare names. supports_pi_features gates pi-only
+    variant features. Owner: adapter/registry. Decision: host-side strategy
+    lives here, pier-side behavior lives in the adapter module named by
+    import_path; consumers delegate instead of branching on agent_id.
     """
 
     id: str
@@ -31,6 +38,8 @@ class AgentDef:
     version_field: str
     fairness_flags: str
     default_version: str
+    credential_format: str = "pi"
+    supports_pi_features: bool = True
 
 
 AGENTS: dict[str, AgentDef] = {
@@ -55,6 +64,8 @@ AGENTS: dict[str, AgentDef] = {
         version_field="agent_version",
         fairness_flags="--no-skills",
         default_version="18.0.9",
+        credential_format="bare-env",
+        supports_pi_features=True,
     ),
 }
 
