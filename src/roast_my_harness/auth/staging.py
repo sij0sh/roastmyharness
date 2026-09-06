@@ -178,6 +178,20 @@ def _make_writable(root: Path) -> None:
         os.chmod(path, 0o644 if path.is_file() else 0o755)
 
 
+def sweep_stale_staging(run_dir: Path) -> list[str]:
+    """Scan leftover staging creds from a crashed run, then delete them.
+
+    No handler can run on SIGKILL/power loss, so the next startup must not
+    silently delete residue via force_remove. Scan first (persisted by the
+    caller), then remove. Returns secret-scan hits (usually paths)."""
+    staging_dir = run_dir / "staging"
+    if not staging_dir.exists():
+        return []
+    hits = scan_for_secrets(staging_dir)
+    force_remove(staging_dir)
+    return hits
+
+
 def scan_for_secrets(run_dir: Path) -> list[str]:
     """Scan every regular run artifact for known credential prefixes."""
     hits: list[str] = []
