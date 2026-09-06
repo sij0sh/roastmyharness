@@ -66,8 +66,13 @@ def test_unknown_model_field_rejected(tmp_path: Path):
         load_experiment(path)
 
 
-def test_stale_example_config_validates():
-    spec = load_experiment(Path("my-comparison.toml"))
+def test_stale_example_config_validates(tmp_path: Path):
+    path = tmp_path / "my-comparison.toml"
+    path.write_text(
+        'schema_version = 1\nname = "my-comparison"\n'
+        '[tasks]\npath = "/tmp"\n[[variants]]\nid = "a"\n'
+    )
+    spec = load_experiment(path)
     assert spec.name == "my-comparison"
 
 
