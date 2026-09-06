@@ -108,7 +108,7 @@ class ExperimentController:
         """Idempotent: create run dir, records, homes, staged credentials."""
         self._set_state("VALIDATING")
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        staging.force_remove(self.run_dir / "staging")
+        self._sweep_stale_staging()
         if spec_path is not None:
             target = self.run_dir / "experiment.toml"
             if not target.exists():
@@ -134,8 +134,10 @@ class ExperimentController:
         self.store.upsert_tasks(self.experiment_id, task_rows)
 
         self._set_state("BUILDING")
+        self._throw_if_cancelled()
         homes_root = homes_cache_dir()
         for variant in self.spec.arms():
+            self._throw_if_cancelled()
             build = build_home(variant, self.spec, homes_root)
             staged = staging.stage_home(
                 build.path,
@@ -253,6 +255,16 @@ class ExperimentController:
                 self._observed_task_ids = list(task_map)
             self.control_reuse.load_manifest(manifest)
 
+    def _sweep_stale_staging(self) -> None:
+        """Scan crash-leftover staging creds, record the finding, then delete."""
+        hits = staging.sweep_stale_staging(self.run_dir)
+        if hits:
+            self._logger.emit("secret_scan", hits=hits, context="stale-staging-sweep")
+
+    def _throw_if_cancelled(self) -> None:
+        if self._cancel_event.is_set():
+            raise asyncio.CancelledError
+
     def cleanup_staging(self) -> None:
         """Remove all staged homes, including partially prepared variants."""
         staging.force_remove(self.run_dir / "staging")
@@ -303,6 +315,9 @@ class ExperimentController:
 
     async def run(self) -> str:
         """Execute until COMPLETE, CANCELLED, or FAILED. Returns final state."""
+        if self._cancel_event.is_set():
+            await self._cancel("CANCELLED")
+            return self.state
         if self.state in ("CANCELLED", "FAILED", "COMPLETE"):
             self._set_state("RECONCILING")
             self._refresh_cells()
