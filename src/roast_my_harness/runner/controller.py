@@ -31,7 +31,7 @@ from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import probe as probe_mod
 from roast_my_harness.runner import process as process_mod
 from roast_my_harness.runner.control_reuse import ControlReuse
-from roast_my_harness.runner.reconcile import Cell, missing_tasks, reconcile_variant
+from roast_my_harness.runner.reconcile import Cell, is_throttle_error, missing_tasks, reconcile_variant, reconcile_variant_incremental
 from roast_my_harness.spec.hashes import experiment_hash as compute_experiment_hash
 from roast_my_harness.spec.hashes import spec_hash as compute_spec_hash
 from roast_my_harness.spec.models import ExperimentSpec
@@ -41,6 +41,7 @@ from roast_my_harness.tasks.discover import discover_tasks
 from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 
 POLL_INTERVAL_SEC = 2.0
+POLL_MAX_INTERVAL_SEC = 10.0
 
 ProgressCallback = Callable[[str], None]
 AskCallback = Callable[[str], bool]
@@ -82,6 +83,12 @@ class ExperimentController:
 
         self._observed_task_ids: list[str] | None = None
         self.smoke_result: probe_mod.ProbeResult | None = None
+        self._reconcile_state: dict[str, dict[str, tuple[float, str, Cell | None]]] = {}
+        self._last_parse_count = 0
+        self._last_tick_sec = 0.0
+        self._row_cache: dict[str, tuple[int, tuple[str, str], dict]] = {}
+        self._secret_scan_state: dict[str, tuple[float, int, bool]] = {}
+        self._finalize_stats: dict[str, float | int | str] = {}
 
     # ------------------------------------------------------------ events --
 
@@ -419,11 +426,38 @@ class ExperimentController:
                 f"{n_concurrent} concurrent"
             )
 
+    async def _start_gated(self, env: dict[str, str]) -> None:
+        """Start arms through a bounded admission gate with stagger.
+
+        Decision cx-pier-fanout: both ceiling and stagger (conservative
+        defaults from ConcurrencySpec, tunable per experiment). Bounds the
+        correlated-failure blast radius; retries must land only after this gate.
+        """
+        to_start = [j.proc for j in self.jobs.values() if j.proc is not None]
+        if not to_start:
+            return
+        cap = max(1, self.spec.concurrency.launch_max_in_flight)
+        stagger = max(0.0, self.spec.concurrency.launch_stagger_sec)
+        sem = asyncio.Semaphore(cap)
+        in_flight = 0
+
+        async def _one(proc: process_mod.VariantProcess) -> None:
+            nonlocal in_flight
+            async with sem:
+                in_flight += 1
+                self._logger.emit("progress", state=self.state, message=f"launch gate in_flight={in_flight}/{cap} {proc.variant_id}")
+                try:
+                    await proc.start(env)
+                finally:
+                    in_flight -= 1
+            if stagger:
+                await asyncio.sleep(stagger)
+
+        await asyncio.gather(*(_one(proc) for proc in to_start))
+
     async def _watch(self) -> None:
         env = self._pier_env()
-        to_start = [j.proc for j in self.jobs.values() if j.proc is not None]
-        if to_start:
-            await asyncio.gather(*(proc.start(env) for proc in to_start))
+        await self._start_gated(env)
         process_mod.require_all_started(
             [j.proc for j in self.jobs.values() if j.proc is not None]
         )
@@ -431,6 +465,7 @@ class ExperimentController:
             self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
         )
         all_ids = [t.task_id for t in tasks]
+        interval = POLL_INTERVAL_SEC
         while True:
             if self._cancel_event.is_set():
                 return
@@ -438,10 +473,20 @@ class ExperimentController:
             if not procs or not any(p.running for p in procs):
                 self._refresh_cells()
                 return
-            self._poll_once(all_ids)
-            await asyncio.sleep(POLL_INTERVAL_SEC)
+            import time as _time
+            tick_start = _time.monotonic()
+            await asyncio.to_thread(self._poll_once, all_ids)
+            tick_sec = _time.monotonic() - tick_start
+            if tick_sec > POLL_INTERVAL_SEC:
+                interval = min(POLL_MAX_INTERVAL_SEC, max(POLL_INTERVAL_SEC, tick_sec * 1.5))
+                self._logger.emit("progress", state=self.state, message=f"poll overrun {tick_sec:.2f}s, backing off to {interval:.1f}s")
+            else:
+                interval = POLL_INTERVAL_SEC
+            await asyncio.sleep(interval)
 
     def _poll_once(self, all_ids: list[str]) -> None:
+        import time as _time
+        _tick_start = _time.monotonic()
         previous = {
             (v, t): c.status for v, cells in self.cells.items() for t, c in cells.items()
         }
@@ -472,8 +517,11 @@ class ExperimentController:
                     reward=cell.reward,
                     exception_type=cell.exception_type,
                 )
+                label = ""
+                if cell.status == "error" and is_throttle_error(cell.exception_type):
+                    label = " [throttled]"
                 self._progress(
-                    f"{variant_id}/{task_id}: {cell.status}"
+                    f"{variant_id}/{task_id}: {cell.status}{label}"
                     + (f" reward={cell.reward}" if cell.status != "error" else "")
                 )
 
@@ -485,13 +533,32 @@ class ExperimentController:
                 proc._exit_emitted = True  # type: ignore[attr-defined]
                 code = proc.proc.returncode if proc.proc else None
                 self._progress(f"{job.variant_id} exited rc={code}")
+        import time as _time2
+        self._last_tick_sec = _time2.monotonic() - _tick_start
+        self._logger.emit(
+            "progress", state=self.state,
+            message=f"tick {self._last_tick_sec:.3f}s parsed={self._last_parse_count}",
+        )
 
     def _refresh_cells(self) -> None:
         known = set(self._task_ids())
+        total_parsed = 0
         for variant_id in self.jobs:
-            self.cells[variant_id] = reconcile_variant(
-                variant_id, self.run_dir / "jobs" / variant_id, known
+            state = self._reconcile_state.setdefault(variant_id, {})
+            cells, parsed = reconcile_variant_incremental(
+                variant_id, self.run_dir / "jobs" / variant_id, known, state
             )
+            # First call with empty state but existing files parses everything;
+            # later ticks parse only deltas. Fall back to full scan only when
+            # the jobs dir appeared between ticks (state empty, cells empty).
+            if not state and not cells:
+                self.cells[variant_id] = reconcile_variant(
+                    variant_id, self.run_dir / "jobs" / variant_id, known
+                )
+            else:
+                self.cells[variant_id] = cells
+            total_parsed += parsed
+        self._last_parse_count = total_parsed
 
 
     # ----------------------------------------------------------- cancel --
@@ -500,25 +567,31 @@ class ExperimentController:
         self._cancel_event.set()
 
     async def _cancel(self, final_state: str) -> None:
+        # Cancel must release, not add work: no secret scan on this path.
+        # Coverage relies on the last incremental scan plus staging cleanup.
         self._set_state("CANCELLING")
         procs = [j.proc for j in self.jobs.values() if j.proc is not None]
         await process_mod.cancel_all(procs)
         self._refresh_cells()
         self._record_all_cells()
         self.cleanup_staging()
-        leaks = staging.scan_for_secrets(self.run_dir)
-        if leaks:
-            self._logger.emit("secret_scan", hits=leaks)
         self._set_state(final_state)
 
     # --------------------------------------------------------- finalize --
 
     def _finalize(self) -> None:
+        import time as _time
         self._set_state("FINALIZING")
+        _t0 = _time.monotonic()
         self._refresh_cells()
+        _t1 = _time.monotonic()
         self._record_all_cells()
+        _t2 = _time.monotonic()
         self.cleanup_staging()
-        rows = report_collect.collect_rows(self.run_dir / "jobs")
+        rows, self._row_cache, _parsed, _reused = report_collect.collect_rows_incremental(
+            self.run_dir / "jobs", self._row_cache
+        )
+        _t3 = _time.monotonic()
         provenance = self._provenance([])
         csv = report_exports.write_summary_csv(self.run_dir, rows)
         report_exports.write_summary_json(self.run_dir, rows, provenance)
@@ -528,7 +601,21 @@ class ExperimentController:
             provenance=provenance,
             rows=rows,
         )
-        leaks = staging.scan_for_secrets(self.run_dir)
+        leaks, self._secret_scan_state, _scanned, _skipped = staging.scan_for_secrets_incremental(
+            self.run_dir, self._secret_scan_state
+        )
+        _t4 = _time.monotonic()
+        self._finalize_stats = {
+            "refresh_sec": round(_t1 - _t0, 3),
+            "record_sec": round(_t2 - _t1, 3),
+            "collect_sec": round(_t3 - _t2, 3),
+            "scan_sec": round(_t4 - _t3, 3),
+            "rows_parsed": _parsed,
+            "rows_reused": _reused,
+            "scan_scanned": _scanned,
+            "scan_skipped": _skipped,
+        }
+        self._logger.emit("progress", state=self.state, message=f"finalize {self._finalize_stats}")
         if leaks:
             self._logger.emit("secret_scan", hits=leaks)
             provenance = self._provenance(leaks)
