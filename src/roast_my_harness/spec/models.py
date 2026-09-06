@@ -367,18 +367,30 @@ class ConcurrencySpec(BaseModel):
 
     max_parallel caps total trials across all launching arms; when set,
     per_variant is divided down so arms * effective_per_variant <= max_parallel.
+    launch_max_in_flight bounds simultaneous arm starts (admission gate);
+    launch_stagger_sec spaces starts to break simultaneity. quota_max_parallel
+    optionally derates peak concurrency to a provider quota tier (operator-set
+    after the first production 429; None means no derating).
+    Decision: both ceiling and stagger enabled by default; quota derating
+    opt-in per experiment until throttle telemetry fixes the tier.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     per_variant: int = Field(default=2, ge=1, le=16)
     max_parallel: int | None = Field(default=None, ge=1, le=32)
+    launch_max_in_flight: int = Field(default=8, ge=1, le=32)
+    launch_stagger_sec: float = Field(default=0.5, ge=0.0, le=10.0)
+    quota_max_parallel: int | None = Field(default=None, ge=1, le=32)
 
     def effective_per_variant(self, launching_arms: int) -> int:
-        """Per-arm concurrency honoring the global max_parallel cap."""
-        if launching_arms < 1 or self.max_parallel is None:
-            return self.per_variant
-        return max(1, min(self.per_variant, self.max_parallel // launching_arms))
+        """Per-arm concurrency honoring max_parallel and quota caps."""
+        per = self.per_variant
+        if launching_arms >= 1 and self.max_parallel is not None:
+            per = max(1, min(per, self.max_parallel // launching_arms))
+        if launching_arms >= 1 and self.quota_max_parallel is not None:
+            per = max(1, min(per, self.quota_max_parallel // launching_arms))
+        return per
 
     def peak_parallel(self, launching_arms: int) -> int:
         """Peak total concurrency given the arms launching at once."""
