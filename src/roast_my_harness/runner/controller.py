@@ -168,11 +168,22 @@ class ExperimentController:
         self._set_state("READY")
 
         if probe_mod.should_probe(self.spec):
+            self._throw_if_cancelled()
             self._progress("smoke probe: one task on an extension arm")
-            result = probe_mod.run_probe_sync(
-                spec=self.spec, jobs=self.jobs, run_dir=self.run_dir,
-                env=self._pier_env(),
-            )
+            import time as _time
+            _probe_start = _time.monotonic()
+            try:
+                result = probe_mod.run_probe_sync(
+                    spec=self.spec, jobs=self.jobs, run_dir=self.run_dir,
+                    env=self._pier_env(),
+                )
+            except probe_mod.ProbeTimeoutError as e:
+                self._logger.emit("error", exception_type="ProbeTimeoutError", message=str(e))
+                self._fail(PierError(str(e)))
+                return
+            _probe_sec = _time.monotonic() - _probe_start
+            self._logger.emit("progress", state=self.state, message=f"smoke probe took {_probe_sec:.1f}s")
+            self._throw_if_cancelled()
             self.smoke_result = result
             if not result.ok:
                 self._fail(

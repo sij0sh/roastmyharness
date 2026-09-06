@@ -7,6 +7,9 @@ inside the pier container, without burning a full experiment on it.
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,6 +19,8 @@ from roast_my_harness.runner import process as process_mod
 from roast_my_harness.tasks.discover import discover_tasks
 
 SMOKE_MIN_TRIALS = 20
+PROBE_TIMEOUT_SEC = 600.0
+PROBE_KILL_GRACE_SEC = 10.0
 
 
 @dataclass
@@ -29,6 +34,10 @@ class ProbeResult:
     @property
     def ok(self) -> bool:
         return self.state == "passed"
+
+
+class ProbeTimeoutError(Exception):
+    pass
 
 
 def should_probe(spec: Any) -> bool:
@@ -76,11 +85,13 @@ async def run_probe(
     jobs: dict[str, Any],
     run_dir: Path,
     env: dict[str, str] | None = None,
+    timeout_sec: float | None = PROBE_TIMEOUT_SEC,
 ) -> ProbeResult:
     """Launch one smoke task on an extension-bearing arm; fail fast on crash.
 
     Raises PierError when the process cannot start. A nonzero exit marks the
     probe failed; the caller decides whether to abort the experiment.
+    Exceeding timeout_sec kills the probe and raises ProbeTimeoutError.
     """
     tasks = discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
     task_id = tasks[0].task_id
@@ -90,7 +101,20 @@ async def run_probe(
     proc = process_mod.VariantProcess(f"smoke-{variant_id}", argv, log_path)
     await proc.start(env)
     assert proc.proc is not None
-    returncode = await proc.proc.wait()
+    start = time.monotonic()
+    try:
+        if timeout_sec is None:
+            returncode = await proc.proc.wait()
+        else:
+            returncode = await asyncio.wait_for(proc.proc.wait(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        elapsed = time.monotonic() - start
+        await _kill_probe(proc)
+        raise ProbeTimeoutError(
+            f"smoke probe timed out on variant {variant_id} "
+            f"(task {task_id}, {elapsed:.1f}s > {timeout_sec:.0f}s deadline); "
+            f"see {log_path}"
+        ) from None
     return ProbeResult(
         state="passed" if returncode == 0 else "failed",
         variant_id=variant_id,
@@ -98,6 +122,23 @@ async def run_probe(
         returncode=returncode,
         log_path=log_path,
     )
+
+
+async def _kill_probe(proc: process_mod.VariantProcess) -> None:
+    if proc.proc is None or proc.proc.returncode is not None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    try:
+        await asyncio.wait_for(proc.proc.wait(), timeout=PROBE_KILL_GRACE_SEC)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(os.getpgid(proc.proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        await proc.proc.wait()
 
 
 def run_probe_sync(**kwargs: Any) -> ProbeResult:
