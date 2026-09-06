@@ -220,3 +220,52 @@ def scan_for_secrets(run_dir: Path) -> list[str]:
             hits.append(str(path))
     return hits
 
+def scan_for_secrets_incremental(
+    run_dir: Path,
+    known: dict[str, tuple[float, int, bool]],
+) -> tuple[list[str], dict[str, tuple[float, int, bool]], int, int]:
+    """Incremental secret scan: read only new/changed files.
+
+    known maps path -> (mtime, size, hit). Mutated in place. Returns
+    (all_hits, known, scanned, skipped); unchanged files reuse cached hits.
+    """
+    from roast_my_harness.observability import contains_secret as _contains
+    hits: list[str] = []
+    scanned = 0
+    skipped = 0
+    if not run_dir.is_dir():
+        known.clear()
+        return hits, known, 0, 0
+    seen: set[str] = set()
+    for path in sorted(run_dir.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        key = str(path)
+        seen.add(key)
+        try:
+            st = path.stat()
+            cur = (st.st_mtime, st.st_size)
+        except OSError:
+            continue
+        cached = known.get(key)
+        if cached is not None and (cached[0], cached[1]) == cur:
+            skipped += 1
+            if cached[2]:
+                hits.append(key)
+            continue
+        scanned += 1
+        try:
+            data = path.read_bytes()
+        except OSError:
+            known[key] = (cur[0], cur[1], False)
+            continue
+        if 0 in data[:4096]:
+            known[key] = (cur[0], cur[1], False)
+            continue
+        hit = _contains(data.decode(errors="ignore"))
+        known[key] = (cur[0], cur[1], hit)
+        if hit:
+            hits.append(key)
+    for stale in [k for k in known if k not in seen]:
+        del known[stale]
+    return hits, known, scanned, skipped
