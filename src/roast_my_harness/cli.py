@@ -19,7 +19,7 @@ from roast_my_harness.errors import RoastMyHarnessError
 from roast_my_harness.paths import database_path
 from roast_my_harness.runner import preflight
 from roast_my_harness.runner.controller import ExperimentController
-from roast_my_harness.runner.signals import install_cancel_handlers
+from roast_my_harness.runner.signals import install_cancel_handlers, install_sync_cancel_handlers
 from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.store.locking import ExperimentLock
 from roast_my_harness.store.repository import Repository
@@ -228,17 +228,29 @@ def resume(
 async def _run_with_cancel(controller: ExperimentController, *, prepare: bool = False) -> str:
     loop = asyncio.get_running_loop()
     cleanup = install_cancel_handlers(loop, controller.request_cancel)
+    sync_cleanup = install_sync_cancel_handlers(controller.request_cancel)
     try:
         if prepare:
             try:
                 controller.prepare()
                 controller.enforce_reuse_policy(interactive=sys.stdin.isatty())
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                await controller._cancel("CANCELLED")
+                return controller.state
             except Exception as error:
                 controller.fail_setup(error)
                 raise
             except BaseException:
                 controller.cleanup_staging()
                 raise
+            finally:
+                try:
+                    sync_cleanup()
+                except Exception:
+                    pass
+            if controller._cancel_event.is_set():
+                await controller._cancel("CANCELLED")
+                return controller.state
         return await controller.run()
     finally:
         cleanup()

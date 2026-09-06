@@ -39,7 +39,7 @@ from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import preflight
 from roast_my_harness.runner.controller import ExperimentController
 from roast_my_harness.runner.lock_probe import lock_is_free
-from roast_my_harness.runner.signals import install_cancel_handlers
+from roast_my_harness.runner.signals import install_cancel_handlers, install_sync_cancel_handlers
 from roast_my_harness.spec.hashes import (
     experiment_hash as compute_experiment_hash,
 )
@@ -750,16 +750,29 @@ def run_experiment(
     with ExperimentLock(controller.run_dir):
         loop = asyncio.new_event_loop()
         cleanup = install_cancel_handlers(loop, controller.request_cancel)
+        sync_cleanup = install_sync_cancel_handlers(controller.request_cancel)
         try:
             try:
                 controller.prepare(spec_path)
                 controller.enforce_reuse_policy(interactive=interactive)
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                sync_cleanup()
+                final = loop.run_until_complete(controller._cancel("CANCELLED"))
+                return experiment_id, final
             except Exception as error:
                 controller.fail_setup(error)
                 raise
             except BaseException:
                 controller.cleanup_staging()
                 raise
+            finally:
+                try:
+                    sync_cleanup()
+                except Exception:
+                    pass
+            if controller._cancel_event.is_set():
+                final = loop.run_until_complete(controller._cancel("CANCELLED"))
+                return experiment_id, final
             final = loop.run_until_complete(controller.run())
         finally:
             cleanup()
