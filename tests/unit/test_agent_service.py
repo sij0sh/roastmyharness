@@ -364,8 +364,16 @@ def test_start_spawn_failure_rolls_back_marker(
 
 
 def _sleepy_helper() -> subprocess.Popen:
-    time.sleep(0.1)  # let the child exec so a SIGINT lands on python itself
-    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "-c", "import time; print('ready', flush=True); time.sleep(120)"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        text=True,
+    )
+    assert proc.stdout is not None
+    assert proc.stdout.readline().strip() == "ready"
+    return proc
 
 
 def _seed_running_row(tmp_path: Path, experiment_id: str, run_dir: Path) -> None:
