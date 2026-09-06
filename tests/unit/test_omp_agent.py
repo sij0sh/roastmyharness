@@ -292,3 +292,13 @@ def test_omp_model_validation_still_tolerates_models_json(tmp_path: Path):
     )
     assert OmpAgent._models_config_path(obj) == tmp_path / "models.json"
     OmpAgent._validate_model(obj)
+
+
+def test_omp_rejects_latest_pin(tmp_path: Path):
+    with pytest.raises(ValueError, match="exact"):
+        OmpAgent(
+            logs_dir=tmp_path,
+            variant_manifest=str(_manifest(tmp_path / "latest-home", agent_version="latest")),
+            thinking="high",
+            model_name="openai-codex/gpt-5.6-luna",
+        )

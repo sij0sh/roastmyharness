@@ -13,7 +13,13 @@ export const AUTHOR_ACTIVITY_LIMIT = 20;
 export const AUTHOR_OUTPUT_LIMIT = 12_000;
 export const STDERR_LIMIT = 8_000;
 export const AUTHOR_CHILD_ENV = "ROAST_MY_HARNESS_AUTHOR_CHILD";
-export const DEFAULT_PI_VERSION = "0.84.3";
+export const DEFAULT_PI_VERSION = "latest";
+
+export const PI_VERSION_RE = /^(latest|\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/;
+
+export function isPiVersionPin(value: string): boolean {
+	return PI_VERSION_RE.test(value);
+}
 export const SUITE_SCREEN_SIZE = 30;
 
 export interface DeepSweSuites {

@@ -283,7 +283,7 @@ class ExperimentController:
                 agent_id: {
                     "family": get_agent(agent_id).family,
                     "import_path": get_agent(agent_id).import_path,
-                    "agent_version": self.spec.agent_version_for(agent_id),
+                    "agent_version": self.spec.resolved_version_for(agent_id),
                 }
                 for agent_id in sorted(set(agents.values()))
             },
@@ -381,7 +381,7 @@ class ExperimentController:
                 manifest_path=job.manifest_path,
                 model_id=self.spec.model.full_id(),
                 thinking=self.spec.thinking,
-                pi_version=self.spec.agent_version_for(agent_id),
+                pi_version=self.spec.resolved_version_for(agent_id),
                 n_concurrent=n_concurrent,
                 include_tasks=missing,
                 agent=agent_id,

@@ -57,3 +57,47 @@ def test_network_allowlist_merges_staged_and_manifest_urls(tmp_path: Path):
     )
     allow = PiAgent.network_allowlist(obj)
     assert allow is not None
+
+
+def _pi_manifest(home, **extra):
+    manifest = {
+        "variant_id": "v",
+        "variant_hash": "h",
+        "pi_version": "latest",
+        "agent": "pi",
+        "agent_version": "latest",
+        "model_id": "openai-codex/gpt-5.6-luna",
+    }
+    manifest.update(extra)
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "auth.json").write_text(json.dumps({"openai-codex": {"type": "oauth"}}))
+    path = home / "variant.json"
+    path.write_text(json.dumps(manifest))
+    return path
+
+
+def _pi_agent(tmp_path, name, pi_version=None, **extra):
+    args = {}
+    if pi_version is not None:
+        args["pi_version"] = pi_version
+    return PiAgent(
+        logs_dir=tmp_path,
+        variant_manifest=str(_pi_manifest(tmp_path / name, **extra)),
+        thinking="high",
+        model_name="openai-codex/gpt-5.6-luna",
+        **args,
+    )
+
+
+def test_install_spec_pins_exact_version(tmp_path: Path):
+    agent = _pi_agent(tmp_path, "pinned", pi_version="0.85.1")
+    runs = [step.run for step in agent.install_spec().steps]
+    assert any("@earendil-works/pi-coding-agent@0.85.1" in run for run in runs)
+
+
+def test_install_spec_latest_installs_unpinned(tmp_path: Path):
+    agent = _pi_agent(tmp_path, "floated")
+    assert agent._pi_version == "latest"
+    runs = [step.run for step in agent.install_spec().steps]
+    assert any("npm install -g @earendil-works/pi-coding-agent " in run for run in runs)
+    assert not any("@earendil-works/pi-coding-agent@" in run for run in runs)

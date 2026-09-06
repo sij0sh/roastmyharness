@@ -21,6 +21,7 @@ def _spec(
         arms=lambda: [variant],
         resolved_agents=lambda: agents,
         agent_version_for=lambda _agent_id: agent_version,
+        resolved_version_for=lambda _agent_id: agent_version,
     )
 
 
@@ -87,3 +88,37 @@ def test_npm_packages_requires_host_npm(monkeypatch):
 
     assert results[0].status == "fail"
     assert results[0].name == "npm"
+
+
+def test_npm_packages_uses_resolved_latest(monkeypatch):
+    spec = _spec(agent_version="latest")
+    spec.resolved_version_for = lambda _agent_id: "0.85.1"
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/npm")
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, '"0.85.1"', "")
+
+    monkeypatch.setattr(preflight.subprocess, "run", run)
+
+    results = preflight._npm_packages(spec)
+
+    assert all(result.status == "pass" for result in results)
+    probed = [call[2] for call in calls]
+    assert "@earendil-works/pi-coding-agent@0.85.1" in probed
+
+
+def test_npm_packages_reports_unresolvable_latest(monkeypatch):
+    spec = _spec(agent_version="latest")
+
+    def boom(_agent_id):
+        raise RuntimeError("cannot resolve latest: npm not on PATH")
+
+    spec.resolved_version_for = boom
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/npm")
+
+    results = preflight._npm_packages(spec)
+
+    assert results[0].status == "fail"
+    assert "latest" in results[0].detail

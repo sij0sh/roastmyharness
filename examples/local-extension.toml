@@ -1,6 +1,6 @@
 schema_version = 1
 name = "local-extension"
-pi_version = "0.84.3"
+pi_version = "latest"
 thinking = "high"
 
 [model]

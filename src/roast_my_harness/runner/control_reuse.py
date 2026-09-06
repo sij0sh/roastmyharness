@@ -34,7 +34,7 @@ class ControlReuse:
         if control is None or not control.enabled:
             return
         control_agent = self.spec.resolved_agents()["control"]
-        agent_version = self.spec.agent_version_for(control_agent)
+        agent_version = self.spec.resolved_version_for(control_agent)
         self.task_hashes = {
             task.task_id: compute_task_hash(task.path) for task in tasks
         }

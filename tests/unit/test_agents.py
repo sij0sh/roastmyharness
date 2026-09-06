@@ -265,7 +265,7 @@ def test_variant_hash_distinguishes_agent_identity():
 
 
 def test_build_home_manifest_records_agent(tmp_path: Path):
-    spec = direct_spec(variants=[VariantSpec(id="bareish")])
+    spec = direct_spec(variants=[VariantSpec(id="bareish")], pi_version="0.84.3")
     home = build_home(VariantSpec(id="bareish"), spec, tmp_path / "homes")
     manifest = json.loads((home.path / "variant.json").read_text())
     assert manifest["agent"] == "pi"
@@ -273,6 +273,30 @@ def test_build_home_manifest_records_agent(tmp_path: Path):
     build_manifest = json.loads((home.path / "build-manifest.json").read_text())
     assert build_manifest["agent"] == "pi"
     assert build_manifest["agent_version"] == spec.pi_version
+
+
+def test_resolved_version_for_latest_queries_registry(monkeypatch):
+    from roast_my_harness.spec import models as spec_models
+
+    monkeypatch.setattr(
+        spec_models, "resolve_package_version", lambda package, pin: "0.85.1"
+    )
+    spec = direct_spec(variants=[VariantSpec(id="a")])
+    assert spec.agent_version_for("pi") == "latest"
+    assert spec.resolved_version_for("pi") == "0.85.1"
+
+
+def test_build_home_stages_resolved_latest(monkeypatch, tmp_path: Path):
+    from roast_my_harness.spec import models as spec_models
+
+    monkeypatch.setattr(
+        spec_models, "resolve_package_version", lambda package, pin: "0.85.1"
+    )
+    spec = direct_spec(variants=[VariantSpec(id="bareish")])
+    home = build_home(VariantSpec(id="bareish"), spec, tmp_path / "homes")
+    manifest = json.loads((home.path / "variant.json").read_text())
+    assert manifest["agent_version"] == "0.85.1"
+    assert manifest["pi_version"] == "latest"
 
 
 def test_adapter_manifest_requires_agent_keys(tmp_path: Path):

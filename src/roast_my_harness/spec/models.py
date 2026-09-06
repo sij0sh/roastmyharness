@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from roast_my_harness.adapter.registry import get_agent
+from roast_my_harness.adapter.versions import LATEST, resolve_package_version, validate_agent_pin
 from roast_my_harness.constants import DEFAULT_PI_VERSION, FAIRNESS_FLAGS
 from roast_my_harness.observability import SECRET_KEY_WORDS
 
@@ -65,11 +66,9 @@ def _safe_rel_path(value: str, field: str) -> str:
     return value
 
 
-def _exact_version_pin(value: str, field: str) -> str:
-    """An exact version pin safe to pass as a single argv token."""
-    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", value):
-        raise ValueError(f"{field} must be an exact version, got {value!r}")
-    return value
+def _agent_version_pin(value: str, field: str) -> str:
+    """A pi-family agent pin: 'latest' or an exact version safe as one argv token."""
+    return validate_agent_pin(value, field)
 
 
 def _safe_env_name(value: str) -> str:
@@ -414,12 +413,12 @@ class ExperimentSpec(BaseModel):
     @field_validator("pi_version")
     @classmethod
     def _safe_pi_version(cls, value: str) -> str:
-        return _exact_version_pin(value, "pi_version")
+        return _agent_version_pin(value, "pi_version")
 
     @field_validator("agent_version")
     @classmethod
     def _safe_agent_version(cls, value: str | None) -> str | None:
-        return None if value is None else _exact_version_pin(value, "agent_version")
+        return None if value is None else _agent_version_pin(value, "agent_version")
 
     @field_validator("schema_version")
     @classmethod
@@ -464,7 +463,7 @@ class ExperimentSpec(BaseModel):
         return agents
 
     def agent_version_for(self, agent_id: str) -> str:
-        """Effective version pin for one agent.
+        """Pinned version for one agent: 'latest' or an exact version.
 
         Precedence: an explicit agent_version for the spec's default agent,
         then pi_version as the legacy pi alias, then the registry default.
@@ -474,6 +473,19 @@ class ExperimentSpec(BaseModel):
         if agent_id == "pi":
             return self.pi_version
         return get_agent(agent_id).default_version
+
+    def resolved_version_for(self, agent_id: str) -> str:
+        """Exact version one agent installs.
+
+        'latest' pins query the npm registry, so every run picks up the
+        newest release; exact pins return unchanged. Call this wherever
+        the version is consumed (hash, home, launch, probe, preflight) and
+        keep agent_version_for for the stable spec pin.
+        """
+        pin = self.agent_version_for(agent_id)
+        if pin == LATEST:
+            return resolve_package_version(get_agent(agent_id).npm_package, pin)
+        return pin
 
     def arms(self) -> list[VariantSpec]:
         """Every launched arm with agent inheritance applied. The control is

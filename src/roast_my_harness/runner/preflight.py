@@ -131,7 +131,23 @@ def _sources(spec: ExperimentSpec) -> list[CheckResult]:
     return results
 
 
+def _agent_package_specs(spec):
+    # Resolved agent pins; an unresolvable 'latest' becomes a failure.
+    packages = []
+    failures = []
+    for agent_id in spec.resolved_agents().values():
+        package = get_agent(agent_id).npm_package
+        try:
+            version = spec.resolved_version_for(agent_id)
+        except RuntimeError as error:
+            failures.append(_fail("npm package " + package, str(error)))
+            continue
+        packages.append(package + "@" + version)
+    return packages, failures
+
+
 def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
+    agent_packages, agent_failures = _agent_package_specs(spec)
     packages = sorted(
         {
             extension.package
@@ -145,19 +161,16 @@ def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
             for step in variant.setup
             if step.handler == "npm_pi_install"
         }
-        | {
-            f"{get_agent(agent_id).npm_package}@{spec.agent_version_for(agent_id)}"
-            for agent_id in spec.resolved_agents().values()
-        }
+        | set(agent_packages)
     )
     if not packages:
-        return []
+        return list(agent_failures)
 
     npm = shutil.which("npm")
     if npm is None:
         return [_fail("npm", "npm not on PATH; cannot validate pinned packages")]
 
-    results: list[CheckResult] = []
+    results: list[CheckResult] = list(agent_failures)
     for package in packages:
         try:
             proc = subprocess.run(

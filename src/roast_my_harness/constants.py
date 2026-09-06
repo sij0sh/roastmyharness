@@ -7,8 +7,9 @@ third-party dependency.
 
 from __future__ import annotations
 
-# Default pi coding-agent npm version when a spec does not pin one.
-DEFAULT_PI_VERSION = "0.84.3"
+# Default pi coding-agent npm pin when a spec does not pin one:
+# "latest" resolves to the newest release every time we run.
+DEFAULT_PI_VERSION = "latest"
 
 # Provider name of pi's built-in Codex authentication.
 CODEX_PROVIDER = "openai-codex"

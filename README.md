@@ -142,7 +142,7 @@ resolves to `(agent, agent_version, model)`; the registry
 
 | agent | family | package | binary | version pin (spec key) | default |
 |---|---|---|---|---|---|
-| `pi` | `pi` | `@earendil-works/pi-coding-agent` | `pi` | `pi_version` (global) | 0.84.3 |
+| `pi` | `pi` | `@earendil-works/pi-coding-agent` | `pi` | `pi_version` (global) | `latest` |
 | `omp` | `pi` | `@oh-my-pi/pi-coding-agent` | `omp` | `agent_version` when `agent = "omp"` is the spec default | 18.0.9 |
 
 Rules that keep arms comparable:
@@ -156,6 +156,10 @@ Rules that keep arms comparable:
   container installs Bun (pinned) because omp needs it.
 - Cached homes never mix agents: `(agent, agent_version)` is part of the
   variant hash.
+- `pi_version = "latest"` (the default) resolves to the newest npm release
+  every time an experiment runs; the exact version lands in the staged home,
+  the run manifest, and reports. Pin `pi_version = "x.y.z"` for a
+  reproducible version instead.
 - `pi`-only features (extensions, skills, `pi_flags`, `npm_pi_install`
   setup) are rejected on other families with a naming error.
 

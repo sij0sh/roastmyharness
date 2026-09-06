@@ -1,7 +1,7 @@
 # Example: pinned npm package variant (installed in-container during setup).
 schema_version = 1
 name = "contextmode-smoke"
-pi_version = "0.84.3"
+pi_version = "latest"
 thinking = "high"
 
 [model]

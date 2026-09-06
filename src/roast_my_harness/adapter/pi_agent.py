@@ -9,7 +9,8 @@ stdlib.
 Kwargs (``--ak key=value``):
     variant_manifest  absolute host path to the staged home's variant.json
     thinking          pi --thinking level (default: high)
-    pi_version        npm version of @earendil-works/pi-coding-agent
+    pi_version        npm version of @earendil-works/pi-coding-agent,
+                      or 'latest' (unpinned install of the newest release)
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from pier.utils.trajectory_metrics import populate_context_from_final_metrics
 from roast_my_harness.adapter import command as cmd
 from roast_my_harness.adapter import setup_handlers
 from roast_my_harness.adapter.atif import write_trajectory
+from roast_my_harness.adapter.versions import LATEST, validate_agent_pin
 from roast_my_harness.constants import (
     CODEX_PROVIDER,
     DEFAULT_PI_VERSION,
@@ -89,9 +91,9 @@ _PI_VERSION_RE = re.compile(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?")
 def _validate_pi_version(value: Any) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str) or not _PI_VERSION_RE.fullmatch(value):
+    if not isinstance(value, str):
         raise ValueError(f"unsafe pi_version in adapter manifest: {value!r}")
-    return value
+    return validate_agent_pin(value, "pi_version")
 
 
 class PiAgent(BaseInstalledAgent):
@@ -230,7 +232,7 @@ class PiAgent(BaseInstalledAgent):
 
     def install_spec(self) -> AgentInstallSpec:
         package = self.PACKAGE
-        if self._pi_version:
+        if self._pi_version and self._pi_version != LATEST:
             package += f"@{self._pi_version}"
         package = shlex.quote(package)
         root_run = (

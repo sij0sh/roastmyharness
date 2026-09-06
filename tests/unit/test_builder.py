@@ -25,6 +25,7 @@ def spec_for(tmp_path: Path, variants: list[VariantSpec]) -> ExperimentSpec:
         tasks=TaskSelection(path=tmp_path),
         control=None,
         variants=variants,
+        pi_version="0.84.3",
     )
 
 

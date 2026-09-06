@@ -6,7 +6,7 @@
 # (installed in-container) and is staged models.yml + config.yml.
 schema_version = 1
 name = "omp-variant"
-pi_version = "0.84.3"
+pi_version = "latest"
 
 [model]
 id = "gpt-5.6-luna"

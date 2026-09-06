@@ -37,7 +37,7 @@ app.add_typer(auth_app, name="auth")
 STARTER_TOML = """
 schema_version = 1
 name = "my-comparison"
-pi_version = "0.84.3"
+pi_version = "latest"   # newest pi release at launch; or pin x.y.z for reproducibility
 thinking = "high"          # off | minimal | low | medium | high | xhigh | max
 
 [model]

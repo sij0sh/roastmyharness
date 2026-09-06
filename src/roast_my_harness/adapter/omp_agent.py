@@ -28,11 +28,8 @@ from typing import Any, ClassVar
 from pier.models.agent.install import AgentInstallSpec, InstallStep
 
 from roast_my_harness.adapter import command as cmd
-from roast_my_harness.adapter.pi_agent import (
-    PiAgent,
-    _validate_pi_version,
-    load_variant_manifest,
-)
+from roast_my_harness.adapter.pi_agent import PiAgent, load_variant_manifest
+from roast_my_harness.adapter.versions import validate_exact_pin
 
 BUN_VERSION = "1.4.0"
 """Pinned bun build; probed host-side against omp 18.0.9 (1.3.x fails to
@@ -85,7 +82,7 @@ class OmpAgent(PiAgent):
                 "OmpAgent requires an exact agent_version pin (--ak "
                 "agent_version= or agent_version in the staged manifest)"
             )
-        self._pi_version = _validate_pi_version(version)
+        self._pi_version = validate_exact_pin(version, "agent_version")
         super().__init__(
             *args,
             variant_manifest=variant_manifest,

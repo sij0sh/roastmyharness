@@ -29,6 +29,7 @@ def base_spec(tmp_path: Path, **variant_kwargs) -> ExperimentSpec:
         tasks=TaskSelection(path=tmp_path),
         control=None,
         variants=[VariantSpec(id="a", **variant_kwargs)],
+        pi_version="0.84.3",
     )
 
 

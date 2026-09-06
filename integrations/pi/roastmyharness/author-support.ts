@@ -9,7 +9,7 @@ import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	ABORT_GRACE_MS, AUTHOR_ACTIVITY_LIMIT, AUTHOR_CHILD_ENV, AUTHOR_OUTPUT_LIMIT,
-	DEFAULT_PI_VERSION, STDERR_LIMIT, addUsage, roastBinary,
+	DEFAULT_PI_VERSION, STDERR_LIMIT, addUsage, isPiVersionPin, roastBinary,
 	type AuthorDetails, type DeepSweSuites, type RoastResponse,
 } from "./core.ts";
 
@@ -475,8 +475,8 @@ export function choiceMismatch(prepared: RoastResponse, answers: WizardAnswers):
 	if (experiment.name && experiment.name !== answers.experimentName) {
 		problems.push(`name must be ${answers.experimentName}`);
 	}
-	if (experiment.pi_version && experiment.pi_version !== DEFAULT_PI_VERSION) {
-		problems.push(`pi_version must be ${DEFAULT_PI_VERSION}`);
+	if (experiment.pi_version && !isPiVersionPin(experiment.pi_version)) {
+		problems.push(`pi_version must be ${DEFAULT_PI_VERSION} or an exact version`);
 	}
 	if (experiment.thinking !== answers.thinking) problems.push(`thinking must be ${answers.thinking}`);
 	if (experiment.control !== answers.control) problems.push(`control must be ${answers.control}`);

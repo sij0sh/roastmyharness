@@ -35,7 +35,7 @@ def test_minimal_spec_defaults(tmp_path: Path):
     spec = load_experiment(write(tmp_path, MINIMAL))
     assert spec.name == "demo"
     assert spec.thinking == "high"
-    assert spec.pi_version == "0.84.3"
+    assert spec.pi_version == "latest"
     assert spec.model.full_id() == "openai-codex/gpt-5.6-luna"
     assert [v.id for v in spec.arms()] == ["bareish"]
 
@@ -102,6 +102,22 @@ id = "a"
 """,
             )
         )
+
+
+def test_pi_version_latest_pin_accepted(tmp_path: Path):
+    spec = load_experiment(
+        write(tmp_path, 'pi_version = "latest"\n' + MINIMAL)
+    )
+    assert spec.pi_version == "latest"
+    assert spec.agent_version_for("pi") == "latest"
+
+
+def test_pi_version_exact_pin_accepted(tmp_path: Path):
+    spec = load_experiment(
+        write(tmp_path, 'pi_version = "0.85.1"\n' + MINIMAL)
+    )
+    assert spec.pi_version == "0.85.1"
+    assert spec.resolved_version_for("pi") == "0.85.1"
 
 
 def test_every_fairness_flag_is_reserved():

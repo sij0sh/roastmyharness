@@ -95,9 +95,8 @@ def compute_variant_hash(
 
 
 def resolve_arm_agent(spec: ExperimentSpec, variant: VariantSpec) -> tuple[str, str]:
-    """The (agent id, agent version) pin one arm runs."""
     agent_id = variant.agent or spec.agent
-    return agent_id, spec.agent_version_for(agent_id)
+    return agent_id, spec.resolved_version_for(agent_id)
 
 
 def build_home(

@@ -6,6 +6,14 @@
 
 ### Changed
 
+- `pi_version` defaults to `latest`, which resolves to the newest
+  `@earendil-works/pi-coding-agent` release every time an experiment runs
+  (preflight, home build, probe, and launch all resolve once per process).
+  The exact version is recorded in the staged home, the run manifest, and
+  reports; historic control reuse only matches identical resolved versions.
+  Pin `pi_version = "x.y.z"` for a reproducible version. The `omp` agent
+  stays on its exact default pin.
+
 - `/roastmyharness` no longer routes through the model. The command opens
   the wizard directly; freeform text after the command prefills the
   variant-request step. The isolated spec author stays the only model
