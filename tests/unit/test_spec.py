@@ -184,6 +184,21 @@ def test_schema_version_must_be_1():
         )
 
 
+def test_agent_versions_map_pins_non_default_agent(tmp_path: Path):
+    spec = load_experiment(
+        write(tmp_path, MINIMAL + "\n[agent_versions]\nomp = \"18.1.0\"\n")
+    )
+    assert spec.agent_version_for("omp") == "18.1.0"
+    assert spec.agent_version_for("pi") == spec.pi_version
+
+
+def test_agent_versions_conflict_with_alias_rejected(tmp_path: Path):
+    with pytest.raises(SpecError, match="conflicts"):
+        load_experiment(
+            write(tmp_path, MINIMAL + "\n[agent_versions]\npi = \"0.84.3\"\n")
+        )
+
+
 def test_variant_spec_id_rules():
     assert VariantSpec(id="a-1").id == "a-1"
     with pytest.raises(ValueError):

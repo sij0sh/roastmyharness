@@ -55,6 +55,23 @@ def test_stage_home_copies_credential(tmp_path: Path, monkeypatch):
     assert not (home / "auth.json").exists()
 
 
+def test_stage_custom_renders_per_agent_format(tmp_path: Path):
+    from roast_my_harness.spec.models import ModelSpec
+    models_json = tmp_path / "models.json"
+    models_json.write_text('{"providers": {"p": {"apiKey": "$MY_KEY"}}}')
+    home = tmp_path / "cached"
+    home.mkdir()
+    for agent_id, expected in (("pi", "models.json"), ("omp", "models.yml")):
+        spec = ExperimentSpec(
+            name="t",
+            tasks=TaskSelection(path=tmp_path),
+            model=ModelSpec(provider="custom", provider_id="p", models_json=models_json),
+            variants=[VariantSpec(id="a")],
+        )
+        dest = staging.stage_home(home, tmp_path / f"staged-{agent_id}", spec, agent_id)
+        assert (dest / expected).is_file()
+
+
 def test_scan_for_secrets_covers_non_log_artifacts(tmp_path: Path):
     run_dir = tmp_path / "run"
     logs = run_dir / "logs"

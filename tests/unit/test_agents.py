@@ -157,6 +157,7 @@ def fake_independent_agent(monkeypatch):
         version_field="agent_version",
         fairness_flags="",
         default_version="1.0.0",
+        supports_pi_features=False,
     )
     monkeypatch.setattr(agent_registry, "AGENTS", {**agent_registry.AGENTS, "fake": fake})
     return fake
