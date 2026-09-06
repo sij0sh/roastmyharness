@@ -13,6 +13,7 @@ READ_TOOL_NAMES = {"read"}
 
 # ---------------------------------------------------------------- ranges ---
 
+
 def _read_range(args: dict) -> tuple[str, int, int | None]:
     """(path, start_line, end_line) of a read tool call; end None = open."""
     path = args.get("path") or args.get("file_path") or ""
@@ -22,9 +23,7 @@ def _read_range(args: dict) -> tuple[str, int, int | None]:
     return posixpath.normpath(str(path)), start, end
 
 
-def _ranges_overlap(
-    a: tuple[int, int | None], b: tuple[int, int | None]
-) -> bool:
+def _ranges_overlap(a: tuple[int, int | None], b: tuple[int, int | None]) -> bool:
     """Line-range overlap; None end is +infinity."""
     a1, a2 = a
     b1, b2 = b
@@ -37,21 +36,106 @@ def _ranges_overlap(
 
 # ------------------------------------------------------------- metrics -----
 
+
 def new_tool_metrics() -> dict[str, int]:
-    return {k: 0 for k in (
-        "tool_calls", "read_calls", "read_rereads",
-        "read_overlap_rereads", "distinct_read_files",
-    )}
+    return {
+        k: 0
+        for k in (
+            "tool_calls",
+            "read_calls",
+            "read_rereads",
+            "read_overlap_rereads",
+            "distinct_read_files",
+        )
+    }
 
 
 def new_event_metrics() -> dict[str, float]:
-    return {k: 0 for k in (
-        "llm_calls", "llm_ttft_sec", "turn_time_sec",
-        "cache_write_tokens", "reasoning_tokens", "cm_llm_calls",
-        "cm_input_tokens", "cm_output_tokens", "cm_attributions",
-        "cm_errors", "cm_search_calls", "cm_rehydrate_calls",
-        "peak_input_cache_tokens", "avg_input_cache_tokens",
-    )}
+    return {
+        k: 0
+        for k in (
+            "llm_calls",
+            "llm_ttft_sec",
+            "turn_time_sec",
+            "cache_write_tokens",
+            "reasoning_tokens",
+            "cm_llm_calls",
+            "cm_input_tokens",
+            "cm_output_tokens",
+            "cm_attributions",
+            "cm_errors",
+            "cm_search_calls",
+            "cm_rehydrate_calls",
+            "peak_input_cache_tokens",
+            "avg_input_cache_tokens",
+        )
+    }
+
+
+def _bisect_starts(merged: list, x: int, right: bool) -> int:
+    lo, hi = 0, len(merged)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if merged[mid][0] < x or (right and merged[mid][0] == x):
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
+def _merge_find(merged: list, start: int, end: int | None) -> bool:
+    """True when (start, end) overlaps any interval in merged.
+
+    merged is sorted by start with pairwise-disjoint integer ranges. An open
+    range overlaps every interval starting at or after start, so only the
+    predecessor needs a comparison in that case. Each candidate reuses
+    _ranges_overlap, keeping None-end-means-infinity semantics in one place.
+    """
+    i = _bisect_starts(merged, start, True)
+    if end is None:
+        if i < len(merged):
+            return True
+        i -= 1
+        if i < 0:
+            return False
+        iv = merged[i]
+        return _ranges_overlap((start, end), (iv[0], iv[1]))
+    lo = max(0, i - 1)
+    for iv in merged[lo:]:
+        if iv[0] > end:
+            break
+        if _ranges_overlap((start, end), (iv[0], iv[1])):
+            return True
+    return False
+
+
+def _merge_insert(merged: list, start: int, end: int | None) -> None:
+    """Insert (start, end) into merged, fusing overlap and integer adjacency.
+
+    Adjacent integer ranges fuse safely: overlap queries test for a shared
+    integer point, and the union of adjacent integer ranges shares a point
+    with a query exactly when one of the parts does.
+    """
+    new_start, new_end = start, end
+    i = _bisect_starts(merged, start, False)
+    lo = i
+    if i > 0:
+        prev_end = merged[i - 1][1]
+        if prev_end is None or new_start <= prev_end + 1:  # type: ignore[operator]
+            lo = i - 1
+    hi = lo
+    while hi < len(merged):
+        iv = merged[hi]
+        if new_end is not None and iv[0] > new_end + 1:
+            break
+        if iv[0] < new_start:
+            new_start = iv[0]
+        if new_end is None or iv[1] is None:
+            new_end = None
+        elif iv[1] > new_end:
+            new_end = iv[1]
+        hi += 1
+    merged[lo:hi] = [[new_start, new_end]]
 
 
 def fold_tool_event(m: dict[str, Any], event: dict[str, Any]) -> None:
@@ -64,15 +148,19 @@ def fold_tool_event(m: dict[str, Any], event: dict[str, Any]) -> None:
     path, start, end = _read_range(event.get("args") or {})
     if not path:
         return
-    seen: dict[str, list[tuple[int, int | None]]] = m.setdefault("_seen", {})
-    prior = seen.setdefault(path, [])
-    if prior:
+    seen: dict[str, dict] = m.setdefault("_seen", {})
+    entry = seen.get(path)
+    if entry is None:
+        entry = seen[path] = {"n": 0, "merged": []}
+        m["distinct_read_files"] += 1
+    elif entry["n"]:
         m["read_rereads"] += 1
-        if any(_ranges_overlap((start, end), p) for p in prior):
+        if _merge_find(entry["merged"], start, end):
             m["read_overlap_rereads"] += 1
     else:
         m["distinct_read_files"] += 1
-    prior.append((start, end))
+    entry["n"] += 1
+    _merge_insert(entry["merged"], start, end)
 
 
 def fold_event(m: dict[str, Any], event: dict[str, Any]) -> None:
@@ -144,9 +232,7 @@ def fold_sidecar_line(m: dict[str, Any], line: str) -> None:
         m["_first_update_ms"] = ts
         m["llm_ttft_sec"] += max(0.0, (ts - m["_turn_start_ms"]) / 1000.0)
     elif t == "turn_end" and m.get("_turn_start_ms") is not None:
-        m["turn_time_sec"] += max(
-            0.0, (ts - m["_turn_start_ms"]) / 1000.0
-        )
+        m["turn_time_sec"] += max(0.0, (ts - m["_turn_start_ms"]) / 1000.0)
         m["_turn_start_ms"] = None
 
 
@@ -170,10 +256,138 @@ def final_event_metrics(trial_dir: Path) -> dict[str, Any]:
     return finalize_metrics(m)
 
 
+def new_fold_state() -> dict[str, Any]:
+    """Empty incremental fold state for one trial dir (JSON-compatible)."""
+    return {
+        "work": {**new_event_metrics(), **new_tool_metrics()},
+        "events": {"off": 0, "size": 0, "mtime_ns": 0},
+        "sidecar": {"off": 0, "size": 0, "mtime_ns": 0},
+    }
+
+
+def fold_state_valid(state: Any) -> bool:
+    if not isinstance(state, dict):
+        return False
+    work = state.get("work")
+    if not isinstance(work, dict):
+        return False
+    for key in ("events", "sidecar"):
+        part = state.get(key)
+        if not isinstance(part, dict):
+            return False
+        if not all(isinstance(part.get(k), int) for k in ("off", "size", "mtime_ns")):
+            return False
+        if part["off"] < 0 or part["size"] < 0:
+            return False
+    seen = work.get("_seen", {})
+    if not isinstance(seen, dict):
+        return False
+    for entry in seen.values():
+        if not isinstance(entry, dict):
+            return False
+        if not isinstance(entry.get("n"), int):
+            return False
+        merged = entry.get("merged")
+        if not isinstance(merged, list):
+            return False
+        for iv in merged:
+            if not isinstance(iv, list) or len(iv) != 2:
+                return False
+            if not isinstance(iv[0], int):
+                return False
+            if iv[1] is not None and not isinstance(iv[1], int):
+                return False
+    return True
+
+
+def _fold_new_bytes(m: dict[str, Any], path: Path, part: dict[str, int], is_events: bool) -> int:
+    """Fold bytes appended since part["off"]; returns lines folded.
+
+    Only newline-terminated lines fold; a trailing partial line stays
+    unfolded until the writer completes it. A shrunk file means rewrite, so
+    the caller refolds the trial from zero instead.
+    """
+    try:
+        st = path.stat()
+        size, mtime_ns = st.st_size, st.st_mtime_ns
+    except OSError:
+        part["off"], part["size"], part["mtime_ns"] = 0, 0, 0
+        return 0
+    if (mtime_ns, size) == (part["mtime_ns"], part["size"]):
+        return 0
+    off = part["off"]
+    if off > size:
+        raise _FileRewritten
+    try:
+        with path.open("rb") as f:
+            f.seek(off)
+            chunk = f.read()
+    except OSError:
+        return 0
+    lines = chunk.splitlines(keepends=True)
+    folded = 0
+    pos = off
+    for raw in lines:
+        if not raw.endswith(b"\n"):
+            break
+        pos += len(raw)
+        try:
+            line = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if is_events:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            fold_event(m, event)
+            if event.get("type") == "tool_execution_start":
+                fold_tool_event(m, event)
+        else:
+            fold_sidecar_line(m, line)
+        folded += 1
+    part["off"], part["size"], part["mtime_ns"] = pos, size, mtime_ns
+    return folded
+
+
+class _FileRewritten(Exception):
+    pass
+
+
+def fold_trial_incremental(
+    trial_dir: Path, state: dict[str, Any] | None
+) -> tuple[dict[str, Any], dict[str, Any], int]:
+    """Fold a trial's event logs, reusing state across polls.
+
+    Returns (finalized metrics, updated state, lines folded this call). An
+    invalid or missing state folds from zero. A shrunk event file means the
+    trial was rewritten, so the fold restarts from zero rather than reuse
+    stale counters. The returned metrics are a finalized copy; the state
+    keeps the working counters for the next poll.
+    """
+    import copy as _copy
+
+    if not fold_state_valid(state):
+        state = new_fold_state()
+    assert state is not None
+    events_path = trial_dir / "agent" / "pi-events.jsonl"
+    sidecar_path = trial_dir / "agent" / "pi-event-times.log"
+    m = state["work"]
+    folded = 0
+    try:
+        folded += _fold_new_bytes(m, events_path, state["events"], True)
+        folded += _fold_new_bytes(m, sidecar_path, state["sidecar"], False)
+    except _FileRewritten:
+        state = new_fold_state()
+        m = state["work"]
+        folded = _fold_new_bytes(m, events_path, state["events"], True)
+        folded += _fold_new_bytes(m, sidecar_path, state["sidecar"], False)
+    return finalize_metrics(_copy.deepcopy(m)), state, folded
+
+
 def _safe_lines(path: Path) -> Iterator[str]:
     try:
         with path.open() as f:
             yield from f
     except OSError:
         return
-

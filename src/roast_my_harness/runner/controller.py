@@ -55,6 +55,7 @@ AskCallback = Callable[[str], bool]
 
 # ---------------------------------------------------------- controller ----
 
+
 @dataclass
 class VariantJob:
     variant_id: str
@@ -92,7 +93,7 @@ class ExperimentController:
         self._reconcile_state: dict[str, dict[str, tuple[float, str, Cell | None]]] = {}
         self._last_parse_count = 0
         self._last_tick_sec = 0.0
-        self._row_cache: dict[str, tuple[int, tuple[str, str], dict]] = {}
+        self._row_cache: dict[str, Any] = {}
         self._secret_scan_state: dict[str, tuple[float, int, bool]] = {}
         self._finalize_stats: dict[str, float | int | str] = {}
 
@@ -184,10 +185,13 @@ class ExperimentController:
             self._throw_if_cancelled()
             self._progress("smoke probe: one task on an extension arm")
             import time as _time
+
             _probe_start = _time.monotonic()
             try:
                 result = probe_mod.run_probe_sync(
-                    spec=self.spec, jobs=self.jobs, run_dir=self.run_dir,
+                    spec=self.spec,
+                    jobs=self.jobs,
+                    run_dir=self.run_dir,
                     env=self._pier_env(),
                 )
             except probe_mod.ProbeTimeoutError as e:
@@ -208,9 +212,7 @@ class ExperimentController:
                     )
                 )
                 return
-            self._progress(
-                f"smoke probe passed ({result.task_id} on {result.variant_id})"
-            )
+            self._progress(f"smoke probe passed ({result.task_id} on {result.variant_id})")
         else:
             self.smoke_result = None
 
@@ -227,9 +229,7 @@ class ExperimentController:
             return
         stored_pairs = [(row["task_id"], row["task_hash"]) for row in stored]
         if stored_pairs != pairs:
-            expected = make_experiment_id(
-                self.spec.name, compute_experiment_hash(self.spec, pairs)
-            )
+            expected = make_experiment_id(self.spec.name, compute_experiment_hash(self.spec, pairs))
             raise PierError(
                 f"task content changed since experiment {self.experiment_id} "
                 f"was created; expected identity is now {expected}. Create a "
@@ -393,11 +393,7 @@ class ExperimentController:
         all_ids = [t.task_id for t in tasks]
         self._refresh_cells()
         agents = self.spec.resolved_agents()
-        held = (
-            self.control_reuse.held_tasks()
-            if self.control_reuse.held_pending()
-            else set()
-        )
+        held = self.control_reuse.held_tasks() if self.control_reuse.held_pending() else set()
         missing_by_job: dict[str, list[str]] = {}
         for job in self.jobs.values():
             job.proc = None
@@ -406,9 +402,7 @@ class ExperimentController:
                 missing = [task_id for task_id in missing if task_id not in held]
             if missing:
                 missing_by_job[job.variant_id] = missing
-        n_concurrent = self.spec.concurrency.effective_per_variant(
-            len(missing_by_job)
-        )
+        n_concurrent = self.spec.concurrency.effective_per_variant(len(missing_by_job))
         for job in self.jobs.values():
             missing = missing_by_job.get(job.variant_id)
             if not missing:
@@ -429,8 +423,7 @@ class ExperimentController:
             log = self.run_dir / "logs" / f"{job.variant_id}.log"
             job.proc = process_mod.VariantProcess(job.variant_id, argv, log)
             self._progress(
-                f"launch {job.variant_id}: {len(missing)} task(s), "
-                f"{n_concurrent} concurrent"
+                f"launch {job.variant_id}: {len(missing)} task(s), {n_concurrent} concurrent"
             )
 
     async def _start_gated(self, env: dict[str, str]) -> None:
@@ -466,9 +459,7 @@ class ExperimentController:
     async def _watch(self) -> None:
         env = self._pier_env()
         await self._start_gated(env)
-        process_mod.require_all_started(
-            [j.proc for j in self.jobs.values() if j.proc is not None]
-        )
+        process_mod.require_all_started([j.proc for j in self.jobs.values() if j.proc is not None])
         tasks = discover_tasks(
             self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
         )
@@ -482,6 +473,7 @@ class ExperimentController:
                 self._refresh_cells()
                 return
             import time as _time
+
             tick_start = _time.monotonic()
             self._poll_once(all_ids)
             tick_sec = _time.monotonic() - tick_start
@@ -495,10 +487,9 @@ class ExperimentController:
 
     def _poll_once(self, all_ids: list[str]) -> None:
         import time as _time
+
         _tick_start = _time.monotonic()
-        previous = {
-            (v, t): c.status for v, cells in self.cells.items() for t, c in cells.items()
-        }
+        previous = {(v, t): c.status for v, cells in self.cells.items() for t, c in cells.items()}
         self._refresh_cells()
         for variant_id, cells in self.cells.items():
             for task_id, cell in cells.items():
@@ -536,16 +527,16 @@ class ExperimentController:
 
         for job in self.jobs.values():
             proc = job.proc
-            if proc is not None and not proc.running and not getattr(
-                proc, "_exit_emitted", False
-            ):
+            if proc is not None and not proc.running and not getattr(proc, "_exit_emitted", False):
                 proc._exit_emitted = True  # type: ignore[attr-defined]
                 code = proc.proc.returncode if proc.proc else None
                 self._progress(f"{job.variant_id} exited rc={code}")
         import time as _time2
+
         self._last_tick_sec = _time2.monotonic() - _tick_start
         self._logger.emit(
-            "progress", state=self.state,
+            "progress",
+            state=self.state,
             message=f"tick {self._last_tick_sec:.3f}s parsed={self._last_parse_count}",
         )
 
@@ -569,7 +560,6 @@ class ExperimentController:
             total_parsed += parsed
         self._last_parse_count = total_parsed
 
-
     # ----------------------------------------------------------- cancel --
 
     def request_cancel(self) -> None:
@@ -590,6 +580,7 @@ class ExperimentController:
 
     def _finalize(self) -> None:
         import time as _time
+
         self._set_state("FINALIZING")
         _t0 = _time.monotonic()
         self._refresh_cells()
@@ -600,6 +591,7 @@ class ExperimentController:
         rows, self._row_cache, _parsed, _reused = report_collect.collect_rows_incremental(
             self.run_dir / "jobs", self._row_cache
         )
+        report_collect.save_fold_cache(self.run_dir, self._row_cache)
         _t3 = _time.monotonic()
         provenance = self._provenance([])
         csv = report_exports.write_summary_csv(self.run_dir, rows)
@@ -667,9 +659,7 @@ class ExperimentController:
         manifest["secret_scan_scope"] = "all regular run artifacts after staging cleanup"
         manifest["secret_scan_hits"] = secret_hits
         manifest["control_reuse"] = self.reuse_summary()
-        manifest["reused_control_observations"] = manifest["control_reuse"].get(
-            "total_reused", 0
-        )
+        manifest["reused_control_observations"] = manifest["control_reuse"].get("total_reused", 0)
         atomic_write_text(
             self.run_dir / "manifest.json",
             json.dumps(manifest, indent=2) + "\n",
@@ -702,9 +692,7 @@ class ExperimentController:
         env = dict(os.environ)
         package_parent = str(Path(__file__).resolve().parents[2])
         existing = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = (
-            package_parent + (os.pathsep + existing if existing else "")
-        )
+        env["PYTHONPATH"] = package_parent + (os.pathsep + existing if existing else "")
         return env
 
     # --------------------------------------------------------- snapshot --
@@ -715,16 +703,14 @@ class ExperimentController:
         all_ids = self._task_ids()
         matrix: dict[str, dict[str, str]] = {}
         matrix_rewards: dict[str, dict[str, float]] = {}
-        held = (
-            self.control_reuse.held_tasks()
-            if self.control_reuse.held_pending()
-            else set()
-        )
+        held = self.control_reuse.held_tasks() if self.control_reuse.held_pending() else set()
         reused = self.control_reuse.reused_tasks()
         for variant_id in self.jobs:
             cells = self.cells.get(variant_id, {})
             row: dict[str, str] = {}
             rewards: dict[str, float] = {}
+            pending, _ = report_collect.scan_variant(self.run_dir / "jobs" / variant_id)
+            statuses = report_collect.pending_statuses(pending, all_ids)
             for task_id in all_ids:
                 if task_id in cells:
                     row[task_id] = cells[task_id].status[0].upper()
@@ -734,9 +720,7 @@ class ExperimentController:
                 elif variant_id == "control" and task_id in held:
                     row[task_id] = "."
                 else:
-                    row[task_id] = _running_or_pending(
-                        self.run_dir / "jobs" / variant_id, task_id
-                    )
+                    row[task_id] = statuses[task_id]
             matrix[variant_id] = row
             matrix_rewards[variant_id] = rewards
         return {
@@ -745,15 +729,6 @@ class ExperimentController:
             "rewards": matrix_rewards,
             "tasks": all_ids,
         }
-
-
-def _running_or_pending(jobs_variant_dir: Path, task_id: str) -> str:
-    if not jobs_variant_dir.is_dir():
-        return "."
-    for trial_dir in jobs_variant_dir.rglob(f"{task_id}__*"):
-        if trial_dir.is_dir() and not (trial_dir / "result.json").exists():
-            return "~"
-    return "."
 
 
 def _hash_of(controller: ExperimentController, variant_id: str) -> str:

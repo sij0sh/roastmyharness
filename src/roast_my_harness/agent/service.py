@@ -32,8 +32,8 @@ from roast_my_harness.homes.sources import source_tree_hash
 from roast_my_harness.paths import data_dir, database_path, run_dir
 from roast_my_harness.report.collect import (
     aggregate_by_variant,
-    collect_rows,
     latest_result_path,
+    newest_result_paths,
 )
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import preflight
@@ -52,7 +52,7 @@ from roast_my_harness.store.locking import ExperimentLock
 from roast_my_harness.store.repository import Repository
 from roast_my_harness.tasks.discover import discover_tasks
 from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
-from roast_my_harness.telemetry.result import trial_row
+from roast_my_harness.telemetry.result import trial_row, trial_row_cached
 
 PLAN_ID_RE = re.compile(r"^plan_[0-9a-f]{12}$")
 FINAL_STATES = frozenset({"COMPLETE", "FAILED", "CANCELLED"})
@@ -142,18 +142,41 @@ WATCH_TRIAL_STAT_KEYS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _trial_stats(rd: Path, variant: str, task: str) -> dict[str, Any]:
+def _trial_stats(
+    rd: Path,
+    variant: str,
+    task: str,
+    newest_maps: dict[str, dict[str, Path]] | None = None,
+    variant_tasks: list[str] | None = None,
+    fold_cache: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Per-trial stats for a just-completed cell, or {} when unmeasured.
 
     A cell only reaches P/F/E after its result.json parses, so trial_row
     can read the agent totals and event folds at flip time. Trials whose
     agent never finished (crash) carry no agent_result; they report no
-    stats rather than zero defaults.
+    stats rather than zero defaults. When newest_maps is given, the caller's
+    single per-variant enumeration serves the lookup instead of re-walking
+    the variant tree per completed cell. When fold_cache is given, event
+    bytes fold incrementally instead of from zero.
     """
-    result_path = latest_result_path(rd / "jobs", variant, task)
+    if newest_maps is not None:
+        by_task = newest_maps.get(variant)
+        if by_task is None:
+            by_task = newest_result_paths(rd / "jobs" / variant, variant_tasks or [task])
+            newest_maps[variant] = by_task
+        result_path = by_task.get(task)
+    else:
+        result_path = latest_result_path(rd / "jobs", variant, task)
     if not result_path:
         return {}
-    row = trial_row(result_path, variant)
+    if fold_cache is not None:
+        key = str(result_path)
+        cached = fold_cache.get(key)
+        row, updated, _folded = trial_row_cached(result_path, variant, cached)
+        fold_cache[key] = updated
+    else:
+        row = trial_row(result_path, variant)
     if not row or row.get("input_tokens") in ("", None):
         return {}
     stats: dict[str, Any] = {}
@@ -407,7 +430,14 @@ class AgentService:
             variant: {s: sum(1 for c in cells.values() if c == s) for s in "PFEH"}
             for variant, cells in snap["matrix"].items()
         }
-        aggregates = aggregate_by_variant(collect_rows(rd / "jobs"))
+        from roast_my_harness.report import collect as report_collect
+
+        fold_cache = report_collect.load_fold_cache(rd)
+        rows, fold_cache, _folded, _reused = report_collect.collect_rows_incremental(
+            rd / "jobs", fold_cache
+        )
+        report_collect.save_fold_cache(rd, fold_cache)
+        aggregates = aggregate_by_variant(rows)
         report = (
             models.ReportPaths(markdown=str(rd / "report.md"), csv=str(rd / "summary.csv"))
             if (rd / "report.md").is_file()
@@ -449,56 +479,66 @@ class AgentService:
         started_at = last_emit
         state_prev = first["state"]
         matrix_prev = first["matrix"]
-        while True:
-            time.sleep(interval_sec)
-            controller, rd = self._observe(experiment_id)
-            snap = self._watch_snapshot(controller)
-            state, matrix = snap["state"], snap["matrix"]
-            now = time.monotonic()
-            if state != state_prev:
-                yield {"event": "state", "state": state}
-                state_prev = state
-                last_emit = now
-            if matrix != matrix_prev:
-                for variant, cells in matrix.items():
-                    old = matrix_prev.get(variant, {})
-                    for task, status in cells.items():
-                        if status in ("P", "F", "E") and old.get(task) != status:
-                            event: dict[str, Any] = {
-                                "event": "trial",
-                                "variant": variant,
-                                "task": task,
-                                "status": status,
-                                "reward": snap["rewards"].get(variant, {}).get(task),
-                            }
-                            stats = _trial_stats(rd, variant, task)
-                            if stats:
-                                event["stats"] = stats
-                            yield event
-                yield {"event": "snapshot", **snap}
-                matrix_prev = matrix
-                last_emit = now
-                continue
-            if state in FINAL_STATES:
-                yield self._watch_final(experiment_id, rd, state)
-                return
-            quiet = now - last_emit >= WATCH_HEARTBEAT_SEC
-            orphan = (
-                now - started_at >= worker_grace_sec
-                and lock_is_free(rd)
-                and self._worker_pid(experiment_id) is None
-            )
-            if orphan:
-                yield self._watch_final(
-                    experiment_id,
-                    rd,
-                    state,
-                    note="worker not running; run resume or cancel to clean up",
+        from roast_my_harness.report import collect as report_collect
+
+        fold_cache = report_collect.load_fold_cache(rd)
+        try:
+            while True:
+                time.sleep(interval_sec)
+                controller, rd = self._observe(experiment_id)
+                snap = self._watch_snapshot(controller)
+                state, matrix = snap["state"], snap["matrix"]
+                now = time.monotonic()
+                if state != state_prev:
+                    yield {"event": "state", "state": state}
+                    state_prev = state
+                    last_emit = now
+                if matrix != matrix_prev:
+                    newest_maps: dict[str, dict[str, Path]] = {}
+                    for variant, cells in matrix.items():
+                        old = matrix_prev.get(variant, {})
+                        for task, status in cells.items():
+                            if status in ("P", "F", "E") and old.get(task) != status:
+                                event = {
+                                    "event": "trial",
+                                    "variant": variant,
+                                    "task": task,
+                                    "status": status,
+                                    "reward": snap["rewards"].get(variant, {}).get(task),
+                                }
+                                stats = _trial_stats(
+                                    rd, variant, task, newest_maps, list(cells), fold_cache
+                                )
+                                if stats:
+                                    event["stats"] = stats
+                                yield event
+                    yield {"event": "snapshot", **snap}
+                    matrix_prev = matrix
+                    last_emit = now
+                    continue
+                if state in FINAL_STATES:
+                    yield self._watch_final(experiment_id, rd, state, fold_cache=fold_cache)
+                    return
+                quiet = now - last_emit >= WATCH_HEARTBEAT_SEC
+                orphan = (
+                    now - started_at >= worker_grace_sec
+                    and lock_is_free(rd)
+                    and self._worker_pid(experiment_id) is None
                 )
-                return
-            if quiet:
-                yield {"event": "heartbeat", "state": state}
-                last_emit = now
+                if orphan:
+                    yield self._watch_final(
+                        experiment_id,
+                        rd,
+                        state,
+                        note="worker not running; run resume or cancel to clean up",
+                        fold_cache=fold_cache,
+                    )
+                    return
+                if quiet:
+                    yield {"event": "heartbeat", "state": state}
+                    last_emit = now
+        finally:
+            report_collect.save_fold_cache(rd, fold_cache)
 
     @staticmethod
     def _watch_snapshot(controller: ExperimentController) -> dict[str, Any]:
@@ -528,9 +568,22 @@ class AgentService:
         state: str,
         *,
         note: str | None = None,
+        fold_cache: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Final event: aggregates over completed trials plus report paths."""
-        aggregates = aggregate_by_variant(collect_rows(rd / "jobs"))
+        from roast_my_harness.report import collect as report_collect
+
+        if fold_cache is None:
+            fold_cache = report_collect.load_fold_cache(rd)
+            rows, fold_cache, _folded, _reused = report_collect.collect_rows_incremental(
+                rd / "jobs", fold_cache
+            )
+            report_collect.save_fold_cache(rd, fold_cache)
+        else:
+            rows, fold_cache, _folded, _reused = report_collect.collect_rows_incremental(
+                rd / "jobs", fold_cache
+            )
+        aggregates = aggregate_by_variant(rows)
         report: dict[str, str] | None = None
         if (rd / "report.md").is_file():
             report = {
@@ -618,7 +671,10 @@ class AgentService:
                 raise UnknownExperimentError(f"unknown experiment {experiment_id}")
             rd = Path(row["run_dir"])
             with ExperimentLock(rd):
-                rows = report_collect.collect_rows(rd / "jobs")
+                rows, fold_cache, _folded, _reused = report_collect.collect_rows_incremental(
+                    rd / "jobs", report_collect.load_fold_cache(rd)
+                )
+                report_collect.save_fold_cache(rd, fold_cache)
                 if not rows:
                     raise ServiceError("no completed trials to report")
                 provenance: dict[str, Any] = {
@@ -744,8 +800,12 @@ def run_experiment(
     )
     repo = Repository(database_path())
     controller = ExperimentController(
-        spec, experiment_id, run_dir(experiment_id), repo,
-        progress=progress, ask=ask,
+        spec,
+        experiment_id,
+        run_dir(experiment_id),
+        repo,
+        progress=progress,
+        ask=ask,
     )
     with ExperimentLock(controller.run_dir):
         loop = asyncio.new_event_loop()
