@@ -85,13 +85,21 @@ The model-facing `roast_harness` tool keeps its own flow: the agent presents
 the plan and must receive explicit approval before it calls
 `roast_harness start`.
 
-The `start` and `watch` actions render a second live session card (the
-command wizard shows the same live progress in a widget above the editor
-plus a final notification). It updates
-in place with completion percentage, per-variant counts, active cells, recent
-trial results, final aggregates, and report paths. Expand the card with Pi's
-configured tool-expand key to see the task matrix. Aborting the card detaches
-the watcher but does not stop the experiment; use `cancel` to stop it.
+The `start` and `watch` actions render a second live session card. The
+command instead launches through the same shared start path and returns
+immediately, so the prompt box stays live: progress streams into a widget
+above the editor. When authoring finishes, the command posts a persistent
+Spec author transcript card (plan summary, model, attempts, token usage,
+elapsed time); when the run ends, it posts a persistent Benchmark transcript
+card (completion counts, token totals, rate, aggregates, report paths) plus
+a final notification. Both cards render exactly like the `roast_harness`
+tool cards and support Pi's configured tool-expand key for the full matrix
+and spec preview. While the run is tracked,
+the `roast_harness` tool stays visible so you can ask the session for updates
+or to cancel the run, and re-running `/roastmyharness` offers Watch live,
+Show status, Cancel run, or Start a new run instead of the wizard. Aborting
+the card detaches the watcher but does not stop the experiment; use `cancel`
+to stop it.
 
 There is no integration skill to invoke implicitly. Install the Pi command or
 the Claude MCP server idempotently:

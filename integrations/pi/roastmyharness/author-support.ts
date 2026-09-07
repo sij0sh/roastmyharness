@@ -6,10 +6,10 @@ import { basename, dirname, join, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import type { Api, Model, Usage } from "@earendil-works/pi-ai";
-import type { AgentToolResult, AgentToolUpdateCallback, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	ABORT_GRACE_MS, AUTHOR_ACTIVITY_LIMIT, AUTHOR_CHILD_ENV, AUTHOR_OUTPUT_LIMIT,
-	DEFAULT_PI_VERSION, STDERR_LIMIT, addUsage, isPiVersionPin, roastBinary,
+	DEFAULT_PI_VERSION, STDERR_LIMIT, addUsage, isPiVersionPin,
 	type AuthorDetails, type DeepSweSuites, type RoastResponse,
 } from "./core.ts";
 
@@ -437,27 +437,6 @@ export async function runAuthorChild(
 		throw new Error(`Pi author returned no spec${malformed}`);
 	}
 	return stripCodeFence(finalOutput);
-}
-
-export async function runRoastJson(
-	pi: ExtensionAPI,
-	args: string[],
-	signal?: AbortSignal,
-): Promise<RoastResponse> {
-	const result = await pi.exec(roastBinary(), args, { signal, timeout: 120_000 });
-	const stdout = result.stdout.trim();
-	let parsed: RoastResponse | undefined;
-	try {
-		if (stdout) parsed = JSON.parse(stdout) as RoastResponse;
-	} catch {
-	}
-	if (!parsed) {
-		throw new Error((result.stderr.trim() || stdout || `exit code ${result.code}`).slice(0, 4000));
-	}
-	if (result.code !== 0 && parsed.error) {
-		throw new Error(`error ${parsed.error.code ?? "unknown"}: ${parsed.error.message ?? stdout}`);
-	}
-	return parsed;
 }
 
 export function prepareProblem(prepared: RoastResponse): string {

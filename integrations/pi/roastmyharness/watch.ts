@@ -2,20 +2,27 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
 import { keyHint } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { Text, type Component } from "@earendil-works/pi-tui";
+import { cardBox, runCardBg, type CardTheme } from "./cards.ts";
 import {
 	ABORT_GRACE_MS,
 	DEFAULT_RECENT_TRIALS,
 	STDERR_LIMIT,
+	buildArgs,
 	countDone,
 	finalText,
 	formatAggregates,
+	formatElapsed,
+	formatTokens,
 	oneLineStatus,
 	renderMatrix,
 	renderTrials,
 	renderTrialSummaries,
 	roastBinary,
+	runRoastJson,
 	statNumber,
+	type ExecHost,
+	type RoastResponse,
 	type ThemeLike,
 	type TrialEvent,
 	type TrialStats,
@@ -25,6 +32,22 @@ import {
 export interface WatchParams {
 	interval_sec?: number;
 	recent?: number;
+}
+
+/**
+ * Single execution place for launching an approved plan into a detached
+ * worker. Both the roast_harness tool (foreground stream) and the
+ * /roastmyharness command (background widget stream) start here, so the
+ * TOML A/B run has one launch path; callers differ only in how they watch.
+ */
+export async function startExperiment(
+	host: ExecHost,
+	planId: string,
+	opts?: { skip_docker?: boolean; signal?: AbortSignal },
+): Promise<RoastResponse> {
+	return runRoastJson(host, buildArgs({ action: "start", plan_id: planId, skip_docker: opts?.skip_docker }), {
+		signal: opts?.signal,
+	});
 }
 
 export async function streamWatch(
@@ -42,8 +65,10 @@ export async function streamWatch(
 		recent: [],
 		summaries: [],
 	};
+	const startedAt = Date.now();
 
 	const emit = () => {
+		details.elapsed_sec = (Date.now() - startedAt) / 1000;
 		onUpdate?.({
 			content: [{ type: "text", text: oneLineStatus(details) }],
 			details: {
@@ -108,14 +133,7 @@ export async function streamWatch(
 		}
 	};
 
-	const argv = [
-		"tool",
-		"watch",
-		experimentId,
-		...(params.interval_sec !== undefined
-			? ["--interval", String(Math.max(params.interval_sec, 0.2))]
-			: []),
-	];
+	const argv = buildArgs({ action: "watch", experiment_id: experimentId, interval_sec: params.interval_sec });
 
 	return await new Promise((resolve, reject) => {
 		let settled = false;
@@ -264,6 +282,40 @@ export async function streamStartedExperiment(
 
 type OnUpdate = AgentToolUpdateCallback<WatchDetails>;
 
+/** Tokens measured across completed trials plus the completion rate. */
+export function trialTelemetry(details: WatchDetails): string {
+	let input = 0;
+	let output = 0;
+	for (const summary of details.summaries) {
+		const inTokens = summary.stats?.input_tokens;
+		const outTokens = summary.stats?.output_tokens;
+		if (typeof inTokens === "number" && Number.isFinite(inTokens)) input += inTokens;
+		if (typeof outTokens === "number" && Number.isFinite(outTokens)) output += outTokens;
+	}
+	const parts: string[] = [];
+	if (input > 0 || output > 0) {
+		parts.push(`tokens in ${formatTokens(input)} out ${formatTokens(output)}`);
+	}
+	const elapsed = details.elapsed_sec ?? 0;
+	if (elapsed >= 5 && details.summaries.length > 0) {
+		parts.push(`${(details.summaries.length / (elapsed / 60)).toFixed(1)} trials/min`);
+	}
+	return parts.join(" · ");
+}
+
+/**
+ * Transcript-card entry point for posted run cards: same rendering as the
+ * roast_harness watch card, driven by the persisted card payload, in the
+ * same colored container native tool cards use.
+ */
+export function renderRunCard(details: unknown, expanded: boolean, theme: CardTheme): Component {
+	if (!details || typeof details !== "object" || (details as WatchDetails).stream !== true) {
+		return new Text("(no run data)", 0, 0);
+	}
+	const typed = details as WatchDetails;
+	return cardBox(theme, runCardBg(typed), renderWatchResult(typed, { expanded }, theme));
+}
+
 export function renderWatchResult(
 	details: WatchDetails,
 	{ expanded }: { expanded: boolean },
@@ -285,7 +337,8 @@ export function renderWatchResult(
 		theme.fg("accent", details.experiment_id) +
 		theme.fg("muted", ` · ${details.state}`) +
 		(total ? theme.fg("dim", ` · ${done}/${total} done`) : "") +
-		(runningCount ? theme.fg("accent", ` · ${runningCount} running`) : "");
+		(runningCount ? theme.fg("accent", ` · ${runningCount} running`) : "") +
+		(details.elapsed_sec !== undefined ? theme.fg("dim", ` · ${formatElapsed(details.elapsed_sec)}`) : "");
 	if (total) {
 		const width = 20;
 		const filled = Math.min(width, Math.round((done / total) * width));
@@ -293,6 +346,8 @@ export function renderWatchResult(
 			theme.fg("dim", "-".repeat(width - filled)) +
 			theme.fg("muted", ` ${Math.round((done / total) * 100)}%`);
 	}
+	const telemetry = trialTelemetry(details);
+	if (telemetry) text += `\n  ${theme.fg("dim", telemetry)}`;
 
 	for (const [variant, counts] of Object.entries(details.totals ?? {})) {
 		text += `\n  ${theme.fg("accent", variant)}: ` +

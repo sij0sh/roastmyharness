@@ -4,6 +4,16 @@
 
 ### Added
 
+- `/roastmyharness` posts persistent Spec author and Benchmark transcript
+  cards (same rendering as the `roast_harness` tool cards, wrapped in the
+  same colored success/pending/error container) when authoring finishes
+  and when the run ends, so finished work stays in the session. The live
+  widget uses the same container while work streams. Both cards carry
+  telemetry the live views previously omitted: author model, attempts,
+  token usage with cost, and elapsed time; benchmark elapsed time,
+  measured trial token totals, and trials/min rate. No model call is
+  involved.
+
 ### Changed
 
 - `pi_version` defaults to `latest`, which resolves to the newest

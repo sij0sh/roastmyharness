@@ -10,19 +10,30 @@ import { Text } from "@earendil-works/pi-tui";
 import {
 	AUTHOR_ACTIVITY_LIMIT,
 	AUTHOR_OUTPUT_LIMIT,
+	TOOL_NAME,
 	buildArgs,
+	addUsage,
+	clearActiveRun,
 	emptyUsage,
 	finalText,
-	roastBinary,
+	formatElapsed,
+	formatUsage,
+	getActiveRun,
+	runRoastJson,
+	setActiveRun,
 	summarize,
+	type ActiveRun,
 	type AuthorDetails,
 	type RoastResponse,
 	type ThemeLike,
 } from "./core.ts";
 import {
 	renderWatchResult,
+	startExperiment,
 	streamStartedExperiment,
 } from "./watch.ts";
+import { authorCardBg, cardBox, postAuthorCard, postRunCard, type CardTheme } from "./cards.ts";
+import type { Component } from "@earendil-works/pi-tui";
 import {
 	appendActivity,
 	authorUpdate,
@@ -30,7 +41,6 @@ import {
 	compactText,
 	prepareProblem,
 	runAuthorChild,
-	runRoastJson,
 	type AuthorRequest,
 	type WizardAnswers,
 } from "./author-support.ts";
@@ -58,6 +68,13 @@ export function renderAuthorResult(
 	let text = `${icon} ${theme.fg("toolTitle", theme.bold("Spec author"))}` +
 		theme.fg(details.phase === "ready" ? "success" : "muted", ` · ${label}`);
 	if (details.spec_path) text += `\n  ${theme.fg("dim", details.spec_path)}`;
+	const telemetry: string[] = [];
+	if (details.model) telemetry.push(`model ${details.model}`);
+	if (details.attempt > 0) telemetry.push(`attempt ${details.attempt}`);
+	if (details.elapsed_sec !== undefined) telemetry.push(formatElapsed(details.elapsed_sec));
+	const usageLine = formatUsage(details.usage);
+	if (usageLine) telemetry.push(usageLine);
+	if (telemetry.length) text += `\n  ${theme.fg("dim", telemetry.join(" · "))}`;
 
 	const activityLimit = expanded ? AUTHOR_ACTIVITY_LIMIT : 5;
 	const shown = details.activities.slice(-activityLimit);
@@ -107,6 +124,19 @@ export function renderAuthorResult(
 	return new Text(text, 0, 0);
 }
 
+/**
+ * Transcript-card entry point for posted author cards: same rendering as
+ * the roast_harness tool card, driven by the persisted card payload, in
+ * the same colored container native tool cards use.
+ */
+export function renderAuthorCard(details: unknown, expanded: boolean, theme: CardTheme): Component {
+	if (!details || typeof details !== "object" || (details as AuthorDetails).kind !== "author") {
+		return new Text("(no author data)", 0, 0);
+	}
+	const typed = details as AuthorDetails;
+	return cardBox(theme, authorCardBg(typed), renderAuthorResult(typed, { expanded, isPartial: false }, theme));
+}
+
 async function authorLoop(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
@@ -126,6 +156,7 @@ async function authorLoop(
 		output: "Starting an isolated Pi author...",
 	};
 	const usage = emptyUsage();
+	const loopStart = Date.now();
 	onUpdate?.(authorUpdate(details));
 
 	let prepared: RoastResponse | undefined;
@@ -160,9 +191,15 @@ async function authorLoop(
 		appendActivity(details, "Validate the generated experiment");
 		onUpdate?.(authorUpdate(details));
 
-		const prepareArgs = ["tool", "prepare", request.output_path];
-		if (skipDocker) prepareArgs.push("--skip-docker");
-		prepared = await runRoastJson(pi, prepareArgs, signal);
+		prepared = await runRoastJson(
+			pi,
+			buildArgs({
+				action: "prepare",
+				spec_path: request.output_path,
+				skip_docker: skipDocker || undefined,
+			}),
+			{ signal },
+		);
 		details.prepared = prepared;
 		// Every needs_input question prepare emits (spec, tasks.path, preflight.*)
 		// is repairable by the author; missing this dead-ends after one attempt.
@@ -190,6 +227,8 @@ async function authorLoop(
 	}
 
 	if (!prepared) throw new Error("Spec validation returned no result");
+	details.usage = usage;
+	details.elapsed_sec = (Date.now() - loopStart) / 1000;
 	return { prepared, request, spec_text: specText, details, usage };
 }
 
@@ -259,9 +298,15 @@ async function presentPlan(
 	ready: boolean,
 ): Promise<"launch" | "regenerate" | "cancel"> {
 	ctx.ui.setStatus(WIDGET_ID, undefined);
+	const planBg = ready ? "toolSuccessBg" as const : "toolPendingBg" as const;
 	ctx.ui.setWidget(
 		WIDGET_ID,
-		(_tui, theme) => renderAuthorResult(details, { expanded: true, isPartial: false }, theme),
+		(_tui, theme) =>
+			cardBox(
+				theme,
+				planBg,
+				renderAuthorResult(details, { expanded: true, isPartial: false }, theme),
+			),
 	);
 	const choice = await ctx.ui.select(
 		ready
@@ -277,57 +322,179 @@ async function presentPlan(
 	return "cancel";
 }
 
-async function launchExperiment(pi: ExtensionAPI, ctx: ExtensionContext, planId: string): Promise<void> {
+/**
+ * Launch an approved plan, then return immediately so the Pi prompt box
+ * stays live. Progress streams into the widget card from a background
+ * watcher; the user can keep chatting (ask for updates, cancel via the
+ * roast_harness tool) or re-run /roastmyharness for the run menu.
+ * Returns the experiment id, or undefined when launch failed.
+ */
+async function launchExperiment(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	planId: string,
+): Promise<string | undefined> {
 	ctx.ui.setStatus(WIDGET_ID, `launching plan ${planId}...`);
-	let result;
+	let started: RoastResponse;
 	try {
-		result = await pi.exec(roastBinary(), buildArgs({ action: "start", plan_id: planId }), {
-			timeout: 120_000,
-		});
+		started = await startExperiment(pi, planId);
 	} catch (error) {
 		ctx.ui.setStatus(WIDGET_ID, undefined);
 		ctx.ui.notify(
-			`failed to run ${roastBinary()}: ${error instanceof Error ? error.message : String(error)}`,
+			`failed to launch plan ${planId}: ${error instanceof Error ? error.message : String(error)}`,
 			"error",
 		);
-		return;
+		return undefined;
 	}
-	ctx.ui.setStatus(WIDGET_ID, undefined);
-	const stdout = result.stdout.trim();
-	let parsed: RoastResponse | undefined;
-	try {
-		if (stdout) parsed = JSON.parse(stdout) as RoastResponse;
-	} catch {
+	if (!started.experiment_id) {
+		ctx.ui.setStatus(WIDGET_ID, undefined);
+		ctx.ui.notify(summarize(started).slice(0, 4000), "warning");
+		return undefined;
 	}
-	if (result.code !== 0 && parsed?.error) {
-		ctx.ui.notify(`error ${parsed.error.code ?? "unknown"}: ${parsed.error.message ?? stdout}`, "error");
-		return;
-	}
-	if (!parsed?.experiment_id) {
-		ctx.ui.notify(
-			(result.stderr.trim() || stdout || summarize(parsed ?? { state: "unknown" })).slice(0, 4000),
-			"warning",
+	trackRun(pi, ctx, started.experiment_id, planId);
+	return started.experiment_id;
+}
+
+function ensureToolVisible(pi: ExtensionAPI): void {
+	const active = pi.getActiveTools();
+	if (!active.includes(TOOL_NAME)) pi.setActiveTools([...active, TOOL_NAME]);
+}
+
+/**
+ * Register the run and stream its progress into the widget card without
+ * blocking the command: the returned promise settles in the background.
+ * The roast_harness tool stays visible while tracked so the session can
+ * answer update/cancel questions about the run.
+ */
+function trackRun(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	experimentId: string,
+	planId: string,
+): void {
+	const controller = new AbortController();
+	const registration: ActiveRun = {
+		experiment_id: experimentId,
+		plan_id: planId,
+		started_at: Date.now(),
+		abortWatch: () => controller.abort(),
+	};
+	setActiveRun(registration);
+	ensureToolVisible(pi);
+	ctx.ui.setStatus(WIDGET_ID, `running ${experimentId}`);
+	// A superseded watcher (replaced by Watch live / a new run) settles as
+	// detached; it must not clear the newer registration or its card.
+	const current = () => getActiveRun() === registration;
+	void streamStartedExperiment(experimentId, {}, controller.signal, (update) => {
+		if (!current()) return;
+		ctx.ui.setWidget(
+			WIDGET_ID,
+			(_tui, theme) =>
+				cardBox(
+					theme,
+					"toolPendingBg",
+					renderWatchResult(update.details, { expanded: false }, theme),
+				),
 		);
-		return;
-	}
-	const experimentId = parsed.experiment_id;
-	try {
-		const watched = await streamStartedExperiment(experimentId, {}, undefined, (update) => {
-			ctx.ui.setWidget(
-				WIDGET_ID,
-				(_tui, theme) => renderWatchResult(update.details, { expanded: false }, theme),
-			);
-		});
-		ctx.ui.notify(finalText(watched.details), "info");
-	} catch (error) {
-		ctx.ui.notify(
-			`watch failed for ${experimentId} (it may still be running): ` +
-				(error instanceof Error ? error.message : String(error)),
-			"warning",
-		);
-	} finally {
+	}).then((watched) => {
+		if (!current()) return;
+		postRunCard(pi, watched.details);
+		clearActiveRun(experimentId);
 		ctx.ui.setWidget(WIDGET_ID, undefined);
+		ctx.ui.setStatus(WIDGET_ID, undefined);
+		ctx.ui.notify(finalText(watched.details), "info");
+	}).catch((error) => {
+		if (!current()) return;
+		if (controller.signal.aborted) {
+			ctx.ui.setStatus(WIDGET_ID, undefined);
+			return;
+		}
+		const message = error instanceof Error ? error.message : String(error);
+		postRunCard(pi, {
+			stream: true,
+			experiment_id: experimentId,
+			state: "?",
+			final: false,
+			ended: true,
+			note: `watch failed (it may still be running): ${message}`.slice(0, 500),
+			recent: [],
+			summaries: [],
+		});
+		ctx.ui.notify(
+			`watch failed for ${experimentId} (it may still be running): ${message}`,
+			"warning",
+		);
+	});
+}
+
+function statusLine(response: RoastResponse): string {
+	const totals = (response as { totals?: Record<string, Record<string, number>> }).totals;
+	const parts = [summarize(response)];
+	if (totals) {
+		for (const [variant, counts] of Object.entries(totals)) {
+			parts.push(`${variant}: P=${counts.P ?? 0} F=${counts.F ?? 0} E=${counts.E ?? 0}`);
+		}
 	}
+	return parts.join("\n").slice(0, 4000);
+}
+
+/**
+ * Menu shown when /roastmyharness runs while a command-launched experiment
+ * is still tracked. Returns true when the caller should continue into the
+ * wizard for a new run.
+ */
+export async function runActiveMenu(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	active: ActiveRun,
+): Promise<boolean> {
+	const choice = await ctx.ui.select(
+		`RoastMyHarness run ${active.experiment_id} is active`,
+		["Watch live", "Show status", "Cancel run", "Start a new run"],
+	);
+	if (choice === "Watch live") {
+		trackRun(pi, ctx, active.experiment_id, active.plan_id);
+		ctx.ui.notify(`attached live progress for ${active.experiment_id}`, "info");
+		return false;
+	}
+	if (choice === "Show status") {
+		try {
+			const status = await runRoastJson(
+				pi,
+				buildArgs({ action: "status", experiment_id: active.experiment_id }),
+			);
+			ctx.ui.notify(statusLine(status), "info");
+		} catch (error) {
+			ctx.ui.notify(
+				`status failed for ${active.experiment_id}: ` +
+					(error instanceof Error ? error.message : String(error)),
+				"warning",
+			);
+		}
+		return false;
+	}
+	if (choice === "Cancel run") {
+		try {
+			const cancelled = await runRoastJson(
+				pi,
+				buildArgs({ action: "cancel", experiment_id: active.experiment_id }),
+			);
+			ctx.ui.notify(statusLine(cancelled), "info");
+			const state = (cancelled as { state?: string }).state;
+			if (state === "CANCELLED" || state === "COMPLETE" || state === "FAILED") {
+				clearActiveRun(active.experiment_id);
+			}
+		} catch (error) {
+			ctx.ui.notify(
+				`cancel failed for ${active.experiment_id}: ` +
+					(error instanceof Error ? error.message : String(error)),
+				"error",
+			);
+		}
+		return false;
+	}
+	if (choice === "Start a new run") return true;
+	return false;
 }
 
 export async function runCommandFlow(pi: ExtensionAPI, args: string, ctx: ExtensionContext): Promise<void> {
@@ -338,6 +505,12 @@ export async function runCommandFlow(pi: ExtensionAPI, args: string, ctx: Extens
 	}
 	let request = collected.request;
 	let specText: string | undefined;
+	const flowStart = Date.now();
+	const flowUsage = emptyUsage();
+	const stampFlow = (details: AuthorDetails): void => {
+		details.usage = { ...flowUsage, cost: { ...flowUsage.cost } };
+		details.elapsed_sec = (Date.now() - flowStart) / 1000;
+	};
 	while (true) {
 		const outcome = await authorLoop(
 			pi,
@@ -350,11 +523,16 @@ export async function runCommandFlow(pi: ExtensionAPI, args: string, ctx: Extens
 				ctx.ui.setWidget(
 					WIDGET_ID,
 					(_tui, theme) =>
-						renderAuthorResult(update.details, { expanded: true, isPartial: true }, theme),
+						cardBox(
+							theme,
+							"toolPendingBg",
+							renderAuthorResult(update.details, { expanded: true, isPartial: true }, theme),
+						),
 				);
 			},
 			false,
 		);
+		addUsage(flowUsage, outcome.usage);
 		request = outcome.request;
 		specText = outcome.spec_text;
 		const ready = outcome.prepared.state === "ready_for_confirmation" &&
@@ -364,10 +542,25 @@ export async function runCommandFlow(pi: ExtensionAPI, args: string, ctx: Extens
 		}
 		const next = await presentPlan(ctx, outcome.details, ready);
 		if (next === "launch") {
-			await launchExperiment(pi, ctx, outcome.prepared.plan_id as string);
+			outcome.details.phase = "ready";
+			outcome.details.final = true;
+			stampFlow(outcome.details);
+			postAuthorCard(pi, outcome.details);
+			const experimentId = await launchExperiment(pi, ctx, outcome.prepared.plan_id as string);
+			if (experimentId) {
+				ctx.ui.notify(
+					`experiment ${experimentId} running — the prompt box stays live; ` +
+						`ask the session for updates or re-run /roastmyharness to watch, check status, or cancel.`,
+					"info",
+				);
+			}
 			return;
 		}
 		if (next === "cancel") {
+			outcome.details.phase = ready ? "ready" : "needs_input";
+			outcome.details.final = true;
+			stampFlow(outcome.details);
+			postAuthorCard(pi, outcome.details);
 			ctx.ui.notify(
 				ready ? `Plan kept on disk: ${request.output_path}` : "RoastMyHarness cancelled.",
 				"info",

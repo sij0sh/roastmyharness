@@ -6,30 +6,35 @@ import {
 	AUTHOR_CHILD_ENV,
 	DEFAULT_RECENT_TRIALS,
 	ROAST_ACTIONS,
+	TOOL_NAME,
 	WATCH_INTERVAL_SEC,
 	buildArgs,
+	getActiveRun,
 	roastBinary,
+	runRoastJson,
 	summarize,
 	type AuthorDetails,
 	type RoastDetails,
-	type RoastResponse,
 	type ServiceAction,
 	type WatchDetails,
 } from "./core.ts";
 import {
 	WIDGET_ID,
 	authorExperiment,
+	renderAuthorCard,
 	renderAuthorResult,
+	runActiveMenu,
 	runCommandFlow,
 } from "./author-flow.ts";
 import {
+	renderRunCard,
 	renderWatchResult,
+	startExperiment,
 	streamStartedExperiment,
 	streamWatch,
 	type WatchParams,
 } from "./watch.ts";
-
-const TOOL_NAME = "roast_harness";
+import { AUTHOR_CARD_TYPE, RUN_CARD_TYPE } from "./cards.ts";
 
 export default function (pi: ExtensionAPI) {
 	if (process.env[AUTHOR_CHILD_ENV] === "1") return;
@@ -53,6 +58,9 @@ export default function (pi: ExtensionAPI) {
 			toolUsedThisTurn = false;
 			return;
 		}
+		// A command-launched run keeps the tool visible so the session can
+		// answer update/cancel questions about it while the prompt box is live.
+		if (getActiveRun()) return;
 		hideTool();
 	});
 
@@ -72,7 +80,9 @@ export default function (pi: ExtensionAPI) {
 		wizardRunning = true;
 		showTool();
 		try {
-			await runCommandFlow(pi, args, ctx);
+			const active = getActiveRun();
+			const startNew = active ? await runActiveMenu(pi, ctx, active) : true;
+			if (startNew) await runCommandFlow(pi, args, ctx);
 		} catch (error) {
 			ctx.ui.setStatus(WIDGET_ID, undefined);
 			ctx.ui.setWidget(WIDGET_ID, undefined);
@@ -89,6 +99,14 @@ export default function (pi: ExtensionAPI) {
 		handler: launchWizard,
 	};
 	pi.registerCommand("roastmyharness", command);
+
+	// Persistent transcript cards for command-finished author sessions and
+	// benchmark runs. Same rendering as the roast_harness tool cards; the
+	// live widget covers streaming, these cards are the durable record.
+	pi.registerMessageRenderer(AUTHOR_CARD_TYPE, (message, options, theme) =>
+		renderAuthorCard(message.details, options.expanded, theme));
+	pi.registerMessageRenderer(RUN_CARD_TYPE, (message, options, theme) =>
+		renderRunCard(message.details, options.expanded, theme));
 
 	pi.registerTool({
 		name: "roast_harness",
@@ -204,48 +222,29 @@ export default function (pi: ExtensionAPI) {
 				return await streamWatch(params.experiment_id as string, watchParams, signal, onUpdate);
 			}
 
+			if (params.action === "start") {
+				const started = await startExperiment(pi, params.plan_id as string, {
+					skip_docker: params.skip_docker,
+					signal,
+				});
+				if (wantsWatch && started.experiment_id) {
+					return await streamStartedExperiment(started.experiment_id, watchParams, signal, onUpdate);
+				}
+				return {
+					content: [{ type: "text", text: summarize(started) }],
+					details: started,
+				};
+			}
+
 			const argv = buildArgs({ ...params, action: params.action as ServiceAction });
 			onUpdate?.({
 				content: [{ type: "text", text: `running: ${roastBinary()} ${argv.join(" ")}` }],
 				details: {},
 			});
-			let result;
-			try {
-				result = await pi.exec(roastBinary(), argv, { signal, timeout: 120_000 });
-			} catch (error) {
-				throw new Error(
-					`failed to run ${roastBinary()}: ${error instanceof Error ? error.message : String(error)}`,
-				);
-			}
-
-			const stdout = result.stdout.trim();
-			let parsed: RoastResponse | null = null;
-			if (stdout) {
-				try {
-					parsed = JSON.parse(stdout) as RoastResponse;
-				} catch {
-					
-				}
-			}
-			if (result.code !== 0 && parsed?.error) {
-				const err = parsed.error;
-				throw new Error(`error ${err.code ?? "unknown"}: ${err.message ?? stdout}`);
-			}
-			if (result.code !== 0 && !parsed) {
-				const text = (result.stderr.trim() || stdout || `exit code ${result.code}`).slice(0, 4000);
-				throw new Error(text);
-			}
-
-			if (wantsWatch && parsed?.experiment_id) {
-				return await streamStartedExperiment(parsed.experiment_id, watchParams, signal, onUpdate);
-			}
-
-			const text = parsed
-				? summarize(parsed)
-				: (stdout || "ok").slice(0, 4000);
+			const parsed = await runRoastJson(pi, argv, { signal });
 			return {
-				content: [{ type: "text", text }],
-				details: parsed ?? {},
+				content: [{ type: "text", text: summarize(parsed) }],
+				details: parsed,
 			};
 		},
 

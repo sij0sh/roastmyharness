@@ -1,4 +1,7 @@
 import type { Usage } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export const TOOL_NAME = "roast_harness";
 
 export const SERVICE_ACTIONS = ["prepare", "start", "status", "watch", "cancel", "report"] as const;
 export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
@@ -94,6 +97,8 @@ export interface WatchDetails {
 	summaries: TrialEvent[];
 	aggregates?: Record<string, Record<string, number>>;
 	report?: { markdown: string; csv: string } | null;
+	/** Wall-clock seconds since the watcher attached (stamped per event). */
+	elapsed_sec?: number;
 }
 
 export interface AuthorDetails {
@@ -107,6 +112,10 @@ export interface AuthorDetails {
 	model?: string;
 	spec_preview?: string;
 	prepared?: RoastResponse;
+	/** Author-child token usage accumulated for the shown attempt(s). */
+	usage?: Usage;
+	/** Wall-clock seconds spent authoring (final attempt, or whole flow). */
+	elapsed_sec?: number;
 }
 
 export type RoastDetails = RoastResponse | WatchDetails | AuthorDetails;
@@ -166,6 +175,7 @@ export function buildArgs(params: {
 	plan_id?: string;
 	experiment_id?: string;
 	skip_docker?: boolean;
+	interval_sec?: number;
 }): string[] {
 	const argv = ["tool", params.action];
 	switch (params.action) {
@@ -181,10 +191,81 @@ export function buildArgs(params: {
 			argv.push(params.experiment_id ?? "");
 			break;
 		case "watch":
+			argv.push(params.experiment_id ?? "");
+			if (params.interval_sec !== undefined) {
+				argv.push("--interval", String(Math.max(params.interval_sec, 0.2)));
+			}
 			break;
 	}
 	if (params.skip_docker) argv.push("--skip-docker");
 	return argv;
+}
+
+/** Minimal surface needed to run the roastmyharness binary (ExtensionAPI). */
+export type ExecHost = Pick<ExtensionAPI, "exec">;
+
+export const ROAST_JSON_TIMEOUT_MS = 120_000;
+
+/**
+ * Single execution place for unary roastmyharness JSON commands: run the
+ * binary, parse stdout JSON, and map failures to Errors. Used by the
+ * roast_harness tool, the slash-command launch, and spec validation alike,
+ * so all three stay on one error contract.
+ */
+export async function runRoastJson(
+	host: ExecHost,
+	args: string[],
+	opts?: { signal?: AbortSignal; timeout_ms?: number },
+): Promise<RoastResponse> {
+	let result;
+	try {
+		result = await host.exec(roastBinary(), args, {
+			signal: opts?.signal,
+			timeout: opts?.timeout_ms ?? ROAST_JSON_TIMEOUT_MS,
+		});
+	} catch (error) {
+		throw new Error(
+			`failed to run ${roastBinary()}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	const stdout = result.stdout.trim();
+	let parsed: RoastResponse | undefined;
+	try {
+		if (stdout) parsed = JSON.parse(stdout) as RoastResponse;
+	} catch {
+	}
+	if (!parsed) {
+		throw new Error((result.stderr.trim() || stdout || `exit code ${result.code}`).slice(0, 4000));
+	}
+	if (result.code !== 0 && parsed.error) {
+		throw new Error(`error ${parsed.error.code ?? "unknown"}: ${parsed.error.message ?? stdout}`);
+	}
+	return parsed;
+}
+
+/** A command-launched experiment run tracked while its worker is alive. */
+export interface ActiveRun {
+	experiment_id: string;
+	plan_id: string;
+	started_at: number;
+	/** Detach the live widget watcher, if one is attached. The run keeps going. */
+	abortWatch: () => void;
+}
+
+let activeRun: ActiveRun | undefined;
+
+export function getActiveRun(): ActiveRun | undefined {
+	return activeRun;
+}
+
+export function setActiveRun(run: ActiveRun): void {
+	activeRun?.abortWatch();
+	activeRun = run;
+}
+
+/** Forget the tracked run only when it refers to this experiment. */
+export function clearActiveRun(experimentId: string): void {
+	if (activeRun?.experiment_id === experimentId) activeRun = undefined;
 }
 
 export function summarize(r: RoastResponse): string {
@@ -208,11 +289,36 @@ export function summarize(r: RoastResponse): string {
 	return parts.join(" ");
 }
 
-function formatTokens(count: number): string {
+export function formatTokens(count: number): string {
 	const k = count / 1000;
 	if (k >= 100) return `${Math.round(k)}k`;
 	if (k >= 1) return `${k.toFixed(0)}k`;
 	return count.toFixed(0);
+}
+
+export function formatElapsed(sec: number): string {
+	if (!Number.isFinite(sec) || sec < 0) return "0s";
+	const total = Math.floor(sec);
+	const hours = Math.floor(total / 3600);
+	const minutes = Math.floor((total % 3600) / 60);
+	const seconds = total % 60;
+	if (hours > 0) return `${hours}h${minutes}m`;
+	if (minutes > 0) return `${minutes}m${String(seconds).padStart(2, "0")}s`;
+	return `${seconds}s`;
+}
+
+/** One-line author-child telemetry: tokens in/out/cache plus cost when known. */
+export function formatUsage(usage: Usage | undefined): string {
+	if (!usage) return "";
+	const parts = [
+		`in ${formatTokens(numeric(usage.input))}`,
+		`out ${formatTokens(numeric(usage.output))}`,
+	];
+	const cache = numeric(usage.cacheRead) + numeric(usage.cacheWrite);
+	if (cache > 0) parts.push(`cache ${formatTokens(cache)}`);
+	const cost = usage.cost ? numeric(usage.cost.total) : 0;
+	if (cost > 0) parts.push(`$${cost.toFixed(cost >= 1 ? 2 : 4)}`);
+	return parts.join(" · ");
 }
 
 export function formatAggregates(
