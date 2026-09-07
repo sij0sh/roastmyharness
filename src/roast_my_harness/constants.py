@@ -20,3 +20,11 @@ EXIT_CODES = {"FAILED": 2, "CANCELLED": 3}
 # Fairness flags kept identical for every arm so repo/global context files
 # and per-variant cosmetics cannot differ.
 FAIRNESS_FLAGS = "--no-skills --no-prompt-templates --no-themes -nc"
+
+# Deterministic git identity configured in every agent container at setup.
+# Agents are instructed to commit their work, and patch collection diffs the
+# working tree, but a commit still fails without user.name/user.email (and on
+# dubious-ownership checkouts). A fixed identity keeps commits working the
+# same way on every trial instead of depending on image bake state.
+GIT_IDENTITY_NAME = "roastmyharness"
+GIT_IDENTITY_EMAIL = "roastmyharness@local"

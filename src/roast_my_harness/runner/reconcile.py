@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from roast_my_harness.runner.patch_guard import classify_empty_patch
+
 PASS_THRESHOLD = 0.999
 
 _log = logging.getLogger(__name__)
@@ -123,6 +125,14 @@ def reconcile_variant(variant_id: str, jobs_dir: Path, known_tasks: set[str]) ->
             except (TypeError, ValueError):
                 continue
             status = "pass" if reward >= PASS_THRESHOLD else "fail"
+            if status == "fail" and reward == 0.0:
+                # Same guard as _cell_from_result: an empty patch beside
+                # mutation evidence (or a failed artifact copy) is a
+                # collection failure, never a quality 0.
+                guard = classify_empty_patch(trial_dir)
+                if guard is not None:
+                    status = "error"
+                    exception = guard
         timing = result.get("agent_execution") or {}
         finished = timing.get("finished_at")
         cell = Cell(
@@ -164,6 +174,29 @@ def is_throttle_error(exception_type: str | None) -> bool:
         return False
     lowered = str(exception_type).lower()
     return any(m in lowered for m in _THROTTLE_MARKERS)
+
+
+_TIMEOUT_MARKERS = (
+    "timeout",
+    "timed out",
+    "timedout",
+    "deadline exceeded",
+)
+
+
+def is_timeout_error(exception_type: str | None) -> bool:
+    """True when an error label looks like a harness timeout, not agent output.
+
+    Covers pier's hard verifier/agent bounds (asyncio TimeoutError via
+    wait_for) and the smoke probe's ProbeTimeoutError. Timeout trials are
+    infrastructure outcomes: the trial never produced a gradable result, so
+    they must read as infra errors rather than quality signal. Pair with
+    is_throttle_error when grouping report errors.
+    """
+    if not exception_type:
+        return False
+    lowered = str(exception_type).lower()
+    return any(m in lowered for m in _TIMEOUT_MARKERS)
 
 
 def _resolve_task_id(raw_task: str, trial_dir: Path, known_tasks: set[str]) -> str | None:
@@ -228,6 +261,14 @@ def _cell_from_result(
         except (TypeError, ValueError):
             return None
         status = "pass" if reward >= PASS_THRESHOLD else "fail"
+        if status == "fail" and reward == 0.0:
+            # Zero-byte patch beside evidence of agent mutations (or a
+            # failed artifact copy) is a collection failure, not a quality
+            # signal: mark it so reports exclude it instead of scoring 0.
+            guard = classify_empty_patch(trial_dir)
+            if guard is not None:
+                status = "error"
+                exception = guard
     timing = result.get("agent_execution") or {}
     finished = timing.get("finished_at")
     return Cell(

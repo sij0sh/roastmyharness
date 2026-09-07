@@ -4,6 +4,11 @@
 
 ### Added
 
+- `resume` accepts `--task`, `--variant` (both repeatable), and
+  `--retry-errors` to rerun individual cells. Pier starts a new attempt
+  per selected cell and reconciliation keeps the newest, so completed
+  cells stay intact; without filters, resume keeps running only missing
+  cells.
 - `/roastmyharness` posts persistent Spec author and Benchmark transcript
   cards (same rendering as the `roast_harness` tool cards, wrapped in the
   same colored success/pending/error container) when authoring finishes
@@ -138,6 +143,33 @@ Simplification pass (complexity audit 20260826184821-a3fbe704, Tiers 0-1).
 - Trial reconciliation no longer overwrites a `verifier/reward.json`
   fallback reward with 0.0. Cells and control observations now record the
   true reward for such trials.
+
+- Patch-collection hardening across the bundled DeepSWE tasks and the
+  harness, so agent work can no longer silently grade 0:
+
+  - Every agent container now configures a deterministic git identity
+    (`roastmyharness` / `roastmyharness@local`, plus `safe.directory`
+    for `/app`) during adapter setup, covering the `pi` and `omp` agents.
+    Agent commits previously failed for missing identity, which emptied
+    every commit-dependent patch. The same identity is baked into all 113
+    task `environment/Dockerfile` recipes for future image rebuilds.
+  - All 113 task `[[verifier.collect]]` hooks now diff the working tree
+    against the base commit instead of `base → HEAD`, fold untracked
+    files in via intent-to-add (ignores still respected), and record the
+    collect-time tree in `artifacts/worktree-status.txt`.
+  - Reconcile and report rows now classify a zero-byte `model.patch`
+    beside mutation evidence as `INVALID_EMPTY_PATCH`, and a failed
+    `model.patch` artifact download (per pier's `manifest.json`) as
+    `INFRA_ARTIFACT_COPY`, instead of scoring fail/0. A genuinely idle
+    agent (clean tree, no writes, artifacts copied fine) keeps its fail.
+  - Timeout-shaped errors now match `is_timeout_error` (mirroring
+    `is_throttle_error`) and render as `[infra-timeout]` in progress;
+    pier's per-task `verifier.timeout_sec` remains the hard bound, and
+    `resume --retry-errors` picks timed-out cells back up.
+
+  Task file edits change task content hashes, so experiments created
+  before this change keep their stored identity and refuse resume with a
+  pointer to the new id; start a fresh experiment for the fixed corpus.
 
 ### Removed (breaking for experiment ids)
 

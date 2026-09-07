@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from roast_my_harness.runner.patch_guard import classify_empty_patch
 from roast_my_harness.runner.reconcile import PASS_THRESHOLD
 from roast_my_harness.telemetry.parser import (
     final_event_metrics,
@@ -104,6 +105,14 @@ def _row_base(result_path: Path, variant: str) -> dict[str, Any] | None:
         reward = 0.0
     if exception_type:
         reward = 0.0
+    if not exception_type and reward == 0.0:
+        # Same guard as reconcile: an empty patch beside mutation evidence
+        # (or a failed artifact copy) is a collection failure. The row
+        # becomes an infra error so quality stats exclude it instead of
+        # averaging it in as a failure.
+        guard = classify_empty_patch(trial_dir)
+        if guard is not None:
+            exception_type = guard
     resolved = not exception_type and reward >= PASS_THRESHOLD
     agent = result.get("agent_result") or {}
     timing = result.get("agent_execution") or {}

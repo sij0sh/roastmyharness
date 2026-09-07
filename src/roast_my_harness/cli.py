@@ -206,8 +206,26 @@ def run(
 @app.command()
 def resume(
     experiment_id: str = typer.Argument(..., help="Experiment id from `list`."),
+    task: list[str] = typer.Option(
+        [],
+        "--task",
+        help="Rerun only this task cell (repeatable).",
+    ),
+    variant: list[str] = typer.Option(
+        [],
+        "--variant",
+        help="Rerun only this variant arm (repeatable).",
+    ),
+    retry_errors: bool = typer.Option(
+        False, "--retry-errors", help="Also re-run cells whose status is error."
+    ),
 ) -> None:
-    """Reconcile completed trials, then run only missing cells."""
+    """Reconcile completed trials, then run only missing cells.
+
+    With --task/--variant/--retry-errors, rerun individual cells instead:
+    pier starts a new attempt per selected cell and reconciliation keeps the
+    newest, so completed cells stay intact.
+    """
     repo = _repo()
     row = repo.get_experiment(experiment_id)
     if row is None:
@@ -217,9 +235,25 @@ def resume(
 
     spec = ExperimentSpec.model_validate(json.loads(row["spec_json"]))
     controller = ExperimentController(
-        spec, experiment_id, Path(row["run_dir"]), repo,
-        _print_progress, _ask_reuse if sys.stdin.isatty() else None,
+        spec,
+        experiment_id,
+        Path(row["run_dir"]),
+        repo,
+        _print_progress,
+        _ask_reuse if sys.stdin.isatty() else None,
     )
+    if task or variant or retry_errors:
+        from roast_my_harness.errors import PierError
+
+        try:
+            controller.set_rerun_filter(
+                tasks=list(task) or None,
+                variants=list(variant) or None,
+                retry_errors=retry_errors,
+            )
+        except PierError as error:
+            typer.secho(str(error), fg=typer.colors.RED)
+            raise typer.Exit(1) from None
     with ExperimentLock(controller.run_dir):
         final = asyncio.run(_run_with_cancel(controller, prepare=True))
     raise typer.Exit(_exit_for_final_state(experiment_id, final))

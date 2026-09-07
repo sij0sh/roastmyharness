@@ -41,6 +41,8 @@ from roast_my_harness.constants import (
     CODEX_PROVIDER,
     DEFAULT_PI_VERSION,
     FAIRNESS_FLAGS,
+    GIT_IDENTITY_EMAIL,
+    GIT_IDENTITY_NAME,
 )
 
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
@@ -273,6 +275,7 @@ class PiAgent(BaseInstalledAgent):
     async def setup(self, environment: BaseEnvironment) -> None:
         await super().setup(environment)
         await self._upload_home(environment)
+        await self._ensure_git_identity(environment)
         for package in self._manifest.get("npm_packages") or []:
             await setup_handlers.npm_pi_install(
                 self, environment, {"package": package}
@@ -302,6 +305,20 @@ class PiAgent(BaseInstalledAgent):
                 f"chmod 0600 {auth} || true; fi"
             ),
         )
+
+    async def _ensure_git_identity(self, environment: BaseEnvironment) -> None:
+        """Deterministic git identity for the agent user, every trial.
+
+        Task instructions tell the agent to commit its work, but task images
+        bake no user.name/user.email, so those commits fail and patch
+        collection (plus any commit-dependent grading) sees nothing. The
+        safe.directory entry covers checkouts owned by another uid, which
+        otherwise fail with dubious-ownership before identity even matters.
+        Runs as the agent user so the identity lands in the committing
+        user's config. Loud on failure: a trial that cannot configure git
+        identity would silently contaminate results.
+        """
+        await self.exec_as_agent(environment, command=git_identity_command())
 
     # -------------------------------------------------------------- run ---
 
@@ -385,3 +402,15 @@ class PiAgent(BaseInstalledAgent):
         final_metrics: FinalMetrics | None = trajectory.final_metrics
         if final_metrics:
             populate_context_from_final_metrics(context, final_metrics)
+
+
+def git_identity_command() -> str:
+    """Shell command configuring the deterministic agent git identity."""
+    name = shlex.quote(GIT_IDENTITY_NAME)
+    email = shlex.quote(GIT_IDENTITY_EMAIL)
+    return (
+        "set -e; "
+        f"git config --global user.name {name} "
+        f"&& git config --global user.email {email} "
+        "&& git config --global --add safe.directory /app"
+    )

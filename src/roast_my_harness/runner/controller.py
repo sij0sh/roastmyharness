@@ -31,9 +31,14 @@ from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import probe as probe_mod
 from roast_my_harness.runner import process as process_mod
 from roast_my_harness.runner.control_reuse import ControlReuse
+from roast_my_harness.runner.patch_guard import (
+    INFRA_ARTIFACT_COPY,
+    INVALID_EMPTY_PATCH,
+)
 from roast_my_harness.runner.reconcile import (
     Cell,
     is_throttle_error,
+    is_timeout_error,
     missing_tasks,
     reconcile_variant,
     reconcile_variant_incremental,
@@ -89,6 +94,9 @@ class ExperimentController:
         self._logger = RunLogger(self.run_dir / "logs" / "run.jsonl", experiment_id)
 
         self._observed_task_ids: list[str] | None = None
+        self._rerun_tasks: set[str] | None = None
+        self._rerun_variants: set[str] | None = None
+        self._retry_errors: bool = False
         self.smoke_result: probe_mod.ProbeResult | None = None
         self._reconcile_state: dict[str, dict[str, tuple[float, str, Cell | None]]] = {}
         self._last_parse_count = 0
@@ -385,6 +393,46 @@ class ExperimentController:
             progress=self._progress,
         )
 
+    def set_rerun_filter(
+        self,
+        *,
+        tasks: list[str] | None = None,
+        variants: list[str] | None = None,
+        retry_errors: bool = False,
+    ) -> None:
+        """Restrict launches to individual cells (resume reruns).
+
+        tasks/variants select cells; retry_errors additionally re-runs cells
+        whose reconciled status is error (timeouts, invalid patches, infra
+        failures). Without any filter, resume keeps its default behavior of
+        running only missing cells. Unknown ids raise PierError before
+        anything launches.
+        """
+        known_tasks = {
+            t.task_id
+            for t in discover_tasks(
+                self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
+            )
+        }
+        if tasks is not None:
+            unknown = [t for t in tasks if t not in known_tasks]
+            if unknown:
+                raise PierError(
+                    f"unknown task(s) for this experiment: {', '.join(unknown)} "
+                    f"(known: {', '.join(sorted(known_tasks))})"
+                )
+            self._rerun_tasks = set(tasks)
+        known_variants = {v.id for v in self.spec.arms()}
+        if variants is not None:
+            unknown = [v for v in variants if v not in known_variants]
+            if unknown:
+                raise PierError(
+                    f"unknown variant(s) for this experiment: {', '.join(unknown)} "
+                    f"(known: {', '.join(sorted(known_variants))})"
+                )
+            self._rerun_variants = set(variants)
+        self._retry_errors = retry_errors
+
     def _launch(self) -> None:
         """Prepare process objects per variant with only missing tasks."""
         tasks = discover_tasks(
@@ -394,14 +442,35 @@ class ExperimentController:
         self._refresh_cells()
         agents = self.spec.resolved_agents()
         held = self.control_reuse.held_tasks() if self.control_reuse.held_pending() else set()
+        scope_tasks = self._rerun_tasks
+        scope_variants = self._rerun_variants
+        if scope_tasks is not None or scope_variants is not None or self._retry_errors:
+            task_scope = ",".join(sorted(scope_tasks)) if scope_tasks is not None else "*"
+            variant_scope = ",".join(sorted(scope_variants)) if scope_variants is not None else "*"
+            retry = " retry-errors" if self._retry_errors else ""
+            self._progress(f"rerun filter: tasks={task_scope} variants={variant_scope}{retry}")
         missing_by_job: dict[str, list[str]] = {}
+        order = {task_id: idx for idx, task_id in enumerate(all_ids)}
         for job in self.jobs.values():
             job.proc = None
+            if self._rerun_variants is not None and job.variant_id not in self._rerun_variants:
+                continue
             missing = missing_tasks(self.cells.get(job.variant_id, {}), all_ids)
+            if self._retry_errors:
+                cells = self.cells.get(job.variant_id, {})
+                retried = [t for t, c in cells.items() if c.status == "error" and t in order]
+                missing = missing + [t for t in retried if t not in missing]
+            if self._rerun_tasks is not None:
+                missing = [task_id for task_id in missing if task_id in self._rerun_tasks]
             if job.variant_id == "control":
                 missing = [task_id for task_id in missing if task_id not in held]
+            missing = sorted(set(missing), key=order.__getitem__)
             if missing:
                 missing_by_job[job.variant_id] = missing
+        if not missing_by_job and (
+            scope_tasks is not None or scope_variants is not None or self._retry_errors
+        ):
+            self._progress("rerun filter matched no runnable cells")
         n_concurrent = self.spec.concurrency.effective_per_variant(len(missing_by_job))
         for job in self.jobs.values():
             missing = missing_by_job.get(job.variant_id)
@@ -520,6 +589,12 @@ class ExperimentController:
                 label = ""
                 if cell.status == "error" and is_throttle_error(cell.exception_type):
                     label = " [throttled]"
+                elif cell.status == "error" and is_timeout_error(cell.exception_type):
+                    label = " [infra-timeout]"
+                elif cell.exception_type == INVALID_EMPTY_PATCH:
+                    label = " [invalid-patch]"
+                elif cell.exception_type == INFRA_ARTIFACT_COPY:
+                    label = " [infra-artifact]"
                 self._progress(
                     f"{variant_id}/{task_id}: {cell.status}{label}"
                     + (f" reward={cell.reward}" if cell.status != "error" else "")

