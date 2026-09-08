@@ -32,7 +32,7 @@ def spec_toml(top: str = "", control: str = "", variants: str = 'id = "a"') -> s
 
     Top-level keys precede every table header, as TOML requires.
     """
-    parts = ["schema_version = 1", 'name = "agents"']
+    parts = ["schema_version = 2", 'name = "agents"']
     if top:
         parts.append(top)
     parts += ["[tasks]", 'path = "/tmp/does-not-need-to-exist"']

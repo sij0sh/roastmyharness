@@ -33,7 +33,7 @@ def test_omp_registry_entry():
 def test_omp_spec_resolution(tmp_path):
     toml = "\n".join(
         [
-            "schema_version = 1",
+            "schema_version = 2",
             'name = "omp"',
             "[tasks]",
             'path = "/tmp/does-not-need-to-exist"',

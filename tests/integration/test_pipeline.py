@@ -11,7 +11,7 @@ from roast_my_harness.tasks.discover import discover_tasks
 from roast_my_harness.tasks.hashes import task_hash
 
 SPEC = """
-schema_version = 1
+schema_version = 2
 name = "integration"
 pi_version = "0.84.3"
 thinking = "high"

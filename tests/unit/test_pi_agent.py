@@ -113,6 +113,56 @@ def test_git_identity_command_deterministic():
     assert "git config --global --add safe.directory /app" in first
 
 
+async def test_run_prepends_context_files_once(tmp_path: Path):
+    """Explicit files ride in-context ahead of the task; the fairness
+    flags stay on, and resume steps rejoining the session must not see
+    the content a second time."""
+    import types
+
+    agent = _pi_agent(
+        tmp_path,
+        "ctxhome",
+        context_files=[
+            {
+                "name": "agents-md",
+                "path": "context-files/agents-md",
+                "kind": "agents",
+            }
+        ],
+    )
+    staged = tmp_path / "ctxhome" / "context-files"
+    staged.mkdir(parents=True)
+    (staged / "agents-md").write_text("Be brief.")
+    commands: list[str] = []
+
+    async def fake_exec_as_agent(environment, command, **kwargs):
+        commands.append(command)
+        return types.SimpleNamespace(return_code=0)
+
+    resumed = {"value": False}
+
+    async def fake_prior_session(environment):
+        return resumed["value"]
+
+    agent.exec_as_agent = fake_exec_as_agent  # type: ignore[method-assign]
+    agent._prior_session_exists = fake_prior_session  # type: ignore[method-assign]
+    agent._referenced_env_vars = lambda: {}
+    agent._staged_env = lambda: {}
+    agent._host_env = lambda: {}
+    # __wrapped__ bypasses pier's prompt-template decorator to exercise
+    # the harness-owned command construction only.
+    await PiAgent.run.__wrapped__(agent, "Do the task.", environment=None, context=None)
+    fresh = commands[-1]
+    assert "<roastmyharness-context-file" in fresh
+    assert fresh.index("Be brief.") < fresh.index("Do the task.")
+    assert "-nc" in fresh
+    resumed["value"] = True
+    await PiAgent.run.__wrapped__(agent, "Do the task.", environment=None, context=None)
+    resumed_cmd = commands[-1]
+    assert "<roastmyharness-context-file" not in resumed_cmd
+    assert "--continue" in resumed_cmd
+
+
 async def test_setup_git_identity_runs_as_agent_user(tmp_path: Path):
     """Regression: agent commits failed for missing identity, emptying patches.
 

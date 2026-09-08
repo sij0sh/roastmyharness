@@ -9,6 +9,11 @@ from pathlib import Path
 from roast_my_harness.homes.sanitize import iter_source_files
 
 
+def source_file_hash(src: Path) -> str:
+    """Content hash of one staged file (context files are files, not trees)."""
+    return hashlib.sha256(src.read_bytes()).hexdigest()
+
+
 def source_tree_hash(src: Path, extra_excludes: list[str] | None = None) -> str:
     """Hash exactly the files the builder would copy (same iteration)."""
     sha = hashlib.sha256()

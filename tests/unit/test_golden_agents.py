@@ -20,7 +20,7 @@ from roast_my_harness.spec.load import load_experiment
 GOLDENS = Path(__file__).resolve().parent.parent / "golden" / "agents"
 
 SPEC_TOML = """\
-schema_version = 1
+schema_version = 2
 name = "golden-agents"
 pi_version = "0.84.3"
 

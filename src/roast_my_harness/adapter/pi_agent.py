@@ -333,6 +333,17 @@ class PiAgent(BaseInstalledAgent):
         run_env.update(self._host_env())
         extra_flags = list(self._manifest.get("pi_flags") or [])
         skills = [s.get("path", "") for s in self._manifest.get("skills") or []]
+        resume = await self._prior_session_exists(environment)
+        if resume:
+            self.logger.info("Resuming prior pi session for staged follow-up step")
+        if not resume:
+            # Explicit context files ride in-context; the fairness flags
+            # still strip every implicit copy. Resume steps rejoin the
+            # session that already holds them, so prepending again would
+            # duplicate content.
+            instruction = cmd.with_context_files(
+                instruction, self._staged_context_files()
+            )
         command = cmd.build_run_command(
             model=self.model_name or "",
             instruction=instruction,
@@ -341,8 +352,51 @@ class PiAgent(BaseInstalledAgent):
             extra_flags=extra_flags,
             fairness_flags=self.FAIRNESS,
             binary=self.BINARY,
+            resume=resume,
         )
         await self.exec_as_agent(environment, command=command, env=run_env)
+
+    def _staged_context_files(self) -> list[tuple[str, str]]:
+        """(name, content) of declared context files from the staged home.
+
+        Loud on a missing staged file: silent non-delivery would
+        invalidate the arm without a trace.
+        """
+        files: list[tuple[str, str]] = []
+        for entry in self._manifest.get("context_files") or []:
+            rel = entry.get("path", "")
+            name = entry.get("name", "") or rel
+            if not rel:
+                continue
+            staged = self._home_dir / rel
+            try:
+                content = staged.read_text(encoding="utf-8")
+            except OSError as error:
+                raise RuntimeError(
+                    f"context file {name!r} missing from staged home: "
+                    f"{staged} ({error})"
+                ) from error
+            files.append((name, content))
+        return files
+
+    async def _prior_session_exists(self, environment: BaseEnvironment) -> bool:
+        """True when a pi session from an earlier step awaits resume.
+
+        Staged (multi-step) trials run one pi process per step in the same
+        container; steps after the first must rejoin the same session so
+        context accumulates instead of resetting. Single-step trials and
+        first steps have no session dir yet. Fail-safe: any error means a
+        fresh start (today's behavior).
+        """
+        session_dir = f"{cmd.SESSION_BASE_DIR}/{cmd.SESSIONS_DIR}"
+        try:
+            result = await self.exec_as_agent(
+                environment,
+                command=f'test -n "$(ls -A {session_dir} 2>/dev/null)"',
+            )
+        except Exception:
+            return False
+        return getattr(result, "return_code", 1) == 0
 
     def _staged_env(self) -> dict[str, str]:
         """Literal variant env from the per-run staged env.json.

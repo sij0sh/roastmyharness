@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 name = "local-extension"
 pi_version = "latest"
 thinking = "high"
@@ -17,10 +17,13 @@ per_variant = 2
 
 [control]
 enabled = true
-reuse = "never" # change to "ask" or "require" to use eligible history
-minimum_runs_per_task = 10
+mode = "fresh" # change to "historic" to reuse eligible history
+history_scope = "hybrid" # or "intersection" for history-backed tasks only
+minimum_runs_per_task = 4
 maximum_age_days = 30
-sentinel_tasks = 6
+sentinel_tasks = 4
+on_drift = "fresh"
+on_inconclusive = "fresh"
 
 [[variants]]
 id = "my-ext"
@@ -30,6 +33,12 @@ name = "My extension"
 kind = "local"
 path = "~/my-extensions/my-extension"
 entry = "src/index.ts"
+
+# Explicit repo instruction file, delivered in-context while implicit
+# copies stay stripped (kind = "agents" only for now).
+[[variants.context_files]]
+kind = "agents"
+path = "~/my-extensions/my-extension/AGENTS.md"
 
 [variants.env]
 MY_EXTENSION_SETTING = "2"

@@ -43,3 +43,33 @@ def test_run_command_quotes_extra_flags():
     assert "'--name=one; echo leaked'" in command
 
 
+
+
+def _base_kwargs(**over):
+    kw = dict(
+        model="openai-codex/model",
+        instruction="work",
+        thinking=None,
+        skill_paths=[],
+        extra_flags=[],
+    )
+    kw.update(over)
+    return kw
+
+
+def test_run_command_fresh_omits_continue():
+    command = build_run_command(**_base_kwargs())
+    assert "--continue" not in command
+
+
+def test_run_command_resume_appends_continue():
+    command = build_run_command(**_base_kwargs(resume=True))
+    assert " --continue " in command
+
+
+def test_run_command_session_dir_is_container_local():
+    # Staged trials relocate /logs/agent per step; the session must live
+    # somewhere the relocate cannot move it.
+    command = build_run_command(**_base_kwargs())
+    assert "--session-dir /tmp/pi-sessions" in command
+    assert "/logs/agent/pi-sessions" not in command

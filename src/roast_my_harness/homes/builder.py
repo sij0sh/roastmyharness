@@ -18,15 +18,22 @@ from pathlib import Path
 
 from roast_my_harness.errors import HomeBuildError
 from roast_my_harness.homes.manifest import (
+    ManifestContextFile,
     ManifestExtension,
     ManifestSetupStep,
     ManifestSkill,
     VariantManifest,
 )
 from roast_my_harness.homes.sanitize import INSTRUCTION_FILES
-from roast_my_harness.homes.sources import copy_runtime_packages, copy_source_tree, source_tree_hash
+from roast_my_harness.homes.sources import (
+    copy_runtime_packages,
+    copy_source_tree,
+    source_file_hash,
+    source_tree_hash,
+)
 from roast_my_harness.spec.hashes import variant_hash
 from roast_my_harness.spec.models import (
+    ContextFileSpec,
     ExperimentSpec,
     LocalExtension,
     SkillSpec,
@@ -59,6 +66,11 @@ def _skill_name(skill: SkillSpec) -> str:
     return _checked_component(name, "skill name")
 
 
+def _context_file_name(ctx: ContextFileSpec) -> str:
+    name = ctx.name or _source_name(ctx.path, "context-file")
+    return _checked_component(name, "context file name")
+
+
 def _checked_component(value: str, what: str) -> str:
     try:
         return _safe_relative_component(value, what)
@@ -75,6 +87,9 @@ def compute_source_hashes(variant: VariantSpec) -> dict[str, str]:
     for skill in variant.skills:
         name = _skill_name(skill)
         hashes[f"skill:{name}"] = source_tree_hash(skill.path)
+    for ctx in variant.context_files:
+        name = _context_file_name(ctx)
+        hashes[f"ctx:{name}"] = source_file_hash(ctx.path)
     return hashes
 
 
@@ -94,8 +109,21 @@ def compute_variant_hash(
     )
 
 
-def resolve_arm_agent(spec: ExperimentSpec, variant: VariantSpec) -> tuple[str, str]:
+def resolve_arm_agent(
+    spec: ExperimentSpec,
+    variant: VariantSpec,
+    *,
+    agent_version: str | None = None,
+) -> tuple[str, str]:
+    """Arm agent plus the exact version to install.
+
+    agent_version pins the answer (the prepare-time frozen value); when
+    None the pin resolves live, which callers must only use outside a
+    frozen run (tests, one-off builds).
+    """
     agent_id = variant.agent or spec.agent
+    if agent_version is not None:
+        return agent_id, agent_version
     return agent_id, spec.resolved_version_for(agent_id)
 
 
@@ -103,9 +131,22 @@ def build_home(
     variant: VariantSpec,
     spec: ExperimentSpec,
     homes_root: Path,
+    *,
+    agent_version: str | None = None,
 ) -> HomeBuild:
     """Build (or return cached) home for one variant arm."""
-    agent_id, agent_version = resolve_arm_agent(spec, variant)
+    agent_id, agent_version = resolve_arm_agent(
+        spec, variant, agent_version=agent_version
+    )
+    # Files (unlike trees) must exist before hashing: a missing file has
+    # no content to bind, so fail here with a domain error instead of an
+    # OSError from the hash step.
+    for ctx in variant.context_files:
+        if not ctx.path.is_file():
+            raise HomeBuildError(
+                f"context file {_context_file_name(ctx)!r} is not a file "
+                f"at {ctx.path}"
+            )
     v_hash = compute_variant_hash(
         variant, spec.pi_version, agent=agent_id, agent_version=agent_version
     )
@@ -165,6 +206,17 @@ def build_home(
             rel = f"skills/{name}"
             skills.append(ManifestSkill(name=name, path=rel))
 
+        context_files: list[ManifestContextFile] = []
+        for ctx in variant.context_files:
+            name = _context_file_name(ctx)
+            dst = tmp / "context-files" / name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(ctx.path.read_bytes())
+            rel = f"context-files/{name}"
+            context_files.append(
+                ManifestContextFile(name=name, path=rel, kind=ctx.kind)
+            )
+
         (tmp / "settings.json").write_text(
             json.dumps({"extensions": entries}, indent=2) + "\n"
         )
@@ -185,6 +237,7 @@ def build_home(
             model_id=spec.model.full_id(),
             extensions=manifest_exts,
             skills=skills,
+            context_files=context_files,
             npm_packages=npm_packages,
             env={},
             env_from_host=list(variant.env_from_host),
@@ -249,6 +302,7 @@ def _setup_args(step) -> dict[str, str]:
 def _validate_sources(variant: VariantSpec) -> None:
     paths: list[Path] = [e.path for e in variant.extensions if e.kind == "local"]
     paths += [s.path for s in variant.skills]
+    paths += [c.path.parent for c in variant.context_files]
     for path in paths:
         if path.exists() and (path.stat().st_mode & 0o002):
             raise HomeBuildError(
@@ -258,10 +312,15 @@ def _validate_sources(variant: VariantSpec) -> None:
 
 
 def _assert_no_instruction_leaks(home: Path) -> None:
+    # Explicitly declared context files live under context-files/ (hashed,
+    # manifest-recorded); only implicit copies elsewhere are leaks.
+    staged = home / "context-files"
     leaked = [
         str(p.relative_to(home))
         for p in home.rglob("*")
-        if p.is_file() and p.name in INSTRUCTION_FILES
+        if p.is_file()
+        and p.name in INSTRUCTION_FILES
+        and staged not in p.parents
     ]
     if leaked:
         raise HomeBuildError(f"instruction files leaked into home: {leaked}")
