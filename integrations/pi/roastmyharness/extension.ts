@@ -130,7 +130,7 @@ export default function (pi: ExtensionAPI) {
 				description: "Orchestration action to perform.",
 			}),
 			task_root: Type.Optional(
-				Type.String({ description: "Task dataset path hint for the author wizard." }),
+				Type.String({ description: "Task dataset path (author wizard hint; --tasks root for catalog)." }),
 			),
 			spec_path: Type.Optional(
 				Type.String({ description: "Experiment TOML path (required for prepare)." }),

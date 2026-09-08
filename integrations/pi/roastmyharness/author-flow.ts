@@ -24,6 +24,8 @@ import {
 	summarize,
 	type ActiveRun,
 	type AuthorDetails,
+	type AvailabilityInfo,
+	type CatalogResponse,
 	type RoastResponse,
 	type ThemeLike,
 } from "./core.ts";
@@ -37,8 +39,10 @@ import type { Component } from "@earendil-works/pi-tui";
 import {
 	appendActivity,
 	authorUpdate,
+	buildReviewSummary,
 	choiceMismatch,
 	compactText,
+	fetchAvailability,
 	prepareProblem,
 	runAuthorChild,
 	type AuthorRequest,
@@ -85,10 +89,23 @@ export function renderAuthorResult(
 	if (details.prepared?.experiment) {
 		const experiment = details.prepared.experiment;
 		text += `\n  ${theme.fg("accent", `${experiment.trials} trials`)}` +
-			theme.fg("muted", ` · ${experiment.tasks} tasks x ${experiment.arms} arms`) +
+			theme.fg("muted", ` · ${experiment.tasks} tasks x ${experiment.arms} arms x ${experiment.repetitions ?? 1} reps`) +
 			theme.fg("dim", ` · max ${experiment.max_parallel} parallel`);
 		text += `\n  ${theme.fg("muted", "model ")}${experiment.model}`;
 		if (experiment.thinking) text += theme.fg("dim", ` · ${experiment.thinking}`);
+		if (experiment.resolved_pi_version) {
+			text += theme.fg("dim", ` · pi ${experiment.resolved_pi_version}`);
+		}
+		if (details.review?.eval) {
+			text += `\n  ${theme.fg("muted", "eval ")}${details.review.eval}`;
+		}
+		if (details.review?.preset) {
+			text += `\n  ${theme.fg("muted", "preset ")}${details.review.preset}`;
+		}
+		if (details.review) {
+			text += `\n  ${theme.fg("muted", "tasks ")}${details.review.mix}`;
+			text += `\n  ${theme.fg("muted", "estimate ")}${details.review.estimate}`;
+		}
 		if (experiment.arm_ids?.length) {
 			text += `\n  ${theme.fg("muted", "arms ")}${experiment.arm_ids.join(", ")}`;
 		}
@@ -99,6 +116,12 @@ export function renderAuthorResult(
 		}
 		if (experiment.control && experiment.control !== "excluded") {
 			text += `\n  ${theme.fg("muted", "control ")}${experiment.control}`;
+		}
+		if (details.availability) {
+			text += `\n  ${theme.fg("muted", "history ")}${formatAvailability(details.availability)}`;
+		}
+		if (experiment.hypothesis) {
+			text += `\n  ${theme.fg("muted", "hypothesis ")}${compactText(experiment.hypothesis, expanded ? 500 : 160)}`;
 		}
 	}
 	for (const warning of details.prepared?.warnings ?? []) {
@@ -122,6 +145,35 @@ export function renderAuthorResult(
 		text += `\n  ${theme.fg("muted", keyHint("app.tools.expand", "to show spec"))}`;
 	}
 	return new Text(text, 0, 0);
+}
+
+function formatAvailability(info: AvailabilityInfo): string {
+	if (!info.available) return `unavailable: ${compactText(info.reason ?? "unknown", 160)}`;
+	const age = (info.age_range ?? []).filter(Boolean).join("-");
+	const bits = [`${info.eligible ?? "?"}/${info.total ?? "?"} eligible`];
+	if (info.total_samples !== undefined) bits.push(`${info.total_samples} samples`);
+	if (age) bits.push(`age ${age}`);
+	if (info.sentinel_tasks?.length) bits.push(`${info.sentinel_tasks.length} sentinels`);
+	if (info.history_scope) bits.push(`scope ${info.history_scope}`);
+	if (info.status) bits.push(info.status);
+	return bits.join(" · ");
+}
+
+/**
+ * Stamp final-review facts onto the author details: preset/task-mix/estimate
+ * from the wizard's catalog snapshot, plus live history coverage for
+ * historic controls. Runs after authorLoop, before the plan is presented.
+ */
+async function attachReview(
+	pi: ExtensionAPI,
+	collected: { answers: WizardAnswers; catalog: CatalogResponse | null },
+	details: AuthorDetails,
+	specPath: string,
+): Promise<void> {
+	details.review = buildReviewSummary(collected.answers, collected.catalog, details.prepared?.experiment);
+	details.availability = collected.answers.control === "historic"
+		? (await fetchAvailability(pi, specPath)) ?? undefined
+		: undefined;
 }
 
 /**
@@ -240,7 +292,7 @@ export async function authorExperiment(
 	onUpdate: AgentToolUpdateCallback<AuthorDetails> | undefined,
 	skipDocker: boolean,
 ): Promise<AgentToolResult<AuthorDetails>> {
-	const collected = await collectWizard(taskRoot, ctx);
+	const collected = await collectWizard(pi, taskRoot, ctx);
 	if (!collected) {
 		return {
 			content: [{ type: "text", text: "Spec authoring cancelled by user" }],
@@ -264,6 +316,7 @@ export async function authorExperiment(
 		onUpdate,
 		skipDocker,
 	);
+	await attachReview(pi, collected, details, request.output_path);
 	details.final = true;
 	details.phase = prepared.state === "ready_for_confirmation" ? "ready" : "needs_input";
 	details.output = prepared.state === "ready_for_confirmation"
@@ -498,7 +551,7 @@ export async function runActiveMenu(
 }
 
 export async function runCommandFlow(pi: ExtensionAPI, args: string, ctx: ExtensionContext): Promise<void> {
-	const collected = await collectWizard(args, ctx, args.trim());
+	const collected = await collectWizard(pi, args, ctx, args.trim());
 	if (!collected) {
 		ctx.ui.notify("RoastMyHarness wizard cancelled.", "info");
 		return;
@@ -535,6 +588,7 @@ export async function runCommandFlow(pi: ExtensionAPI, args: string, ctx: Extens
 		addUsage(flowUsage, outcome.usage);
 		request = outcome.request;
 		specText = outcome.spec_text;
+		await attachReview(pi, collected, outcome.details, outcome.request.output_path);
 		const ready = outcome.prepared.state === "ready_for_confirmation" &&
 			Boolean(outcome.prepared.plan_id);
 		if (!ready) {

@@ -3,7 +3,16 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const TOOL_NAME = "roast_harness";
 
-export const SERVICE_ACTIONS = ["prepare", "start", "status", "watch", "cancel", "report"] as const;
+export const SERVICE_ACTIONS = [
+	"prepare",
+	"start",
+	"status",
+	"watch",
+	"cancel",
+	"report",
+	"catalog",
+	"history_availability",
+] as const;
 export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
 export const ROAST_ACTIONS = ["author", ...SERVICE_ACTIONS] as const;
 export type RoastAction = (typeof ROAST_ACTIONS)[number];
@@ -23,11 +32,69 @@ export const PI_VERSION_RE = /^(latest|\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/;
 export function isPiVersionPin(value: string): boolean {
 	return PI_VERSION_RE.test(value);
 }
-export const SUITE_SCREEN_SIZE = 30;
+export interface CatalogPreset {
+	id: string;
+	label: string;
+	count: number;
+	tasks: string[];
+}
 
-export interface DeepSweSuites {
-	root: string;
-	suites: Record<string, { label: string; signal: string[]; confirmation: string[] }>;
+export interface CatalogProfile {
+	id: string;
+	label: string;
+	full_id: string | null;
+	thinking: string | null;
+	expected_rate: number | null;
+	distance: number | null;
+	matched: boolean | null;
+	samples: number | null;
+	revision: string | null;
+	basis: string;
+}
+
+export interface CatalogTaskLabels {
+	difficulty: string | null;
+	duration: string | null;
+	estimated_minutes: number | null;
+}
+
+export interface CatalogEvalInfo {
+	id: string;
+	revision: string | null;
+	title: string | null;
+}
+
+export type EvalType = "bundled" | "generated" | "external";
+
+export interface CatalogResponse {
+	benchmark?: string;
+	revision?: string;
+	task_count?: number;
+	eval?: CatalogEvalInfo | null;
+	presets?: CatalogPreset[];
+	profiles?: CatalogProfile[];
+	labels?: Record<string, CatalogTaskLabels>;
+	error?: { code?: string; message?: string };
+}
+
+export interface AvailabilityInfo {
+	available: boolean;
+	reason?: string;
+	status?: string;
+	mode?: string;
+	history_scope?: string;
+	eligible?: number;
+	total?: number;
+	total_samples?: number;
+	age_range?: string[];
+	sentinel_tasks?: string[];
+}
+
+export interface ReviewSummary {
+	preset: string | null;
+	mix: string;
+	estimate: string;
+	eval: string | null;
 }
 
 export type ThemeFn = (color: any, text: string) => string;
@@ -51,8 +118,12 @@ export interface RoastResponse {
 		model: string;
 		name?: string;
 		pi_version?: string;
+		resolved_pi_version?: string;
 		thinking?: string;
+		repetitions?: number;
+		hypothesis?: string;
 		control?: string;
+		evaluation?: string;
 		task_ids?: string[];
 		tasks_path?: string;
 		arm_ids?: string[];
@@ -111,6 +182,8 @@ export interface AuthorDetails {
 	output: string;
 	model?: string;
 	spec_preview?: string;
+	review?: ReviewSummary;
+	availability?: AvailabilityInfo;
 	prepared?: RoastResponse;
 	/** Author-child token usage accumulated for the shown attempt(s). */
 	usage?: Usage;
@@ -174,13 +247,18 @@ export function buildArgs(params: {
 	spec_path?: string;
 	plan_id?: string;
 	experiment_id?: string;
+	task_root?: string;
 	skip_docker?: boolean;
 	interval_sec?: number;
 }): string[] {
-	const argv = ["tool", params.action];
+	const argv = ["tool", params.action === "history_availability" ? "history-availability" : params.action];
 	switch (params.action) {
 		case "prepare":
+		case "history_availability":
 			argv.push(params.spec_path ?? "");
+			break;
+		case "catalog":
+			argv.push("--tasks", params.task_root ?? "");
 			break;
 		case "start":
 			argv.push(params.plan_id ?? "");
@@ -278,8 +356,9 @@ export function summarize(r: RoastResponse): string {
 	if (r.state === "ready_for_confirmation") {
 		const e = r.experiment;
 		return `ready_for_confirmation plan=${r.plan_id}: ${e?.trials ?? "?"} trials ` +
-			`(${e?.tasks ?? "?"} tasks x ${e?.arms ?? "?"} arms), max_parallel=${e?.max_parallel ?? "?"}, ` +
-			`model=${e?.model ?? "?"}` +
+			`(${e?.tasks ?? "?"} tasks x ${e?.arms ?? "?"} arms x ${e?.repetitions ?? 1} reps), ` +
+			`max_parallel=${e?.max_parallel ?? "?"}, model=${e?.model ?? "?"}` +
+			(e?.resolved_pi_version ? `, pi=${e.resolved_pi_version}` : "") +
 			(r.warnings?.length ? `; warnings: ${r.warnings.join("; ")}` : "");
 	}
 	const parts = [`state=${r.state ?? "unknown"}`];
