@@ -52,10 +52,18 @@ def probe_argv(
     jobs: dict[str, Any],
     task_id: str,
     variant_id: str,
+    agent_version: str | None = None,
 ) -> list[str]:
-    """Pier argv for a one-task, one-concurrent probe run."""
+    """Pier argv for a one-task, one-concurrent probe run.
+
+    agent_version pins the install (the prepare-time frozen value); when
+    None the pin resolves live, which callers must only use outside a
+    frozen run.
+    """
     job = jobs[variant_id]
     agent_id = spec.resolved_agents()[variant_id]
+    if agent_version is None:
+        agent_version = spec.resolved_version_for(agent_id)
     return pier_mod.build_run_args(
         task_root=spec.tasks.path,
         jobs_dir=job.staged.parent / "probe-jobs",
@@ -63,7 +71,7 @@ def probe_argv(
         manifest_path=job.manifest_path,
         model_id=spec.model.full_id(),
         thinking=spec.thinking,
-        pi_version=spec.resolved_version_for(agent_id),
+        pi_version=agent_version,
         n_concurrent=1,
         include_tasks=[task_id],
         agent=agent_id,
@@ -79,6 +87,32 @@ def select_variant(spec: Any, jobs: dict[str, Any]) -> str:
     return next(iter(jobs))
 
 
+def select_probe_task(tasks: list[Any], catalog: Any | None) -> str:
+    """Deterministic smoke task: tagged smoke first, else first discovered.
+
+    Smoke candidates prefer fast+easy; ties break by task id. Without a
+    catalog (or without smoke tags, which need calibration data), the
+    probe covers the first discovered task — which is the preset head
+    when tasks.preset scoped discovery.
+    """
+    ids = {t.task_id for t in tasks}
+    if catalog is not None:
+        smoked = sorted(
+            task_id
+            for task_id, meta in catalog.tasks.items()
+            if meta.smoke and task_id in ids
+        )
+        if smoked:
+            fast_easy = [
+                task_id
+                for task_id in smoked
+                if catalog.tasks[task_id].duration == "fast"
+                and catalog.tasks[task_id].difficulty == "easy"
+            ]
+            return fast_easy[0] if fast_easy else smoked[0]
+    return tasks[0].task_id
+
+
 async def run_probe(
     *,
     spec: Any,
@@ -86,17 +120,27 @@ async def run_probe(
     run_dir: Path,
     env: dict[str, str] | None = None,
     timeout_sec: float | None = PROBE_TIMEOUT_SEC,
+    resolved_versions: dict[str, str] | None = None,
+    catalog: Any | None = None,
 ) -> ProbeResult:
     """Launch one smoke task on an extension-bearing arm; fail fast on crash.
 
     Raises PierError when the process cannot start. A nonzero exit marks the
     probe failed; the caller decides whether to abort the experiment.
     Exceeding timeout_sec kills the probe and raises ProbeTimeoutError.
+    resolved_versions pins installs to the frozen run; without it the pin
+    resolves live. catalog scopes smoke-tag selection; without it the
+    first discovered task probes.
     """
     tasks = discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
-    task_id = tasks[0].task_id
+    task_id = select_probe_task(tasks, catalog)
     variant_id = select_variant(spec, jobs)
-    argv = probe_argv(spec=spec, jobs=jobs, task_id=task_id, variant_id=variant_id)
+    agent_id = spec.resolved_agents()[variant_id]
+    frozen = (resolved_versions or {}).get(agent_id)
+    argv = probe_argv(
+        spec=spec, jobs=jobs, task_id=task_id, variant_id=variant_id,
+        agent_version=frozen,
+    )
     log_path = run_dir / "logs" / f"smoke-{variant_id}.log"
     proc = process_mod.VariantProcess(f"smoke-{variant_id}", argv, log_path)
     await proc.start(env)

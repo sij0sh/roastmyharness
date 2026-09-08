@@ -10,7 +10,10 @@ import hashlib
 from pathlib import Path
 
 IGNORED_DIRS = {".git", ".pi-files", "__pycache__", ".pytest_cache", ".ruff_cache"}
-IGNORED_FILES = {".DS_Store"}
+# Benchmark catalogs and eval contracts live beside tasks, never inside
+# them; ignore the names defensively so a stray copy can never
+# invalidate task hashes.
+IGNORED_FILES = {".DS_Store", "catalog.toml", "eval.toml", "self-test.json"}
 
 
 def _iter_files(root: Path):

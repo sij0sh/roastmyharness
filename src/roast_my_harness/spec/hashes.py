@@ -13,9 +13,16 @@ import json
 from typing import Any
 
 from roast_my_harness import ADAPTER_PROTOCOL_VERSION
-from roast_my_harness.spec.models import ExperimentSpec, ModelSpec, VariantSpec
+from roast_my_harness.spec.models import EvalSpec, ExperimentSpec, ModelSpec, VariantSpec
 
 PROMPT_ISOLATION = "pi-fairness-v1"
+
+_DEFAULT_EVALUATION = EvalSpec().model_dump(mode="json")
+
+
+def is_default_evaluation_dump(value: object) -> bool:
+    """True for absent or all-default [evaluation] payloads (legacy identity)."""
+    return value is None or value == _DEFAULT_EVALUATION
 
 
 def canonical_json_bytes(obj: Any) -> bytes:
@@ -29,23 +36,29 @@ def sha256_canonical(obj: Any) -> str:
 
 
 def spec_hash(spec: ExperimentSpec) -> str:
-    return sha256_canonical(spec.model_dump(mode="json", exclude={"tasks": {"path"}}))
-
-
-def experiment_hash(spec: ExperimentSpec, task_hashes: list[tuple[str, str]]) -> str:
-    """Identity of a run: config plus the ordered task id/content-hash map.
-
-    task_hashes is the discovered task list in stable order, each entry
-    (task_id, content hash). Binding content into identity means changing
-    task files under unchanged ids yields a new experiment instead of
-    silently reusing old cells.
-    """
-    return sha256_canonical(
-        {
-            "spec": spec.model_dump(mode="json", exclude={"tasks": {"path"}}),
-            "tasks": [[task_id, content_hash] for task_id, content_hash in task_hashes],
-        }
+    # hypothesis is a frozen annotation, not execution config: runs that
+    # differ only in prose must keep one identity so history stays joined.
+    # A missing [evaluation] block likewise keeps legacy identity: it pops
+    # from the payload so pre-eval runs and default-eval runs hash alike.
+    payload = spec.model_dump(
+        mode="json", exclude={"tasks": {"path"}, "hypothesis": True}
     )
+    if is_default_evaluation_dump(payload.get("evaluation")):
+        payload.pop("evaluation", None)
+    return sha256_canonical(payload)
+
+
+def resolved_experiment_hash(payload: dict[str, Any]) -> str:
+    """Identity of a run over frozen resolved content.
+
+    payload is a ResolvedRunSpec dump minus run_id (excluding the derived
+    id keeps the hash non-circular). It covers the requested config, the
+    exact resolved agent versions, and the ordered task id/content-hash
+    map, so a moved ``latest`` pin yields a new run instead of silently
+    reusing old cells. Callers must build it via resolve_run_spec, never
+    by hand, so every hashed field passed through the single freeze point.
+    """
+    return sha256_canonical(payload)
 
 
 def variant_hash(
@@ -92,22 +105,29 @@ def control_cohort_key(
     *,
     agent: str,
     agent_version: str,
+    eval_id: str | None = None,
 ) -> str:
-    """Identity of comparable control observations for one task."""
-    return sha256_canonical(
-        {
-            "control_hash": control_hash,
-            "agent": agent,
-            "agent_version": agent_version,
-            "provider": model.provider,
-            "provider_id": model.provider_id,
-            "model_id": model.id,
-            "resolved_model": model.resolved_model.model_dump(mode="json")
-            if model.resolved_model
-            else None,
-            "thinking": thinking,
-            "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
-            "task_hash": task_hash,
-            "prompt_isolation": PROMPT_ISOLATION,
-        }
-    )
+    """Identity of comparable control observations for one task.
+
+    eval_id scopes the cohort to one evaluation; None is the legacy
+    default, so pre-eval history stays eligible for default-eval runs
+    while every other eval gets its own cohort.
+    """
+    payload: dict[str, object] = {
+        "control_hash": control_hash,
+        "agent": agent,
+        "agent_version": agent_version,
+        "provider": model.provider,
+        "provider_id": model.provider_id,
+        "model_id": model.id,
+        "resolved_model": model.resolved_model.model_dump(mode="json")
+        if model.resolved_model
+        else None,
+        "thinking": thinking,
+        "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
+        "task_hash": task_hash,
+        "prompt_isolation": PROMPT_ISOLATION,
+    }
+    if eval_id is not None:
+        payload["eval_id"] = eval_id
+    return sha256_canonical(payload)

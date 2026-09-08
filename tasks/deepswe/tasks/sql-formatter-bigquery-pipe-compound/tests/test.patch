@@ -1,0 +1,684 @@
+diff --git a/test.sh b/test.sh
+new file mode 100755
+index 00000000..69d8f737
+--- /dev/null
++++ b/test.sh
+@@ -0,0 +1,21 @@
++#!/bin/bash
++set -e
++
++./node_modules/.bin/nearleyc src/parser/grammar.ne -o src/parser/grammar.ts
++
++MODE="${1:-base}"
++
++if [ "$MODE" = "base" ]; then
++  npx jest --testPathIgnorePatterns='test/pipe-compound-phase-a.test.ts' --testPathIgnorePatterns='test/pipe-compound-phase-b.test.ts' --testPathIgnorePatterns='test/pipe-compound-phase-c.test.ts' --testPathIgnorePatterns='test/pipe-compound-phase-d.test.ts' --no-coverage
++elif [ "$MODE" = "phase-a" ]; then
++  npx jest test/pipe-compound-phase-a.test.ts --no-coverage
++elif [ "$MODE" = "phase-b" ]; then
++  npx jest test/pipe-compound-phase-b.test.ts --no-coverage
++elif [ "$MODE" = "phase-c" ]; then
++  npx jest test/pipe-compound-phase-c.test.ts --no-coverage
++elif [ "$MODE" = "phase-d" ]; then
++  npx jest test/pipe-compound-phase-d.test.ts --no-coverage
++else
++  echo "Usage: bash test.sh [base|phase-a|phase-b|phase-c|phase-d]"
++  exit 1
++fi
+diff --git a/test/pipe-compound-phase-a.test.ts b/test/pipe-compound-phase-a.test.ts
+new file mode 100644
+index 00000000..d5c03a6e
+--- /dev/null
++++ b/test/pipe-compound-phase-a.test.ts
+@@ -0,0 +1,161 @@
++import dedent from 'dedent-js';
++
++import { format as originalFormat, FormatFn } from '../src/sqlFormatter.js';
++
++describe('Pipe Compound Phase A', () => {
++  const language = 'bigquery';
++  const format: FormatFn = (query, cfg = {}) => originalFormat(query, { ...cfg, language });
++
++  it('formats simple pipe query with FROM and WHERE', () => {
++    const result = format('FROM orders |> WHERE status = \'shipped\'');
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> WHERE
++        status = 'shipped'
++    `);
++  });
++
++  it('formats pipe query with SELECT', () => {
++    const result = format('FROM orders |> SELECT order_id, customer_id, amount');
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> SELECT
++        order_id,
++        customer_id,
++        amount
++    `);
++  });
++
++  it('formats pipe query with SELECT *', () => {
++    const result = format('FROM orders |> SELECT *');
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> SELECT
++        *
++    `);
++  });
++
++  it('formats pipe query with multiple pipe steps', () => {
++    const result = format(
++      'FROM orders |> WHERE status = \'shipped\' |> SELECT customer_id, amount |> ORDER BY amount DESC |> LIMIT 10'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> WHERE
++        status = 'shipped'
++      |> SELECT
++        customer_id,
++        amount
++      |> ORDER BY
++        amount DESC
++      |> LIMIT 10
++    `);
++  });
++
++  it('formats pipe ORDER BY clause', () => {
++    const result = format(
++      'FROM orders |> ORDER BY created_at DESC, order_id ASC'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> ORDER BY
++        created_at DESC,
++        order_id ASC
++    `);
++  });
++
++  it('formats pipe LIMIT clause', () => {
++    const result = format(
++      'FROM orders |> LIMIT 25'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> LIMIT 25
++    `);
++  });
++
++  it('formats pipe query with function calls', () => {
++    const result = format(
++      'FROM orders |> WHERE TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, DAY) < 30 |> SELECT order_id'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> WHERE
++        TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, DAY) < 30
++      |> SELECT
++        order_id
++    `);
++  });
++
++  it('formats pipe query with subquery in parentheses', () => {
++    const result = format(
++      'FROM (FROM orders |> WHERE status = \'shipped\') |> SELECT customer_id'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        (
++          FROM
++            orders
++          |> WHERE
++            status = 'shipped'
++        )
++      |> SELECT
++        customer_id
++    `);
++  });
++
++  it('formats pipe query with traditional query in same session', () => {
++    const result = format(
++      'SELECT a FROM t; FROM orders |> WHERE status = \'shipped\' |> SELECT order_id'
++    );
++    expect(result).toBe(dedent`
++      SELECT
++        a
++      FROM
++        t;
++
++      FROM
++        orders
++      |> WHERE
++        status = 'shipped'
++      |> SELECT
++        order_id
++    `);
++  });
++
++  it('formats multiple statements where one uses pipe syntax', () => {
++    const result = format(
++      'SELECT 1; FROM orders |> WHERE status = \'shipped\' |> LIMIT 5;'
++    );
++    expect(result).toBe(dedent`
++      SELECT
++        1;
++
++      FROM
++        orders
++      |> WHERE
++        status = 'shipped'
++      |> LIMIT 5;
++    `);
++  });
++
++  it('handles pipe operator with semicolon', () => {
++    const result = format(
++      'FROM orders |> WHERE status = \'shipped\' |> LIMIT 10;'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> WHERE
++        status = 'shipped'
++      |> LIMIT 10;
++    `);
++  });
++});
+diff --git a/test/pipe-compound-phase-b.test.ts b/test/pipe-compound-phase-b.test.ts
+new file mode 100644
+index 00000000..0b59bd5a
+--- /dev/null
++++ b/test/pipe-compound-phase-b.test.ts
+@@ -0,0 +1,215 @@
++import dedent from 'dedent-js';
++
++import { format as originalFormat, FormatFn } from '../src/sqlFormatter.js';
++
++describe('Pipe Compound Phase B', () => {
++  const language = 'bigquery';
++  const format: FormatFn = (query, cfg = {}) => originalFormat(query, { ...cfg, language });
++
++  it('formats AGGREGATE pipe clause with GROUP BY', () => {
++    const result = format(
++      'FROM orders |> AGGREGATE SUM(amount) AS total GROUP BY customer_id'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> AGGREGATE
++        SUM(amount) AS total
++        GROUP BY
++          customer_id
++    `);
++  });
++
++  it('formats AGGREGATE with multiple expressions and GROUP BY columns', () => {
++    const result = format(
++      'FROM orders |> AGGREGATE SUM(amount) AS total, COUNT(*) AS cnt GROUP BY customer_id, region'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> AGGREGATE
++        SUM(amount) AS total,
++        COUNT(*) AS cnt
++        GROUP BY
++          customer_id,
++          region
++    `);
++  });
++
++  it('formats pipe query with AGGREGATE without GROUP BY', () => {
++    const result = format(
++      'FROM orders |> AGGREGATE COUNT(*) AS total_orders'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> AGGREGATE
++        COUNT(*) AS total_orders
++    `);
++  });
++
++  it('formats EXTEND pipe clause', () => {
++    const result = format(
++      'FROM orders |> EXTEND amount * 1.1 AS amount_with_tax'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> EXTEND
++        amount * 1.1 AS amount_with_tax
++    `);
++  });
++
++  it('formats EXTEND with multiple computed columns', () => {
++    const result = format(
++      'FROM orders |> EXTEND amount * 1.1 AS amount_with_tax, amount * 0.1 AS tax_amount'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> EXTEND
++        amount * 1.1 AS amount_with_tax,
++        amount * 0.1 AS tax_amount
++    `);
++  });
++
++  it('formats EXTEND followed by more pipe steps', () => {
++    const result = format(
++      'FROM orders |> EXTEND amount * 1.1 AS total |> WHERE total > 100 |> SELECT customer_id, total'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> EXTEND
++        amount * 1.1 AS total
++      |> WHERE
++        total > 100
++      |> SELECT
++        customer_id,
++        total
++    `);
++  });
++
++  it('formats pipe SET clause', () => {
++    const result = format(
++      'FROM orders |> SET status = \'processed\', updated_at = CURRENT_TIMESTAMP()'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> SET
++        status = 'processed',
++        updated_at = CURRENT_TIMESTAMP()
++    `);
++  });
++
++  it('formats DROP pipe clause', () => {
++    const result = format(
++      'FROM orders |> DROP internal_id, debug_flag'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> DROP
++        internal_id,
++        debug_flag
++    `);
++  });
++
++  it('formats pipe JOIN clause', () => {
++    const result = format(
++      'FROM orders |> JOIN customers ON orders.customer_id = customers.id'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> JOIN customers ON orders.customer_id = customers.id
++    `);
++  });
++
++  it('formats pipe LEFT JOIN clause', () => {
++    const result = format(
++      'FROM orders |> LEFT JOIN customers ON orders.customer_id = customers.id'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> LEFT JOIN customers ON orders.customer_id = customers.id
++    `);
++  });
++
++  it('formats pipe AS clause', () => {
++    const result = format(
++      'FROM orders |> AS o |> WHERE o.status = \'shipped\''
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> AS o
++      |> WHERE
++        o.status = 'shipped'
++    `);
++  });
++
++  it('applies keywordCase upper to pipe keywords', () => {
++    const result = format(
++      'from orders |> where status = \'shipped\' |> aggregate count(*) as total group by customer_id',
++      { keywordCase: 'upper', functionCase: 'upper' }
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> WHERE
++        status = 'shipped'
++      |> AGGREGATE
++        COUNT(*) AS total
++        GROUP BY
++          customer_id
++    `);
++  });
++
++  it('applies keywordCase lower to pipe keywords', () => {
++    const result = format(
++      'FROM orders |> WHERE status = \'shipped\' |> LIMIT 10',
++      { keywordCase: 'lower' }
++    );
++    expect(result).toBe(dedent`
++      from
++        orders
++      |> where
++        status = 'shipped'
++      |> limit 10
++    `);
++  });
++
++  it('formats pipe with bitwise OR in WHERE clause', () => {
++    const result = format('FROM t |> WHERE a | b > 0 |> LIMIT 5');
++    expect(result).toBe(dedent`
++      FROM
++        t
++      |> WHERE
++        a | b > 0
++      |> LIMIT 5
++    `);
++  });
++
++  it('formats complex pipe query end-to-end', () => {
++    const result = format(
++      'FROM orders |> WHERE status = \'shipped\' |> AGGREGATE SUM(amount) AS total, COUNT(*) AS cnt GROUP BY customer_id |> ORDER BY total DESC |> LIMIT 10'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> WHERE
++        status = 'shipped'
++      |> AGGREGATE
++        SUM(amount) AS total,
++        COUNT(*) AS cnt
++        GROUP BY
++          customer_id
++      |> ORDER BY
++        total DESC
++      |> LIMIT 10
++    `);
++  });
++});
+diff --git a/test/pipe-compound-phase-c.test.ts b/test/pipe-compound-phase-c.test.ts
+new file mode 100644
+index 00000000..b720eab1
+--- /dev/null
++++ b/test/pipe-compound-phase-c.test.ts
+@@ -0,0 +1,100 @@
++import dedent from 'dedent-js';
++
++import { format as originalFormat, FormatFn } from '../src/sqlFormatter.js';
++
++describe('Pipe Compound Phase C', () => {
++  const language = 'bigquery';
++  const format: FormatFn = (query, cfg = {}) => originalFormat(query, { ...cfg, language });
++
++  it('formats RENAME pipe clause', () => {
++    const result = format('FROM t |> RENAME a AS b');
++    expect(result).toBe(dedent`
++      FROM
++        t
++      |> RENAME
++        a AS b
++    `);
++  });
++
++  it('formats RENAME with multiple renames', () => {
++    const result = format('FROM t |> RENAME a AS b, c AS d');
++    expect(result).toBe(dedent`
++      FROM
++        t
++      |> RENAME
++        a AS b,
++        c AS d
++    `);
++  });
++
++  it('formats RENAME chained with other steps', () => {
++    const result = format('FROM t |> WHERE x > 1 |> RENAME a AS b |> SELECT b');
++    expect(result).toBe(dedent`
++      FROM
++        t
++      |> WHERE
++        x > 1
++      |> RENAME
++        a AS b
++      |> SELECT
++        b
++    `);
++  });
++
++  it('applies keywordCase lower to RENAME', () => {
++    const result = format('from t |> rename a as b', { keywordCase: 'lower' });
++    expect(result).toBe(dedent`
++      from
++        t
++      |> rename
++        a as b
++    `);
++  });
++
++  it('formats PIVOT pipe operator', () => {
++    const result = format('FROM Produce |> PIVOT (SUM(sales) FOR quarter IN (Q1, Q2, Q3, Q4))');
++    expect(result).toBe(dedent`
++      FROM
++        Produce
++      |> PIVOT (
++        SUM(sales)
++        FOR quarter IN (Q1, Q2, Q3, Q4)
++      )
++    `);
++  });
++
++  it('formats UNPIVOT pipe operator', () => {
++    const result = format('FROM Produce |> UNPIVOT (sales FOR quarter IN (Q1, Q2))');
++    expect(result).toBe(dedent`
++      FROM
++        Produce
++      |> UNPIVOT (
++        sales
++        FOR quarter IN (Q1, Q2)
++      )
++    `);
++  });
++
++  it('formats TABLESAMPLE SYSTEM pipe operator', () => {
++    const result = format('FROM dataset.my_table |> TABLESAMPLE SYSTEM (10 PERCENT)');
++    expect(result).toBe(dedent`
++      FROM
++        dataset.my_table
++      |> TABLESAMPLE SYSTEM (10 PERCENT)
++    `);
++  });
++
++  it('formats PIVOT chained with WHERE', () => {
++    const result = format('FROM Produce |> PIVOT (SUM(sales) FOR quarter IN (Q1, Q2)) |> WHERE Q1 > 0');
++    expect(result).toBe(dedent`
++      FROM
++        Produce
++      |> PIVOT (
++        SUM(sales)
++        FOR quarter IN (Q1, Q2)
++      )
++      |> WHERE
++        Q1 > 0
++    `);
++  });
++});
+diff --git a/test/pipe-compound-phase-d.test.ts b/test/pipe-compound-phase-d.test.ts
+new file mode 100644
+index 00000000..5e1ffae9
+--- /dev/null
++++ b/test/pipe-compound-phase-d.test.ts
+@@ -0,0 +1,157 @@
++import dedent from 'dedent-js';
++
++import { format as originalFormat, FormatFn } from '../src/sqlFormatter.js';
++
++describe('Pipe Compound Phase D', () => {
++  const language = 'bigquery';
++  const format: FormatFn = (query, cfg = {}) => originalFormat(query, { ...cfg, language });
++
++  it('formats RENAME inside a CTE body', () => {
++    const result = format('WITH x AS (FROM t |> RENAME a AS b) SELECT b FROM x');
++    expect(result).toBe(dedent`
++      WITH
++        x AS (
++          FROM
++            t
++          |> RENAME
++            a AS b
++        )
++      SELECT
++        b
++      FROM
++        x
++    `);
++  });
++
++  it('formats UNION ALL of RENAME queries', () => {
++    const result = format('FROM a |> RENAME x AS y UNION ALL FROM b |> RENAME x AS y');
++    expect(result).toBe(dedent`
++      FROM
++        a
++      |> RENAME
++        x AS y
++      UNION ALL
++      FROM
++        b
++      |> RENAME
++        x AS y
++    `);
++  });
++
++  it('formats CREATE VIEW AS with PIVOT', () => {
++    const result = format(
++      'CREATE VIEW v AS FROM Produce |> PIVOT (SUM(sales) FOR quarter IN (Q1, Q2))'
++    );
++    expect(result).toBe(dedent`
++      CREATE VIEW v AS
++      FROM
++        Produce
++      |> PIVOT (
++        SUM(sales)
++        FOR quarter IN (Q1, Q2)
++      )
++    `);
++  });
++
++  it('formats INSERT INTO with EXTEND chain', () => {
++    const result = format(
++      'INSERT INTO t (FROM orders |> EXTEND amount * 1.1 AS total |> SELECT total)'
++    );
++    expect(result).toBe(dedent`
++      INSERT INTO
++        t (
++          FROM
++            orders
++          |> EXTEND
++            amount * 1.1 AS total
++          |> SELECT
++            total
++        )
++    `);
++  });
++
++  it('substitutes params inside pipe chains', () => {
++    const result = format(
++      'FROM orders |> AGGREGATE SUM(amount) AS total GROUP BY customer_id |> WHERE total > ?',
++      { params: ['100'] }
++    );
++    expect(result).toBe(dedent`
++      FROM
++        orders
++      |> AGGREGATE
++        SUM(amount) AS total
++        GROUP BY
++          customer_id
++      |> WHERE
++        total > 100
++    `);
++  });
++
++  it('keeps line comments around EXTEND steps', () => {
++    const result = format('FROM t |> EXTEND a + b AS c -- computed\n|> WHERE c > 1');
++    expect(result).toBe(dedent`
++      FROM
++        t
++      |> EXTEND
++        a + b AS c -- computed
++      |> WHERE
++        c > 1
++    `);
++  });
++
++  it('formats JOIN with SET subquery', () => {
++    const result = format(
++      'FROM a |> JOIN (FROM b |> SET x = 1 |> SELECT x) AS bb ON a.id = bb.id'
++    );
++    expect(result).toBe(dedent`
++      FROM
++        a
++      |> JOIN (
++        FROM
++          b
++        |> SET
++          x = 1
++        |> SELECT
++          x
++      ) AS bb ON a.id = bb.id
++    `);
++  });
++
++  it('keeps standard pipe layout under tabularLeft', () => {
++    const result = format('FROM orders |> WHERE x = 1 |> SELECT a', {
++      indentStyle: 'tabularLeft',
++    });
++    expect(result).toBe(dedent`
++      FROM      orders
++      |> WHERE
++                x = 1
++      |> SELECT
++                a
++    `);
++  });
++
++  it('keeps standard pipe layout under tabularRight', () => {
++    const result = format('FROM orders |> WHERE x = 1 |> SELECT a', {
++      indentStyle: 'tabularRight',
++    });
++    expect(result).toBe(dedent`
++           FROM orders
++      |> WHERE
++                x = 1
++      |> SELECT
++                a
++    `);
++  });
++
++  it('keeps RENAME layout under tabularLeft', () => {
++    const result = format('FROM t |> RENAME a AS b |> LIMIT 5', {
++      indentStyle: 'tabularLeft',
++    });
++    expect(result).toBe(dedent`
++      FROM      t
++      |> RENAME
++                a AS b
++      |> LIMIT 5
++    `);
++  });
++});

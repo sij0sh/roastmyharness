@@ -1,0 +1,47 @@
+schema_version = "1.3"
+artifacts = ["/logs/artifacts/model.patch"]
+[task]
+name = "datacurve/sql-formatter-bigquery-pipe-compound"
+description = ""
+authors = []
+keywords = []
+[metadata]
+ext_id = "7h9mlz83ni28lcs6oi8lv74pdx48d2t8"
+task_id = "sql-formatter-bigquery-pipe-compound"
+display_title = "BigQuery pipe syntax: core, exclusive clauses, new operators, integration"
+display_description = "Build BigQuery pipe-syntax formatting end to end in four dependent phases: core steps, pipe-exclusive clauses, RENAME/PIVOT/UNPIVOT/TABLESAMPLE operators, then integration with the rest of the language. Earlier phases must keep passing."
+original_title = "BigQuery Pipe Syntax, Compound"
+category = "feature_request"
+language = "typescript"
+repository_url = "https://github.com/sql-formatter-org/sql-formatter"
+base_commit_hash = "954e5a474b9e3d45ca58f02a3a4eac8e1947acc5"
+[verifier]
+network_mode = "no-network"
+environment_mode = "separate"
+timeout_sec = 1800.0
+
+[verifier.env]
+[verifier.environment]
+build_timeout_sec = 1800.0
+cpus = 2
+memory_mb = 8192
+storage_mb = 20480
+
+[[verifier.collect]]
+command = "cd /app && mkdir -p /logs/artifacts && git config --global --add safe.directory /app && (git add -N -- . 2>/dev/null || true) && git diff --binary 954e5a474b9e3d45ca58f02a3a4eac8e1947acc5 -- . > /logs/artifacts/model.patch && git status --porcelain=v1 -uall > /logs/artifacts/worktree-status.txt"
+timeout_sec = 300.0
+
+[agent]
+network_mode = "no-network"
+timeout_sec = 5400.0
+[environment]
+build_timeout_sec = 1800.0
+os = "linux"
+cpus = 2
+memory_mb = 8192
+storage_mb = 20480
+gpus = 0
+mcp_servers = []
+
+[environment.env]
+[solution.env]

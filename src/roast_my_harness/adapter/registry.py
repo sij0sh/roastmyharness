@@ -24,7 +24,8 @@ class AgentDef:
     credential_format selects staged credential rendering: "pi" keeps
     models.json with $VAR refs, "bare-env" stages models.yml plus
     model-env.json with bare names. supports_pi_features gates pi-only
-    variant features. Owner: adapter/registry. Decision: host-side strategy
+    variant features; supports_context_files gates explicit context-file
+    delivery. Owner: adapter/registry. Decision: host-side strategy
     lives here, pier-side behavior lives in the adapter module named by
     import_path; consumers delegate instead of branching on agent_id.
     """
@@ -40,6 +41,7 @@ class AgentDef:
     default_version: str
     credential_format: str = "pi"
     supports_pi_features: bool = True
+    supports_context_files: bool = True
 
 
 AGENTS: dict[str, AgentDef] = {

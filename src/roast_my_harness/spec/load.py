@@ -5,13 +5,16 @@ from __future__ import annotations
 import json
 import re
 import tomllib
+from fnmatch import fnmatch
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from roast_my_harness.errors import SpecError
-from roast_my_harness.spec.models import ExperimentSpec, ResolvedModelSpec
+from roast_my_harness.spec.models import ExperimentSpec, ResolvedModelSpec, TaskSelection
 from roast_my_harness.spec.normalize import absolute
+from roast_my_harness.tasks.catalog import load_catalog
+from roast_my_harness.tasks.discover import is_task_dir
 
 
 def _resolve_model(spec: ExperimentSpec) -> ExperimentSpec:
@@ -52,10 +55,42 @@ def _resolve_model(spec: ExperimentSpec) -> ExperimentSpec:
     )
 
 
+def _apply_preset(tasks: TaskSelection) -> TaskSelection:
+    """Resolve tasks.preset into the effective include list.
+
+    The preset (a catalog task list) is the base set; the user's include
+    globs filter it further. Baking keeps every downstream consumer
+    (discovery, identity, manifest) on the effective set with no
+    call-site changes.
+    """
+    if tasks.preset is None:
+        return tasks
+    catalog = load_catalog(tasks.path)
+    if catalog is None:
+        raise SpecError(
+            f"tasks.preset = {tasks.preset!r} needs a benchmark catalog at "
+            f"{tasks.path / 'catalog.toml'}, none found"
+        )
+    preset = catalog.presets.get(tasks.preset)
+    if preset is None:
+        raise SpecError(
+            f"unknown tasks.preset {tasks.preset!r} "
+            f"(available: {', '.join(sorted(catalog.presets)) or 'none'})"
+        )
+    missing = [t for t in preset.tasks if not is_task_dir(tasks.path / t)]
+    if missing:
+        raise SpecError(
+            f"tasks.preset {tasks.preset!r} lists tasks missing under "
+            f"{tasks.path}: {', '.join(missing)}"
+        )
+    effective = [t for t in preset.tasks if any(fnmatch(t, pat) for pat in tasks.include)]
+    return tasks.model_copy(update={"include": effective})
+
+
 def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
     updates: dict = {}
-    updates["tasks"] = spec.tasks.model_copy(
-        update={"path": absolute(spec.tasks.path, base_dir)}
+    updates["tasks"] = _apply_preset(
+        spec.tasks.model_copy(update={"path": absolute(spec.tasks.path, base_dir)})
     )
     updates["model"] = spec.model.model_copy(
         update={
@@ -79,6 +114,10 @@ def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
             s.model_copy(update={"path": absolute(s.path, base_dir)})
             for s in variant.skills
         ]
+        context_files = [
+            c.model_copy(update={"path": absolute(c.path, base_dir)})
+            for c in variant.context_files
+        ]
         setups = []
         for setup in variant.setup:
             if setup.handler in ("install_binary", "codegraph_index"):
@@ -87,7 +126,9 @@ def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
                     update={field: absolute(getattr(setup, field), base_dir)}
                 )
             setups.append(setup)
-        v_updates.update(extensions=exts, skills=skills, setup=setups)
+        v_updates.update(
+            extensions=exts, skills=skills, setup=setups, context_files=context_files
+        )
         variants.append(variant.model_copy(update=v_updates))
     updates["variants"] = variants
     resolved = spec.model_copy(update=updates)

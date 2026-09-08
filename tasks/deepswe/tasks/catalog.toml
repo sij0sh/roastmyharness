@@ -1,0 +1,127 @@
+# Benchmark catalog for DeepSWE.
+#
+# Task-level metadata lives HERE, never inside task directories:
+# tasks/hashes.py hashes every file under each task dir, so editing
+# a label inside a task dir would invalidate historic-control
+# compatibility. Runs record catalog_hash separately from task_hash.
+#
+# Presets below are consolidated verbatim from suites.json (which the
+# Pi wizard still reads; the wizard moves to this catalog in a later
+# phase). Do not edit preset lists by hand to tune results; add a new
+# preset with its basis noted instead.
+#
+# Per-task labels (duration/difficulty/smoke) land under [tasks] only
+# WITH calibration data: every entry records its basis so labels never
+# become tribal knowledge. No task is labeled yet.
+
+catalog_version = 1
+benchmark = "deepswe"
+benchmark_revision = "2026-09"
+source = "deepswe.datacurve.ai data/v1.1 per-task rollouts (mini-swe-agent); design notes in .pi-files/tasks.md"
+
+[presets.luna-signal]
+label = "GPT-5.6 Luna High — signal (30)"
+tasks = ["arktype-json-schema-refs-dependencies", "bandit-incremental-cache-control", "clack-async-autocomplete-options", "claude-code-by-agents-recursive-delegation", "etree-xml-diff-patch", "httpx-deterministic-cookie-store", "ipython-session-bundle-replay", "kgateway-consistent-hash-policy", "kombu-single-active-consumer-priority", "kombu-virtual-queue-dead-lettering", "numba-stencil-boundary-modes", "onedump-dump-encryption-pipeline", "optique-conditional-option-dependencies", "prometheus-transactional-reload-status", "prometheus-typed-label-sorting", "python-statemachine-state-data-scoping", "returns-validated-error-accumulation", "skrub-duration-encoding", "vulture-persistent-analysis-cache", "arcane-drift-detection-baselines", "boa-hierarchical-evaluation-cancellation", "cattrs-partial-structuring-recovery", "fastapi-implicit-head-options", "kcp-go-multiplexed-kcp-streams", "mobly-grouped-test-barriers", "pebble-durability-wait-apis", "tengo-callable-instance-isolation", "ts-pattern-match-each", "valibot-recursive-schema-composition", "wazero-multi-module-snapshots"]
+
+[presets.luna-confirmation]
+label = "GPT-5.6 Luna High — confirmation (30)"
+tasks = ["abs-stepped-slices", "awilix-async-container-initialization", "drizzle-orm-window-function-builders", "dynamodb-toolbox-conditional-attribute-requirements", "fd-deterministic-multi-key-sorting", "go-critic-doc-link-checker", "happy-dom-abort-pending-body-reads", "happy-dom-deterministic-intersectionobserver", "katex-multicolumn-array-spans", "koota-entity-snapshot-rollback", "meriyah-explicit-resource-declarations", "mnamer-daemon-watch-lifecycle", "obsidian-linter-auto-table-of-contents", "opa-template-string-reconstruction", "scriggo-method-declarations", "sql-formatter-bigquery-pipe-formatting", "sqlfmt-create-table-ddl-formatting", "true-myth-iterable-collection-combinators", "geo-shapeindex-serialization", "go-git-worktree-merge-conflicts", "sqlite-utils-safe-import-checkpoints", "httpx-multipart-response-parsing", "narwhals-rolling-window-suite", "scc-bounded-memory-spilling", "helm-array-merge-strategies", "langchain-request-coalescing", "igel-persist-feature-schema", "effect-sse-httpapi-streaming", "ofetch-per-origin-circuit-breaker", "actionlint-action-pinning-lint"]
+
+[presets.glm-signal]
+label = "GLM-5.3-Flash Max — signal (30)"
+tasks = ["abs-stepped-slices", "arktype-json-schema-refs-dependencies", "bandit-incremental-cache-control", "clack-async-autocomplete-options", "dynamodb-toolbox-conditional-attribute-requirements", "httpx-deterministic-cookie-store", "ipython-session-bundle-replay", "kombu-single-active-consumer-priority", "kombu-virtual-queue-dead-lettering", "onedump-dump-encryption-pipeline", "prometheus-transactional-reload-status", "prometheus-typed-label-sorting", "vulture-persistent-analysis-cache", "arcane-drift-detection-baselines", "boa-hierarchical-evaluation-cancellation", "cattrs-partial-structuring-recovery", "fastapi-implicit-head-options", "go-git-worktree-merge-conflicts", "kcp-go-multiplexed-kcp-streams", "mobly-grouped-test-barriers", "tengo-callable-instance-isolation", "ts-pattern-match-each", "valibot-recursive-schema-composition", "wazero-multi-module-snapshots", "scc-bounded-memory-spilling", "helm-array-merge-strategies", "langchain-request-coalescing", "igel-persist-feature-schema", "effect-sse-httpapi-streaming", "pebble-durability-wait-apis"]
+
+[presets.glm-confirmation]
+label = "GLM-5.3-Flash Max — confirmation (30)"
+tasks = ["awilix-async-container-initialization", "claude-code-by-agents-recursive-delegation", "drizzle-orm-window-function-builders", "etree-xml-diff-patch", "fd-deterministic-multi-key-sorting", "go-critic-doc-link-checker", "happy-dom-abort-pending-body-reads", "happy-dom-deterministic-intersectionobserver", "katex-multicolumn-array-spans", "kgateway-consistent-hash-policy", "koota-entity-snapshot-rollback", "meriyah-explicit-resource-declarations", "mnamer-daemon-watch-lifecycle", "numba-stencil-boundary-modes", "obsidian-linter-auto-table-of-contents", "opa-template-string-reconstruction", "optique-conditional-option-dependencies", "python-statemachine-state-data-scoping", "returns-validated-error-accumulation", "scriggo-method-declarations", "skrub-duration-encoding", "sql-formatter-bigquery-pipe-formatting", "sqlfmt-create-table-ddl-formatting", "true-myth-iterable-collection-combinators", "geo-shapeindex-serialization", "sqlite-utils-safe-import-checkpoints", "httpx-multipart-response-parsing", "narwhals-rolling-window-suite", "ofetch-per-origin-circuit-breaker", "actionlint-action-pinning-lint"]
+
+# Per-task label schema (all fields optional except the basis when
+# labeled; unknown tasks read as unlabeled):
+#
+# [tasks.some-task-id]
+# duration = "fast"        # fast|long, by historical median wall time
+# difficulty = "medium"    # easy|medium|hard, by solve rate over the calibration set
+# smoke = true             # deterministic smoke-probe candidate
+# estimated_minutes = 8
+# basis_revision = "deepswe-2026-09"
+# basis_samples = 468
+# basis_date = "2026-09-01"
+
+[tasks]
+# Difficulty bands the Luna High published solve rate: easy >= 3/4,
+# medium = 2/4 (the prime paired-experiment band), hard <= 1/4.
+# Calibration model is Luna High; GLM Flash rates on some of these
+# tasks differ (see .pi-files/tasks.md) and do not move the label.
+# Duration is unlabeled everywhere: no wall-time calibration exists yet.
+
+[tasks.arcane-drift-detection-baselines]
+difficulty = "easy"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 3/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.arktype-json-schema-refs-dependencies]
+difficulty = "hard"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 1/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.boa-hierarchical-evaluation-cancellation]
+difficulty = "medium"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 2/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.cattrs-partial-structuring-recovery]
+difficulty = "medium"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 2/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.clack-async-autocomplete-options]
+difficulty = "hard"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 1/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.claude-code-by-agents-recursive-delegation]
+difficulty = "medium"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 2/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.fastapi-implicit-head-options]
+difficulty = "medium"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 2/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.geo-shapeindex-serialization]
+difficulty = "easy"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 3/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.helm-array-merge-strategies]
+difficulty = "hard"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 1/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.kcp-go-multiplexed-kcp-streams]
+difficulty = "medium"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 2/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.tengo-callable-instance-isolation]
+difficulty = "medium"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 2/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."
+
+[tasks.ts-pattern-match-each]
+difficulty = "easy"
+basis_revision = "deepswe-published-mini-swe-agent"
+basis_samples = 4
+basis = "Luna High published 3/4, cited in .pi-files/tasks.md. Pi-agent rate unmeasured."

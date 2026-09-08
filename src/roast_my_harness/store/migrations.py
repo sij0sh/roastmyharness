@@ -90,6 +90,35 @@ MIGRATIONS: dict[int, str] = {
     CREATE INDEX idx_control_pool
         ON control_observations (cohort_key, task_hash, eligible, resolved);
     """,
+    5: """
+    CREATE TABLE trials_v2 (
+        id TEXT PRIMARY KEY,
+        experiment_id TEXT REFERENCES experiments(id) ON DELETE CASCADE,
+        variant_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        replicate INTEGER NOT NULL DEFAULT 1,
+        attempt INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL,
+        job_path TEXT,
+        started_at TEXT,
+        finished_at TEXT,
+        reward REAL,
+        resolved INTEGER,
+        exception_type TEXT,
+        metrics_json TEXT,
+        UNIQUE (experiment_id, variant_id, task_id, replicate, attempt)
+    );
+    INSERT INTO trials_v2
+        (id, experiment_id, variant_id, task_id, replicate, attempt,
+         status, job_path, started_at, finished_at, reward, resolved,
+         exception_type, metrics_json)
+        SELECT id, experiment_id, variant_id, task_id, 1, attempt,
+         status, job_path, started_at, finished_at, reward, resolved,
+         exception_type, metrics_json
+        FROM trials;
+    DROP TABLE trials;
+    ALTER TABLE trials_v2 RENAME TO trials;
+    """,
 }
 
 

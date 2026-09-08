@@ -18,7 +18,7 @@ from roast_my_harness.spec.models import (
 )
 
 BASE = """
-schema_version = 1
+schema_version = 2
 name = "p1"
 [tasks]
 path = "{tasks}"

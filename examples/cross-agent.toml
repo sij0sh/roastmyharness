@@ -6,7 +6,7 @@
 # (18.0.9 here; drop it to use the registry default). `pi_version` pins
 # the control. Same global [model] for all arms - comparisons are only
 # rendered at equal (task, model).
-schema_version = 1
+schema_version = 2
 name = "cross-agent"
 agent = "omp"
 agent_version = "18.0.9"

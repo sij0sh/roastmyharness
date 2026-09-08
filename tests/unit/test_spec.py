@@ -16,7 +16,7 @@ from roast_my_harness.spec.models import (
 )
 
 MINIMAL = """
-schema_version = 1
+schema_version = 2
 name = "demo"
 [tasks]
 path = "/tmp/does-not-need-to-exist"
@@ -57,7 +57,7 @@ def test_validation_error_is_single_line(tmp_path: Path):
 def test_reserved_control_id_rejected(tmp_path: Path):
     with pytest.raises(SpecError, match="reserved"):
         load_experiment(write(tmp_path, """
-schema_version = 1
+schema_version = 2
 name = "x"
 [[variants]]
 id = "control"
@@ -67,7 +67,7 @@ id = "control"
 def test_duplicate_variant_ids_rejected(tmp_path: Path):
     with pytest.raises(SpecError, match="duplicate"):
         load_experiment(write(tmp_path, """
-schema_version = 1
+schema_version = 2
 name = "x"
 [[variants]]
 id = "a"
@@ -79,7 +79,7 @@ id = "a"
 def test_unsafe_variant_id_rejected(tmp_path: Path):
     with pytest.raises(SpecError):
         load_experiment(write(tmp_path, """
-schema_version = 1
+schema_version = 2
 name = "x"
 [[variants]]
 id = "Bad Id!"
@@ -92,7 +92,7 @@ def test_pi_version_rejects_shell_syntax(tmp_path: Path):
             write(
                 tmp_path,
                 """
-schema_version = 1
+schema_version = 2
 name = "x"
 pi_version = "0.84.3; echo leaked"
 [tasks]
@@ -133,7 +133,7 @@ def test_every_fairness_flag_is_reserved():
 def test_needs_at_least_one_arm(tmp_path: Path):
     with pytest.raises(SpecError, match="at least one"):
         load_experiment(write(tmp_path, """
-schema_version = 1
+schema_version = 2
 name = "x"
 [tasks]
 path = "."
@@ -162,7 +162,7 @@ def test_paths_resolve_against_spec_dir(tmp_path: Path):
     (tmp_path / "ext").mkdir()
     (tmp_path / "ext" / "index.ts").write_text("x")
     spec = load_experiment(write(tmp_path, """
-schema_version = 1
+schema_version = 2
 name = "x"
 [tasks]
 path = "."
@@ -176,12 +176,22 @@ entry = "index.ts"
     assert spec.variants[0].extensions[0].path == (tmp_path / "ext").resolve()
 
 
-def test_schema_version_must_be_1():
-    with pytest.raises(ValueError):
+def test_schema_version_must_be_2():
+    with pytest.raises(ValueError, match="schema_version = 2"):
         ExperimentSpec.model_validate(
-            {"schema_version": 2, "name": "x", "tasks": {"path": "/tmp"},
+            {"schema_version": 1, "name": "x", "tasks": {"path": "/tmp"},
              "variants": [{"id": "a"}]}
         )
+    with pytest.raises(ValueError, match="expected 2"):
+        ExperimentSpec.model_validate(
+            {"schema_version": 3, "name": "x", "tasks": {"path": "/tmp"},
+             "variants": [{"id": "a"}]}
+        )
+    spec = ExperimentSpec.model_validate(
+        {"schema_version": 2, "name": "x", "tasks": {"path": "/tmp"},
+         "variants": [{"id": "a"}]}
+    )
+    assert spec.schema_version == 2
 
 
 def test_agent_versions_map_pins_non_default_agent(tmp_path: Path):
