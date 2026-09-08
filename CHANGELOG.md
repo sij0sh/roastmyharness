@@ -4,6 +4,119 @@
 
 ### Added
 
+- Evaluations as a first-class concept (`[evaluation]` with
+  `type = "bundled" | "generated" | "external"`): DeepSWE is now one
+  eval (`bundled/deepswe`, the default when the block is absent) rather
+  than the unit of the harness. Eval identity (type, id, revision,
+  contract hash) enters run identity, the run manifest, and
+  historic-control cohort keys, so different evals never share cells or
+  history. Absent or all-default blocks keep byte-identical identity
+  and cohort keys with pre-eval runs.
+- Named scoring dimensions: verifiers may report `reward_deterministic`
+  / `reward_judge` / `judge_model` in the rewards map; rows carry them
+  as appended CSV columns, `summary.json` gains a per-variant
+  `dimensions` block (mean of per-task means with task-bootstrapped
+  CIs), and `report.md` renders a "Scores by dimension" section only
+  when dimensions exist. The scalar `reward` stays the pass/fail
+  outcome; single-dimension runs render exactly as before.
+- Custom-eval authoring contract: `eval.toml` beside the task root
+  (scoring bar, pinned judge), `validation/self-test.json` fixture
+  suite, and a preflight `eval` gate that refuses launch unless the
+  contract validates and fixtures discriminate (oracle-style pass plus
+  nop-style fail, undeclared judges rejected). Ships a hand-built
+  3-task example (`examples/evals/structured-output/`,
+  `examples/structured-output-eval.toml`) with host-testable
+  deterministic verifiers.
+- EvalBuilder host validation + wizard benchmark modes:
+  `roastmyharness eval init` scaffolds a workspace in the example
+  layout (task dirs directly under the root), `eval validate` runs
+  the full host-side freeze gate (descriptor, capability map,
+  rationale, tasks, critic verdict, fixture self-tests), and builder
+  writes are sandboxed to the workspace. The Pi wizard offers
+  Recommended (bundled DeepSWE) / Custom (frozen generated eval) /
+  Existing (external task set) modes, freezes the choice into the
+  spec's `[evaluation]` block, enforces it against author drift, and
+  shows eval provenance on the review screen. The wheel ships the
+  example eval and CI validates it (`eval validate` + catalog)
+  from an installed wheel with no checkout.
+
+- Repetitions are a real dimension (`[execution] repetitions = 4`,
+  `max_retries = 1`, defaults 1/1): trial identity is
+  `(variant, task, replicate)`, retries are attempts within a replicate,
+  and each replicate launches into its own `jobs/<variant>/replicate-N/`
+  dir (single-repetition runs keep the flat layout). Resume fills only
+  missing replicates; `--retry-errors` relaunches within the same
+  replicate, capped by `max_retries`. Scores are means of per-task pass
+  rates with the bootstrap over tasks (identical numbers for
+  single-repetition runs); `summary.csv` gains an appended `replicate`
+  column. Trials DB migrates additively (existing rows become
+  replicate 1).
+- Repetition-aware reports: resolve-rate tables gain a variant `type` column
+  (`control` / `extension` / `skill` / `extension+skill` / `context_file` /
+  `bare`, also in `summary.json` as `variant_types`); a new "Results by
+  task difficulty" section stratifies per-task rates with task-bootstrapped
+  CIs and pp deltas vs control, with unlabeled tasks forming their own
+  accounted stratum (machine-readable in `summary.json` as `stratified`).
+  Difficulty labels 12 DeepSWE tasks from Luna High published solve rates
+  (easy >= 3/4, medium = 2/4, hard <= 1/4, each with recorded basis; the
+  duration axis awaits wall-time calibration). Run manifests now embed the
+  effective spec so reports classify arms without reloading the TOML.
+- Model profiles (`tasks/deepswe/tasks/profiles.toml` + `roastmyharness profiles`):
+  versioned per-model records with measured benchmark rates where they exist
+  (Luna High 44.2% over 452, GLM-5.3-Flash Max 63.4% over 448, both
+  DeepSWE-published mini-swe-agent rollouts cited in `.pi-files/tasks.md`;
+  pi-agent rates unmeasured), ranked toward the 40-60% discrimination band
+  with unmeasured profiles last and never showing a rate. Muse Spark and Sol
+  ship as explicit unmeasured placeholders. The Pi wizard already lists the
+  user's Pi inventory generically (no hardcoded model branches existed to
+  remove); profile display/ranking in the wizard UI lands with the wizard
+  polish pass. Cost tiers are omitted until per-task spend data exists.
+  Also fixed: `roastmyharness init` writes `schema_version = 2` with the v2
+  `[execution]`/`[control]` schema, and the dead interactive `ask` plumbing
+  (CLI, service, controller) is removed.
+- Telemetry generalization: generic `tool_results`, `tool_failures`,
+  `tool_failure_rate`, and `tool_missing_results` columns derive from the
+  normalized ATIF trajectory (every adapter's `trajectory.json`), and
+  read/reread/overlap rates are computed over the same normalized calls.
+  The seven `cm_*` CSV columns move to a namespaced `custom_metrics`
+  object per trial in `summary.json` (prefix stripped, zero counters
+  dropped); the CSV keeps the stable core plus appended columns only.
+  Trials without a trajectory keep pi-event values with failure counters
+  at zero. Pi TTFT/turn-time columns stay as pi-specific enrichment.
+- Historic-control redesign (deterministic TOML policy, no stored `ask`):
+  `[control]` now uses `mode = "fresh" | "historic"`,
+  `history_scope = "hybrid" | "intersection"`, `minimum_runs_per_task = 4`,
+  `sentinel_tasks = 4`, and `on_drift` / `on_inconclusive = "fresh" | "abort"`.
+  Availability (`unavailable` / `partial` / `eligible`) is computed after
+  model and tasks are known and reported before launch; sentinels sample
+  from history-backed tasks only; drift verdicts map to `accepted` /
+  `rejected_drift` / `inconclusive` with the configured fresh-fallback or
+  abort behavior. Intersection scope skips non-backed control trials (shown
+  idle, never launched). Reports render a labeled per-task historical
+  baseline next to fresh extension rates. `AgentService.historic_availability()`
+  exposes the same plan for the wizard. v1 specs are rejected at the version
+  gate; v2 specs with a stale `reuse` field fail strict TOML validation.
+- Benchmark catalog (`tasks/deepswe/tasks/catalog.toml`): benchmark
+  revision, named task presets consolidated verbatim from `suites.json`
+  (`luna-signal`, `luna-confirmation`, `glm-signal`, `glm-confirmation`),
+  and a per-task label table (duration/difficulty/smoke, each requiring a
+  recorded measurement basis; nothing labeled yet). `[tasks] preset`
+  selects a preset list at load time; runs record `catalog_hash` in run
+  identity and the manifest. The smoke probe picks deterministic
+  `smoke`-tagged tasks (fast+easy first), falling back to the first
+  discovered task. `suites.json` stays until the Pi wizard reads the
+  catalog directly.
+- `schema_version = 2` with a frozen run identity (`ResolvedRunSpec`):
+  prepare resolves every agent pin (`latest` included) to an exact
+  version exactly once, and the run id, home cache keys,
+  historic-control cohort keys, launch plan, and manifest all consume
+  that frozen value. A moved `latest` now starts a new run instead of
+  silently reusing old cells; resume reloads `run_dir/resolved.json`
+  instead of re-resolving. v1 specs are rejected with a migration hint;
+  v1 runs stay readable via status/report. Plan bindings freeze the
+  resolved versions, so start rejects a plan whose `latest` moved since
+  approval.
+
 - `resume` accepts `--task`, `--variant` (both repeatable), and
   `--retry-errors` to rerun individual cells. Pier starts a new attempt
   per selected cell and reconciliation keeps the newest, so completed
@@ -18,6 +131,15 @@
   token usage with cost, and elapsed time; benchmark elapsed time,
   measured trial token totals, and trials/min rate. No model call is
   involved.
+- Release packaging: the wheel bundles the Pi extension and the DeepSWE
+  corpus under `roast_my_harness/bundled/` (~4.6 MB compressed), so
+  `setup` and task discovery work from a bare `pip install` with no
+  checkout (`ROAST_MY_HARNESS_REPO` still overrides; the default
+  `./tasks/deepswe/tasks` falls back to the bundled corpus only when
+  absent). A new CI `wheel` job installs the wheel into an empty env and
+  gates on the bundled payload, `setup`, and discovery. Corpus count
+  corrected to 115 runnable tasks (the README said 117; upstream
+  documents 113, matching the older changelog entries).
 
 ### Changed
 

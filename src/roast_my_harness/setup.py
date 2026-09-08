@@ -33,6 +33,28 @@ class ActionResult:
     problem: bool = False
 
 
+def bundled_root() -> Path | None:
+    """Installed wheel payload: Pi extension source plus task corpus.
+
+    The wheel maps repo `integrations/` and `tasks/` under
+    `roast_my_harness/bundled/` so setup and discovery work with no
+    checkout on disk.
+    """
+    base = Path(__file__).resolve().parent / "bundled"
+    if (base / "integrations/pi/roastmyharness.ts").is_file():
+        return base
+    return None
+
+
+def bundled_tasks_root() -> Path | None:
+    """DeepSWE task root inside the wheel payload, if installed."""
+    base = bundled_root()
+    if base is None:
+        return None
+    tasks = base / "tasks/deepswe/tasks"
+    return tasks if tasks.is_dir() else None
+
+
 def repo_root() -> Path | None:
     """Locate a checkout that carries the Pi extension source."""
     env = os.environ.get("ROAST_MY_HARNESS_REPO")
@@ -42,7 +64,7 @@ def repo_root() -> Path | None:
     for base in candidates:
         if (base / "integrations/pi/roastmyharness.ts").is_file():
             return base
-    return None
+    return bundled_root()
 
 
 def _link(source: Path, dest: Path) -> ActionResult:

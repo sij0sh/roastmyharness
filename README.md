@@ -110,30 +110,94 @@ the Claude MCP server idempotently:
 
 ## Bundled DeepSWE benchmark
 
-The DeepSWE task corpus lives in this repo under `tasks/deepswe/` (117 Harbor
-format tasks with `task.toml`, `instruction.md`, `environment/`, `tests/`, and
+The DeepSWE task corpus lives in this repo under `tasks/deepswe/` (115 runnable
+tasks with `task.toml`, `instruction.md`, `environment/`, `tests/`, and
 `solution/`; see `tasks/deepswe/README.md` and `PROVENANCE.md`). The Pi
 extension resolves the benchmark relative to its own installed symlink, so the
 wizard defaults to these local tasks with no external checkout or network
-access. Curated suite membership lives in `tasks/deepswe/suites.json`: per
+access. Preset membership lives in `tasks/deepswe/tasks/catalog.toml`: per
 model (Luna High, GLM-5.3-Flash Max), a 30-task signal screen of frontier tasks
-(1/4-3/4 historical rollout outcomes) plus a 30-task confirmation extension
-with regression/floor anchors. Passing `/roastmyharness <path>` still overrides
-the bundled root, and other task roots are discovered from the working directory
-and recent runs.
+plus a 30-task confirmation extension. Passing `/roastmyharness <path>` still
+overrides the bundled root, and other task roots are discovered from the
+working directory and recent runs.
+
+Release bundling decision: the wheel ships the corpus and the Pi extension
+inside the package (`roast_my_harness/bundled/`, ~4.6 MB compressed for
+33 MB on disk), so `setup` and discovery work from a bare `pip install`
+with no checkout. `setup` prefers a repo checkout when one is present
+(`ROAST_MY_HARNESS_REPO` overrides); `profiles` and `tool catalog` fall
+back to the bundled corpus only when the default `./tasks/deepswe/tasks`
+is absent, so an explicit path typo still errors instead of retargeting.
+
+## Custom evaluations
+
+DeepSWE is one evaluation, not the unit of the harness. An experiment
+selects an eval via `[evaluation]`: `type = "bundled"` (today only
+`id = "deepswe"`, the default when the block is absent),
+`type = "generated"` (a frozen custom eval described by `eval.toml`
+beside the task root), or `type = "external"` (a plain local Pier task
+set with an optional `eval.toml`). Eval identity (type, id, revision,
+contract hash) enters run identity, the run manifest, and
+historic-control cohort keys, so different evals never share cells or
+history.
+
+A custom eval is a frozen contract, not a folder of tasks:
+
+- `eval.toml` states the scoring bar (`[scoring] pass_threshold`) and
+  pins the judge (`[judge]` model, rubric, samples) when the eval uses
+  one. Verifiers fold dimensions into the scalar `reward` per this
+  contract; reports render deterministic and judge scores separately.
+- `validation/self-test.json` ships synthetic verifier outputs with
+  expected outcomes. `validate`/`run` refuse to launch unless every
+  fixture resolves as expected and the set discriminates (at least one
+  expected pass and one failure). An undeclared judge score, or a judge
+  score without `judge_model`, fails the gate.
+- Authoring order matters: map capabilities first, design tests from
+  the map alone (never from the skill source), freeze validators, add
+  fixtures, run a critic pass over the checklist in
+  `examples/evals/structured-output/tasks/validation/critic.json`, then
+  calibrate on bare control only. Once any variant-under-test has run,
+  the eval is immutable.
+
+See the hand-built example (`examples/evals/structured-output/` with
+`examples/structured-output-eval.toml`): three deterministic tasks, a
+worked capability map and rationale, and verifiers whose checks stay
+host-testable via `APP_DIR`/`LOGS_DIR` overrides.
+
+Start a new eval with `roastmyharness eval init <dir> --id <eval-id>`
+and check it with `roastmyharness eval validate <dir>`: the validator
+covers the descriptor, capability map, rationale, tasks, critic
+verdict, and fixture self-tests, and fails until every step is
+complete. The Pi wizard offers Recommended (bundled DeepSWE) /
+Custom (frozen generated eval) / Existing (external task set) modes
+and freezes the choice into `[evaluation]`, so benchmark content can
+never change after a run begins.
 
 ## Experiment spec
 
 The loader accepts TOML only. `roastmyharness init` still writes a
 commented TOML starter. See `examples/` for more TOML examples. Key sections
-are `[model]`, `[tasks]`,
+are `[model]`, `[tasks]`, `[evaluation]`,
 `[concurrency]`, `[control]`, and one `[[variants]]` block per arm. Controls
-run fresh by default. Set `reuse = "ask"` for an interactive pool choice or
-`reuse = "require"` to fail when no eligible history exists. Reuse also accepts
-`minimum_runs_per_task`, `maximum_age_days`, and `sentinel_tasks`. Accepted
-history appears as `H`; reports disclose its age, counts, and drift verdict.
+run fresh by default (`mode = "fresh"`). `mode = "historic"` reuses eligible
+history: `history_scope = "hybrid"` runs fresh controls for tasks without
+history, `"intersection"` runs only the history-backed test intersection.
+`minimum_runs_per_task`, `maximum_age_days`, and `sentinel_tasks` bound the
+pool; sentinels sample from history-backed tasks only and gate a
+drift verdict (`accepted` / `rejected_drift` / `inconclusive`), with
+`on_drift` / `on_inconclusive` selecting a fresh fallback or abort. There is
+no stored interactive mode. Accepted history appears as `H`; reports disclose
+its age, counts, drift verdict, and a per-task historical baseline next to
+fresh extension rates.
 Variant blocks support local extensions (`kind = "local"`), pinned npm packages (`kind = "npm"`),
-skills, env pins, and typed setup handlers.
+skills, env pins, and typed setup handlers. `[execution]` sets
+`repetitions` (independent scored rollouts per task, default 1) and
+`max_retries` (relaunches per errored trial, default 1).
+`[tasks] preset` selects a named list from the benchmark catalog
+(`tasks/deepswe/tasks/catalog.toml`, e.g. `preset = "luna-signal"`);
+include/exclude globs filter the preset further. Task metadata
+(duration/difficulty/smoke) lives in the catalog, never inside task
+directories, and runs record its `catalog_hash` next to the task hashes.
 
 `[model] provider` accepts any provider defined in the host pi
 `~/.pi/agent/models.json` (model ids are validated against it), the
@@ -165,9 +229,10 @@ Rules that keep arms comparable:
 - Cached homes never mix agents: `(agent, agent_version)` is part of the
   variant hash.
 - `pi_version = "latest"` (the default) resolves to the newest npm release
-  every time an experiment runs; the exact version lands in the staged home,
-  the run manifest, and reports. Pin `pi_version = "x.y.z"` for a
-  reproducible version instead.
+  once at prepare time; the frozen version defines the run id and is what
+  lands in the staged home, the run manifest, and reports. A moved `latest`
+  starts a new run instead of reusing old cells. Pin `pi_version = "x.y.z"`
+  for a reproducible version instead.
 - `pi`-only features (extensions, skills, `pi_flags`, `npm_pi_install`
   setup) are rejected on other families with a naming error.
 
@@ -194,12 +259,19 @@ agent class; codex/gemini/opencode would follow that pattern.
   gone and bare `roastmyharness` prints help.
 - Phase 5 (auth): Phase A done (reuse pi Codex OAuth, status, staging).
   Integrated OAuth bridge is a follow-up; use `pi /login codex`.
-- Phase 6 (historic controls): done. Explicit `ask` and `require` modes use
-  age-bounded observation pools and a fresh sentinel drift gate. The default
-  `never` mode preserves fresh control behavior.
+- Phase 6 (historic controls): done, then redesigned for v2. Deterministic
+  `fresh` / `historic` modes use age-bounded observation pools and a fresh
+  sentinel drift gate over history-backed tasks only; `hybrid` and
+  `intersection` scopes decide what runs without history. The default
+  `fresh` mode preserves fresh control behavior.
 
 summary.csv carries a tool-owned schema; columns may change between
-releases. The legacy DSE-parity golden tests were removed.
+releases. Tool failure metrics (`tool_results`, `tool_failures`,
+`tool_failure_rate`, `tool_missing_results`) derive from the normalized
+ATIF trajectory every adapter writes, so they work for any agent; Pi-only
+enrichment (context-manager counters and friends) lives under each trial's
+`custom_metrics` object in summary.json, never in the CSV. The legacy
+DSE-parity golden tests were removed.
 
 Deferred by design (plan section 2): remote fan-out, non-Pier benchmarks,
 agents beyond the registry (codex, gemini, opencode - the registry/adapter

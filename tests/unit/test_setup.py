@@ -18,6 +18,43 @@ def _make_repo(root: Path) -> Path:
     return root
 
 
+def test_repo_root_prefers_env_checkout(tmp_path: Path, monkeypatch) -> None:
+    root = _make_repo(tmp_path / "repo")
+    monkeypatch.setenv("ROAST_MY_HARNESS_REPO", str(root))
+    monkeypatch.chdir(tmp_path)
+    assert setup_mod.repo_root() == root
+
+
+def test_bundled_root_absent_in_checkout() -> None:
+    # The source tree carries no bundled/ dir; the wheel build creates it.
+    assert setup_mod.bundled_root() is None
+    assert setup_mod.bundled_tasks_root() is None
+
+
+def test_resolve_tasks_root_prefers_existing_and_explicit(tmp_path: Path) -> None:
+    from roast_my_harness.cli import _resolve_tasks_root
+
+    existing = tmp_path / "mine"
+    existing.mkdir()
+    assert _resolve_tasks_root(existing) == existing
+    missing_explicit = tmp_path / "typo"
+    assert _resolve_tasks_root(missing_explicit) == missing_explicit
+
+
+def test_resolve_tasks_root_falls_back_to_bundled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from roast_my_harness.cli import _DEFAULT_TASKS_ROOT, _resolve_tasks_root
+
+    monkeypatch.chdir(tmp_path)
+    bundled = tmp_path / "bundled/tasks/deepswe/tasks"
+    bundled.mkdir(parents=True)
+    monkeypatch.setattr(setup_mod, "bundled_tasks_root", lambda: bundled)
+    assert _resolve_tasks_root(_DEFAULT_TASKS_ROOT) == bundled
+    monkeypatch.setattr(setup_mod, "bundled_tasks_root", lambda: None)
+    assert _resolve_tasks_root(_DEFAULT_TASKS_ROOT) == _DEFAULT_TASKS_ROOT
+
+
 def test_setup_pi_user_is_idempotent(tmp_path: Path) -> None:
     root, home = _make_repo(tmp_path / "repo"), tmp_path / "home"
     for _ in range(2):
