@@ -260,7 +260,7 @@ def test_f3_batch_parses_once(tmp_path, monkeypatch):
     batched = newest_result_paths(jobs / "v0", tasks)
     assert len(loads) == 16
     assert per_call_loads == 16 * 16
-    assert batched == per_call
+    assert {task: path for (task, _rep), path in batched.items()} == per_call
 
 
 def test_f3_single_enumeration(tmp_path, monkeypatch):

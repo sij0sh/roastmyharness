@@ -116,11 +116,13 @@ class Repository:
 
     # ---------------------------------------------------------- trials --
 
-    def next_attempt(self, experiment_id: str, variant_id: str, task_id: str) -> int:
+    def next_attempt(
+        self, experiment_id: str, variant_id: str, task_id: str, replicate: int = 1
+    ) -> int:
         row = self.conn.execute(
             "SELECT MAX(attempt) FROM trials WHERE experiment_id=? "
-            "AND variant_id=? AND task_id=?",
-            (experiment_id, variant_id, task_id),
+            "AND variant_id=? AND task_id=? AND replicate=?",
+            (experiment_id, variant_id, task_id, replicate),
         ).fetchone()
         return (row[0] or 0) + 1
 
@@ -129,26 +131,29 @@ class Repository:
         status: str, job_path: str | None, reward: float | None,
         resolved: bool | None, exception_type: str | None,
         metrics: dict | None, finished_at: str | None = None,
+        replicate: int = 1,
     ) -> str:
         existing = self.conn.execute(
             "SELECT id FROM trials WHERE experiment_id=? AND variant_id=? "
-            "AND task_id=? AND attempt=?",
-            (experiment_id, variant_id, task_id, attempt),
+            "AND task_id=? AND replicate=? AND attempt=?",
+            (experiment_id, variant_id, task_id, replicate, attempt),
         ).fetchone()
         trial_id = str(existing["id"]) if existing else str(uuid.uuid4())
         with self.conn:
             self.conn.execute(
                 "INSERT INTO trials (id, experiment_id, variant_id, task_id, "
-                "attempt, status, job_path, reward, resolved, exception_type, "
-                "metrics_json, finished_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(experiment_id, variant_id, task_id, attempt) "
+                "replicate, attempt, status, job_path, reward, resolved, "
+                "exception_type, metrics_json, finished_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(experiment_id, variant_id, task_id, replicate, attempt) "
                 "DO UPDATE SET status=excluded.status, "
                 "job_path=excluded.job_path, reward=excluded.reward, "
                 "resolved=excluded.resolved, exception_type=excluded.exception_type, "
                 "metrics_json=excluded.metrics_json, "
                 "finished_at=excluded.finished_at",
                 (
-                    trial_id, experiment_id, variant_id, task_id, attempt, status,
+                    trial_id, experiment_id, variant_id, task_id, replicate,
+                    attempt, status,
                     job_path, reward,
                     None if resolved is None else int(resolved),
                     exception_type,
@@ -163,23 +168,25 @@ class Repository:
         status: str, job_path: str | None, reward: float | None,
         resolved: bool | None, exception_type: str | None,
         metrics: dict | None, finished_at: str | None = None,
+        replicate: int = 1,
     ) -> str:
         """Persist one filesystem attempt without duplicating it on polling."""
         row = None
         if job_path is not None:
             row = self.conn.execute(
                 "SELECT attempt FROM trials WHERE experiment_id=? "
-                "AND variant_id=? AND task_id=? AND job_path=? "
+                "AND variant_id=? AND task_id=? AND replicate=? AND job_path=? "
                 "ORDER BY attempt DESC LIMIT 1",
-                (experiment_id, variant_id, task_id, job_path),
+                (experiment_id, variant_id, task_id, replicate, job_path),
             ).fetchone()
         attempt = int(row["attempt"]) if row else self.next_attempt(
-            experiment_id, variant_id, task_id
+            experiment_id, variant_id, task_id, replicate
         )
         return self.upsert_trial(
             experiment_id=experiment_id,
             variant_id=variant_id,
             task_id=task_id,
+            replicate=replicate,
             attempt=attempt,
             status=status,
             job_path=job_path,

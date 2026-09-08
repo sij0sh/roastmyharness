@@ -37,6 +37,46 @@ PATCH_FILENAME = "model.patch"
 MANIFEST_FILENAME = "manifest.json"
 WORKTREE_STATUS_FILENAME = "worktree-status.txt"
 
+
+def step_dirs(trial_dir: Path) -> list[Path]:
+    """Sorted per-step dirs of a staged (multi-step pier) trial.
+
+    Pier relocates each step's agent//verifier//artifacts/ content under
+    steps/<name>/ as the trial advances, rmdir-ing the emptied trial roots.
+    Step names sort in execution order by task-authoring convention.
+    """
+    steps = trial_dir / "steps"
+    if not steps.is_dir():
+        return []
+    return sorted([p for p in steps.iterdir() if p.is_dir()], key=lambda p: p.name)
+
+
+def is_stepped_trial(trial_dir: Path) -> bool:
+    """True once a staged trial has relocated its first step."""
+    return bool(step_dirs(trial_dir))
+
+
+def has_trial_logs(trial_dir: Path) -> bool:
+    """Single-step layout or stepped layout (completed or mid-relocation)."""
+    if (trial_dir / "agent").is_dir() and (trial_dir / "verifier").is_dir():
+        return True
+    return is_stepped_trial(trial_dir)
+
+
+def _artifact_beside(trial_dir: Path, filename: str) -> Path:
+    """Artifact path, falling back to the last completed step.
+
+    Staged trials move per-step artifacts/ under steps/<name>/. The last
+    step's capture is the trial-grade one (cumulative diff vs base).
+    """
+    direct = trial_dir / "artifacts" / filename
+    if direct.exists():
+        return direct
+    steps = step_dirs(trial_dir)
+    if steps:
+        return steps[-1] / "artifacts" / filename
+    return direct
+
 # Upper bound for trajectory scans; trial event logs are small, but a corrupt
 # or runaway file must not stall reconciliation.
 _MAX_SCAN_BYTES = 32 * 1024 * 1024
@@ -66,7 +106,7 @@ MUTATION_TOOL_NAMES = frozenset(
 def patch_size_bytes(trial_dir: Path) -> int | None:
     """Size of artifacts/model.patch, or None when missing/unreadable."""
     try:
-        return (trial_dir / "artifacts" / PATCH_FILENAME).stat().st_size
+        return _artifact_beside(trial_dir, PATCH_FILENAME).stat().st_size
     except OSError:
         return None
 
@@ -78,7 +118,7 @@ def manifest_model_patch_status(trial_dir: Path) -> str | None:
     manifest or its model.patch entry is absent (unknown, not failure).
     """
     try:
-        manifest = json.loads((trial_dir / "artifacts" / MANIFEST_FILENAME).read_text())
+        manifest = json.loads(_artifact_beside(trial_dir, MANIFEST_FILENAME).read_text())
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return None
     entries = manifest.get("entries") if isinstance(manifest, dict) else None
@@ -103,7 +143,7 @@ def worktree_dirty(trial_dir: Path) -> bool | None:
     status file is absent (predates the new collect command: unknown).
     """
     try:
-        text = (trial_dir / "artifacts" / WORKTREE_STATUS_FILENAME).read_text()
+        text = _artifact_beside(trial_dir, WORKTREE_STATUS_FILENAME).read_text()
     except (OSError, UnicodeDecodeError):
         return None
     return any(line.strip() for line in text.splitlines())
@@ -111,9 +151,14 @@ def worktree_dirty(trial_dir: Path) -> bool | None:
 
 def agent_mutation_evidence(trial_dir: Path) -> bool:
     """True when the agent logs show an explicit file-mutation tool call."""
-    if _events_show_mutation(trial_dir / "agent" / "pi-events.jsonl"):
-        return True
-    return _trajectory_shows_mutation(trial_dir / "agent" / "trajectory.json")
+    candidates = [trial_dir / "agent"]
+    candidates.extend(step / "agent" for step in step_dirs(trial_dir))
+    for agent_dir in candidates:
+        if _events_show_mutation(agent_dir / "pi-events.jsonl"):
+            return True
+        if _trajectory_shows_mutation(agent_dir / "trajectory.json"):
+            return True
+    return False
 
 
 def _is_mutation_tool(name: object) -> bool:

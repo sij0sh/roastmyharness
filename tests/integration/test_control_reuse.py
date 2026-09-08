@@ -14,13 +14,14 @@ import pytest
 
 from roast_my_harness.paths import database_path
 from roast_my_harness.runner.controller import ExperimentController
-from roast_my_harness.spec.hashes import spec_hash
 from roast_my_harness.spec.load import load_experiment
-from roast_my_harness.spec.normalize import experiment_id
+from roast_my_harness.spec.resolved import resolve_run_spec
 from roast_my_harness.store.repository import Repository
+from roast_my_harness.tasks.discover import discover_tasks
+from roast_my_harness.tasks.hashes import task_hash
 
 SPEC = """
-schema_version = 1
+schema_version = 2
 name = "reuse-test"
 [tasks]
 path = "./dataset"
@@ -28,13 +29,19 @@ path = "./dataset"
 per_variant = 1
 [control]
 enabled = true
-reuse = "require"
+mode = "historic"
 minimum_runs_per_task = 2
 maximum_age_days = 30
 sentinel_tasks = 2
 [[variants]]
 id = "a"
 """
+
+def _exp_id(spec) -> str:
+    tasks = discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
+    pairs = [(t.task_id, task_hash(t.path)) for t in tasks]
+    return resolve_run_spec(spec, pairs).run_id
+
 
 def setup(tmp_path: Path) -> Path:
     for task_id in ("t1", "t2", "t3"):
@@ -124,7 +131,7 @@ async def test_sentinel_reject_releases_held_controls(env, monkeypatch):
     spec_path = setup(env)
     spec = load_experiment(spec_path)
     repo = Repository(database_path())
-    exp_id = experiment_id(spec.name, spec_hash(spec))
+    exp_id = _exp_id(spec)
     controller = ExperimentController(
         spec, exp_id, env / "runs" / exp_id, repo, None
     )
@@ -132,7 +139,7 @@ async def test_sentinel_reject_releases_held_controls(env, monkeypatch):
 
     
     seed_pool(repo, controller, ["t1", "t2", "t3"], resolved=True)
-    controller.enforce_reuse_policy(interactive=False)  
+    controller.enforce_reuse_policy()  
     assert controller.control_reuse.plan is not None
     assert sum(controller.control_reuse.plan.reuse_by_task.values()) >= 1
 
@@ -217,11 +224,11 @@ async def test_sentinel_accepts_history_and_renders_h(env, monkeypatch):
         "control": spec.control.model_copy(update={"sentinel_tasks": 3})
     })
     repo = Repository(database_path())
-    exp_id = experiment_id(spec.name, spec_hash(spec))
+    exp_id = _exp_id(spec)
     controller = ExperimentController(spec, exp_id, env / "runs" / exp_id, repo)
     controller.prepare(spec_path)
     seed_pool(repo, controller, ["t1", "t2", "t3", "t4"], resolved=False)
-    controller.enforce_reuse_policy(interactive=False)
+    controller.enforce_reuse_policy()
     fake = FakePier(controller)
     fake.patch(monkeypatch)
 
@@ -229,7 +236,7 @@ async def test_sentinel_accepts_history_and_renders_h(env, monkeypatch):
     assert controller.control_reuse.accepted is True
     matrix = controller.snapshot()["matrix"]
     assert list(matrix["control"].values()).count("H") == 1
-    assert "historic control observations were reused" in (
+    assert "observations reused across" in (
         env / "runs" / exp_id / "report.md"
     ).read_text()
     assert len([argv for argv in fake.launches if any("/jobs/a" in arg for arg in argv)]) == 1
@@ -240,37 +247,31 @@ async def test_policy_require_fails_without_history(env):
     spec_path = setup(env)
     spec = load_experiment(spec_path)
     repo = Repository(database_path())
-    exp_id = experiment_id(spec.name, spec_hash(spec))
+    exp_id = _exp_id(spec)
     controller = ExperimentController(
         spec, exp_id, env / "runs" / exp_id, repo, None
     )
     controller.prepare(spec_path)
-    with pytest.raises(ValueError, match="require"):
-        controller.enforce_reuse_policy(interactive=False)
+    with pytest.raises(ValueError, match="no task has"):
+        controller.enforce_reuse_policy()
     repo.close()
 
-async def test_policy_ask_uses_callback(env):
+async def test_policy_partial_reports_availability(env):
     spec_path = setup(env)
     spec = load_experiment(spec_path)
-    spec = spec.model_copy(update={
-        "control": spec.control.model_copy(update={"reuse": "ask"})
-    })
     repo = Repository(database_path())
-    exp_id = experiment_id(spec.name, spec_hash(spec))
-    prompts: list[str] = []
-
-    def accept(message: str) -> bool:
-        prompts.append(message)
-        return True
-
+    exp_id = _exp_id(spec)
+    messages: list[str] = []
     controller = ExperimentController(
-        spec, exp_id, env / "runs" / exp_id, repo, ask=accept
+        spec, exp_id, env / "runs" / exp_id, repo, lambda message: messages.append(message)
     )
     controller.prepare(spec_path)
-    seed_pool(repo, controller, ["t1", "t2", "t3"], resolved=True)
-    controller.enforce_reuse_policy(interactive=True)
-    assert prompts and "historic control pool" in prompts[0]
-    assert controller.control_reuse.enabled is True
+    seed_pool(repo, controller, ["t1", "t2"], resolved=True)
+    controller.enforce_reuse_policy()
+    assert controller.control_reuse.plan is not None
+    assert controller.control_reuse.plan.status == "partial"
+    assert controller.control_reuse.plan.eligible_tasks == ["t1", "t2"]
+    assert "2/3 tasks eligible" in "\n".join(messages)
     repo.close()
 
 
@@ -278,7 +279,7 @@ async def test_policy_require_excludes_same_experiment_history(env):
     spec_path = setup(env)
     spec = load_experiment(spec_path)
     repo = Repository(database_path())
-    exp_id = experiment_id(spec.name, spec_hash(spec))
+    exp_id = _exp_id(spec)
     controller = ExperimentController(spec, exp_id, env / "runs" / exp_id, repo)
     controller.prepare(spec_path)
     seed_pool(repo, controller, ["t1", "t2", "t3"], resolved=True)
@@ -287,18 +288,18 @@ async def test_policy_require_excludes_same_experiment_history(env):
         (f"experiment:{exp_id}",),
     )
     repo.conn.commit()
-    with pytest.raises(ValueError, match="require"):
-        controller.enforce_reuse_policy(interactive=False)
+    with pytest.raises(ValueError, match="no task has"):
+        controller.enforce_reuse_policy()
     repo.close()
 
 
-async def test_policy_never_runs_everything_fresh(env, monkeypatch):
+async def test_policy_fresh_runs_everything_fresh(env, monkeypatch):
     spec = load_experiment(setup(env))
     spec = spec.model_copy(update={
-        "control": spec.control.model_copy(update={"reuse": "never"})
+        "control": spec.control.model_copy(update={"mode": "fresh"})
     })
     repo = Repository(database_path())
-    exp_id = experiment_id(spec.name, spec_hash(spec))
+    exp_id = _exp_id(spec)
     controller = ExperimentController(
         spec, exp_id, env / "runs" / exp_id, repo, None
     )
@@ -312,7 +313,7 @@ async def test_cancel_removes_staging(env, monkeypatch):
     """Rework check 3: Ctrl-C/FAILED paths must not leave credentials."""
     spec = load_experiment(setup(env))
     repo = Repository(database_path())
-    exp_id = experiment_id(spec.name, spec_hash(spec))
+    exp_id = _exp_id(spec)
     controller = ExperimentController(
         spec, exp_id, env / "runs" / exp_id, repo, None
     )
@@ -333,7 +334,7 @@ async def test_launch_failure_cleans_staging(env, monkeypatch):
 
     spec = load_experiment(setup(env))
     repo = Repository(database_path())
-    exp_id = experiment_id(spec.name, spec_hash(spec))
+    exp_id = _exp_id(spec)
     controller = ExperimentController(
         spec, exp_id, env / "runs" / exp_id, repo, None
     )
@@ -354,4 +355,69 @@ async def test_launch_failure_cleans_staging(env, monkeypatch):
     assert not any(staging_root.rglob("auth.json")), (
         "staged credentials survived a _launch failure"
     )
+    repo.close()
+
+
+async def test_intersection_scope_runs_only_eligible(env, monkeypatch):
+    spec_path = setup(env)
+    spec = load_experiment(spec_path)
+    spec = spec.model_copy(update={
+        "control": spec.control.model_copy(update={"history_scope": "intersection"})
+    })
+    repo = Repository(database_path())
+    exp_id = _exp_id(spec)
+    controller = ExperimentController(
+        spec, exp_id, env / "runs" / exp_id, repo, None
+    )
+    controller.prepare(spec_path)
+    seed_pool(repo, controller, ["t1", "t2"], resolved=True)
+    controller.enforce_reuse_policy()
+    fake = FakePier(controller)
+    fake.patch(monkeypatch)
+    assert await controller.run() == "COMPLETE"
+    summary = controller.reuse_summary()
+    assert summary["status"] == "partial"
+    assert summary["control_tasks"] == ["t1", "t2"]
+    assert summary["out_of_scope_tasks"] == ["t3"]
+    control_launched = sorted(
+        argv[index + 1]
+        for argv in fake.launches
+        if any("/jobs/control" in arg for arg in argv)
+        for index, arg in enumerate(argv)
+        if arg == "--include-task-name"
+    )
+    assert control_launched == ["t1", "t2"]
+    variant_launched = sorted(
+        argv[index + 1]
+        for argv in fake.launches
+        if any("/jobs/a" in arg for arg in argv)
+        for index, arg in enumerate(argv)
+        if arg == "--include-task-name"
+    )
+    assert variant_launched == ["t1", "t2", "t3"]
+    assert controller.snapshot()["matrix"]["control"]["t3"] == "."
+    repo.close()
+
+
+async def test_on_drift_abort_fails_run(env, monkeypatch):
+    from roast_my_harness.errors import PierError
+
+    spec = load_experiment(setup(env))
+    spec = spec.model_copy(update={
+        "control": spec.control.model_copy(update={"on_drift": "abort"})
+    })
+    repo = Repository(database_path())
+    exp_id = _exp_id(spec)
+    controller = ExperimentController(
+        spec, exp_id, env / "runs" / exp_id, repo, None
+    )
+    controller.prepare(setup(env))
+    seed_pool(repo, controller, ["t1", "t2", "t3"], resolved=True)
+    controller.enforce_reuse_policy()
+    fake = FakePier(controller)
+    fake.patch(monkeypatch)
+    with pytest.raises(PierError, match="rejected_drift"):
+        await controller.run()
+    assert repo.get_experiment(exp_id)["status"] == "FAILED"
+    assert controller.control_reuse.abort is True
     repo.close()

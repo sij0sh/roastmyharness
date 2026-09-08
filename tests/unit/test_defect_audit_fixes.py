@@ -35,9 +35,9 @@ def test_c1_namespaced_collision_keys_under_dir(tmp_path: Path, caplog):
            task_name="ns/other", reward=1.0)
     with caplog.at_level(logging.WARNING, logger="roast_my_harness.runner.reconcile"):
         cells = rec.reconcile_variant("v", jobs / "v", {"real-task", "other"})
-    assert set(cells) == {"real-task"}
-    assert cells["real-task"].status == "pass"
-    assert "real-task__ABC123" in cells["real-task"].job_path
+    assert set(cells) == {("real-task", 1)}
+    assert cells[("real-task", 1)].status == "pass"
+    assert "real-task__ABC123" in cells[("real-task", 1)].job_path
     assert any("reconcile conflict" in r.message for r in caplog.records)
 
 
@@ -46,7 +46,7 @@ def test_c1_regressions(tmp_path: Path):
     _trial(jobs, "v", "2026-01-01__00-00-00", "task-a__A",
            task_name="task-a", reward=1.0)
     cells = rec.reconcile_variant("v", jobs / "v", {"task-a", "task-b"})
-    assert cells["task-a"].status == "pass"
+    assert cells[("task-a", 1)].status == "pass"
     _trial(jobs, "v", "2026-01-01__00-00-00", "task-a__B",
            task_name="ns/task-a", reward=0.0)
     os.utime(jobs / "v" / "2026-01-01__00-00-00" / "task-a__B" / "result.json",
@@ -54,7 +54,7 @@ def test_c1_regressions(tmp_path: Path):
     os.utime(jobs / "v" / "2026-01-01__00-00-00" / "task-a__A" / "result.json",
              (1000, 1000))
     cells = rec.reconcile_variant("v", jobs / "v", {"task-a", "task-b"})
-    assert cells["task-a"].status == "fail"
+    assert cells[("task-a", 1)].status == "fail"
     _trial(jobs, "v", "2026-01-01__00-00-00", "weird__Z",
            task_name="ns/unknown-xyz", reward=1.0)
     cells = rec.reconcile_variant("v", jobs / "v", {"task-a"})
@@ -71,8 +71,8 @@ def test_c5_tie_is_deterministic_not_sorted_last(tmp_path: Path):
         os.utime(p, (2000, 2000))
     first = rec.reconcile_variant("a", jobs / "a", {"t1"})
     second = rec.reconcile_variant("a", jobs / "a", {"t1"})
-    assert first["t1"].job_path == second["t1"].job_path
-    assert "t1__AAA" in first["t1"].job_path
+    assert first[("t1", 1)].job_path == second[("t1", 1)].job_path
+    assert "t1__AAA" in first[("t1", 1)].job_path
 
 
 def test_c5_distinct_mtime_newest_wins(tmp_path: Path):
@@ -82,7 +82,7 @@ def test_c5_distinct_mtime_newest_wins(tmp_path: Path):
     os.utime(old / "result.json", (1000, 1000))
     os.utime(new / "result.json", (2000, 2000))
     cells = rec.reconcile_variant("a", jobs / "a", {"t1"})
-    assert cells["t1"].status == "pass"
+    assert cells[("t1", 1)].status == "pass"
 
 
 # C3 — stale staging sweep ------------------------------------------------

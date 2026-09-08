@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from roast_my_harness.runner.controller import ExperimentController
-from roast_my_harness.spec.hashes import spec_hash
 from roast_my_harness.spec.load import load_experiment
-from roast_my_harness.spec.normalize import experiment_id
+from roast_my_harness.spec.resolved import resolve_run_spec
 from roast_my_harness.store.repository import Repository
+from roast_my_harness.tasks.discover import discover_tasks
+from roast_my_harness.tasks.hashes import task_hash
 
 SPEC = """
-schema_version = 1
+schema_version = 2
 name = "ctrl-test"
 [tasks]
 path = "./dataset"
@@ -50,7 +51,7 @@ def test_prepare_and_snapshot(tmp_path: Path):
     spec_path = setup(tmp_path)
     spec = load_experiment(spec_path)
     repo = Repository(tmp_path / "db.sqlite")
-    exp_id = experiment_id(spec.name, spec_hash(spec))
+    exp_id = resolve_run_spec(spec, _pairs(spec)).run_id
     controller = ExperimentController(
         spec, exp_id, tmp_path / "run", repo, None
     )
@@ -126,7 +127,7 @@ def test_terminal_state_sets_finished_at(tmp_path: Path):
     spec_path = setup(tmp_path)
     spec = load_experiment(spec_path)
     repo = Repository(tmp_path / "db.sqlite")
-    exp_id = experiment_id(spec.name, spec_hash(spec))
+    exp_id = resolve_run_spec(spec, _pairs(spec)).run_id
     controller = ExperimentController(spec, exp_id, tmp_path / "run", repo, None)
     controller.prepare(spec_path)
     controller._set_state("RUNNING")
@@ -138,6 +139,11 @@ def test_terminal_state_sets_finished_at(tmp_path: Path):
     repo.close()
 
 
+def _pairs(spec) -> list[tuple[str, str]]:
+    tasks = discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
+    return [(t.task_id, task_hash(t.path)) for t in tasks]
+
+
 def _prepared_controller(tmp_path: Path) -> ExperimentController:
     import os
 
@@ -146,7 +152,7 @@ def _prepared_controller(tmp_path: Path) -> ExperimentController:
     spec_path = setup(tmp_path)
     spec = load_experiment(spec_path)
     repo = Repository(tmp_path / "db.sqlite")
-    exp_id = experiment_id(spec.name, spec_hash(spec))
+    exp_id = resolve_run_spec(spec, _pairs(spec)).run_id
     controller = ExperimentController(spec, exp_id, tmp_path / "run", repo, None)
     controller.prepare(spec_path)
     return controller
@@ -167,11 +173,14 @@ def _seed_trial(run: Path, variant: str, task: str, *, reward=None, exception=No
 
 
 def _includes(controller: ExperimentController, variant: str) -> list[str] | None:
-    proc = controller.jobs[variant].proc
-    if proc is None:
+    procs = controller.jobs[variant].procs
+    if not procs:
         return None
-    argv = proc.argv
-    return [argv[i + 1] for i, a in enumerate(argv) if a == "--include-task-name"]
+    out: list[str] = []
+    for proc in procs:
+        argv = proc.argv
+        out += [argv[i + 1] for i, a in enumerate(argv) if a == "--include-task-name"]
+    return out
 
 
 def test_rerun_filter_rejects_unknown_ids(tmp_path: Path):

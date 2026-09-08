@@ -7,13 +7,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from roast_my_harness.runner.patch_guard import classify_empty_patch
+from roast_my_harness.runner.patch_guard import (
+    classify_empty_patch,
+    has_trial_logs,
+    step_dirs,
+)
 from roast_my_harness.runner.reconcile import PASS_THRESHOLD
 from roast_my_harness.telemetry.parser import (
     final_event_metrics,
     fold_state_valid,
     fold_trial_incremental,
 )
+from roast_my_harness.telemetry.trajectory import trajectory_tool_metrics
 
 # Column order matches DSE-tests collect.py so downstream notebooks keep
 # working; new roastmyharness columns may only be appended.
@@ -44,14 +49,75 @@ COLUMNS = [
     "read_rereads",
     "read_overlap_rereads",
     "distinct_read_files",
-    "cm_llm_calls",
-    "cm_input_tokens",
-    "cm_output_tokens",
-    "cm_attributions",
-    "cm_errors",
-    "cm_search_calls",
-    "cm_rehydrate_calls",
+    "replicate",
+    "tool_results",
+    "tool_failures",
+    "tool_failure_rate",
+    "tool_missing_results",
+    "reward_deterministic",
+    "reward_judge",
+    "judge_model",
 ]
+
+CUSTOM_PREFIX = "cm_"
+"""Pi-enrichment counters live under row["custom_metrics"], not in the CSV."""
+
+DETERMINISTIC_KEY = "reward_deterministic"
+"""Rewards-map key for the deterministic-check score (0..1)."""
+
+JUDGE_KEY = "reward_judge"
+"""Rewards-map key for the model-judge score (0..1)."""
+
+JUDGE_MODEL_KEY = "judge_model"
+"""Rewards-map key naming the judge model that produced reward_judge."""
+
+DIMENSION_COLUMNS = ("reward_deterministic", "reward_judge", "judge_model")
+"""Row columns carrying scoring dimensions; appended to the CSV schema."""
+
+
+def fnum_or_none(value: Any) -> float | None:
+    """Float value, or None for missing/unparsable input (never 0.0)."""
+    try:
+        return float(value) if value not in ("", None) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _dim_float(value: Any) -> float | str:
+    """Dimension score for a row: float when reported, "" when absent.
+
+    Zero is a reported score, not absence: only None survives as "".
+    """
+    parsed = fnum_or_none(value)
+    return "" if parsed is None else parsed
+
+
+def split_dimensions(rewards: dict[str, Any]) -> dict[str, Any]:
+    """Dimension fragment for one trial row from a verifier rewards map."""
+    return {
+        DETERMINISTIC_KEY: _dim_float(rewards.get(DETERMINISTIC_KEY)),
+        JUDGE_KEY: _dim_float(rewards.get(JUDGE_KEY)),
+        JUDGE_MODEL_KEY: str(rewards.get(JUDGE_MODEL_KEY) or ""),
+    }
+
+
+def split_custom(metrics: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(flat CSV metrics, custom_metrics namespaced dict).
+
+    cm_-prefixed pi counters move under custom_metrics with the prefix
+    stripped; everything else stays a flat core column. Zero counters
+    are dropped: custom_metrics records observed enrichment, so an empty
+    dict means none fired.
+    """
+    flat: dict[str, Any] = {}
+    custom: dict[str, Any] = {}
+    for key, value in metrics.items():
+        if key.startswith(CUSTOM_PREFIX):
+            if value:
+                custom[key[len(CUSTOM_PREFIX):]] = value
+        else:
+            flat[key] = value
+    return flat, custom
 
 
 def _parse_ts(value: str) -> datetime:
@@ -60,7 +126,7 @@ def _parse_ts(value: str) -> datetime:
 
 def is_trial_dir(path: Path) -> bool:
     """Trial dirs contain the mounted /logs structure; job dirs do not."""
-    return (path / "agent").is_dir() and (path / "verifier").is_dir()
+    return has_trial_logs(path)
 
 
 def _row_base(result_path: Path, variant: str) -> dict[str, Any] | None:
@@ -117,6 +183,9 @@ def _row_base(result_path: Path, variant: str) -> dict[str, Any] | None:
     agent = result.get("agent_result") or {}
     timing = result.get("agent_execution") or {}
     started, finished = timing.get("started_at"), timing.get("finished_at")
+    if not (started and finished):
+        # Staged trials record timing per step; fall back to trial bounds.
+        started, finished = result.get("started_at"), result.get("finished_at")
     wall_sec: Any = ""
     if started and finished:
         wall_sec = round((_parse_ts(finished) - _parse_ts(started)).total_seconds(), 1)
@@ -136,6 +205,7 @@ def _row_base(result_path: Path, variant: str) -> dict[str, Any] | None:
         "resolved": int(resolved),
         "reward": reward,
         "rewards": json.dumps(rewards, sort_keys=True) if rewards else "",
+        **split_dimensions(rewards),
         "exception_type": exception_type,
         "input_tokens": agent.get("n_input_tokens", ""),
         "output_tokens": agent.get("n_output_tokens", ""),
@@ -164,8 +234,41 @@ def _entry_valid(entry: Any) -> bool:
     return True
 
 
+FAILURE_DEFAULTS_KEYS = frozenset(
+    {"tool_results", "tool_failures", "tool_failure_rate", "tool_missing_results"}
+)
+
+
+def merge_telemetry(
+    event_metrics: dict[str, Any],
+    traj: tuple[dict[str, Any], dict[str, Any], int],
+) -> dict[str, Any]:
+    """One flat row fragment from pi-event metrics plus trajectory overlay.
+
+    cm_-prefixed pi counters move under custom_metrics; generic tool
+    failure/read counters overlay from the normalized ATIF trajectory
+    when one exists (pi-event values stand otherwise, failures read
+    zero).
+    """
+    flat, custom = split_custom(event_metrics)
+    generic, traj_custom, traj_stamp = traj
+    if traj_stamp:
+        flat.update(generic)
+        custom.update(traj_custom)
+    else:
+        flat.update(
+            {k: v for k, v in generic.items() if k in FAILURE_DEFAULTS_KEYS}
+        )
+    flat["custom_metrics"] = custom
+    return flat
+
+
 def trial_row_cached(
-    result_path: Path, variant: str, entry: dict[str, Any] | None = None
+    result_path: Path,
+    variant: str,
+    entry: dict[str, Any] | None = None,
+    *,
+    replicate: int = 1,
 ) -> tuple[dict[str, Any] | None, dict[str, Any], int]:
     """Row for one trial, folding only event bytes not seen before.
 
@@ -175,6 +278,9 @@ def trial_row_cached(
     with zero folds: pier writes result.json at trial end and reconcile
     treats a parsed reward/exception as terminal, so those inputs are stable.
     A changed result.json stamp discards fold offsets and refolds from zero.
+    The cached row also keys on the trajectory mtime: the adapter writes
+    trajectory.json post-run, possibly after result.json, so a newly
+    arrived trajectory refolds once instead of serving stale zeros.
     """
     trial_dir = result_path.parent
     try:
@@ -183,10 +289,12 @@ def trial_row_cached(
         return None, {"result_stamp": 0, "complete": False, "fold": None, "row": None}, 0
     if not _entry_valid(entry):
         entry = None
+    traj = trajectory_tool_metrics(trial_dir)
     if (
         entry is not None
         and entry["complete"]
         and entry["result_stamp"] == stamp
+        and entry.get("traj_stamp", -1) == traj[2]
         and entry["row"] is not None
     ):
         return entry["row"], entry, 0
@@ -196,18 +304,42 @@ def trial_row_cached(
     if base is None:
         new_entry = {"result_stamp": stamp, "complete": False, "fold": fold, "row": None}
         return None, new_entry, folded
-    row: dict[str, Any] = {**base, **metrics}
-    if not (trial_dir / "agent" / "pi-events.jsonl").is_file() and row.get("agent_steps") != "":
+    fragment = merge_telemetry(metrics, traj)
+    traj_stamp = traj[2]
+    row: dict[str, Any] = {**base, **fragment, "replicate": replicate}
+    if not _has_event_logs(trial_dir) and row.get("agent_steps") != "":
         row["llm_calls"] = row["agent_steps"]
-    return row, {"result_stamp": stamp, "complete": True, "fold": fold, "row": row}, folded
+    return row, {
+        "result_stamp": stamp,
+        "complete": True,
+        "fold": fold,
+        "row": row,
+        "traj_stamp": traj_stamp,
+    }, folded
 
 
-def trial_row(result_path: Path, variant: str) -> dict[str, Any] | None:
+def trial_row(
+    result_path: Path, variant: str, *, replicate: int = 1
+) -> dict[str, Any] | None:
     base = _row_base(result_path, variant)
     if base is None:
         return None
     trial_dir = result_path.parent
-    row: dict[str, Any] = {**base, **final_event_metrics(trial_dir)}
-    if not (trial_dir / "agent" / "pi-events.jsonl").is_file() and base["agent_steps"] != "":
+    fragment = merge_telemetry(
+        final_event_metrics(trial_dir), trajectory_tool_metrics(trial_dir)
+    )
+    row: dict[str, Any] = {**base, **fragment}
+    row["replicate"] = replicate
+    if not _has_event_logs(trial_dir) and base["agent_steps"] != "":
         row["llm_calls"] = base["agent_steps"]
     return row
+
+
+def _has_event_logs(trial_dir: Path) -> bool:
+    """Trial-root or any per-step pi-events file exists."""
+    if (trial_dir / "agent" / "pi-events.jsonl").is_file():
+        return True
+    return any(
+        (step / "agent" / "pi-events.jsonl").is_file()
+        for step in step_dirs(trial_dir)
+    )

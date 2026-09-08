@@ -140,3 +140,65 @@ def test_corrupt_files_are_unknown_not_failure(tmp_path: Path):
     assert manifest_model_patch_status(trial) is None
     assert not agent_mutation_evidence(trial)
     assert classify_empty_patch(trial) is None
+
+
+def make_stepped_trial(root: Path, name: str = "t2__X") -> Path:
+    """Trial dir in post-relocation staged layout (no trial-root logs)."""
+    trial = root / name
+    for step in ("a", "b"):
+        for sub in ("agent", "verifier", "artifacts"):
+            (trial / "steps" / step / sub).mkdir(parents=True, exist_ok=True)
+    return trial
+
+
+def test_step_dirs_sorted_and_detected():
+    import tempfile
+
+    from roast_my_harness.runner.patch_guard import (
+        has_trial_logs,
+        is_stepped_trial,
+        step_dirs,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        trial = make_stepped_trial(Path(tmp))
+        assert [p.name for p in step_dirs(trial)] == ["a", "b"]
+        assert is_stepped_trial(trial)
+        assert has_trial_logs(trial)
+
+
+def test_has_trial_logs_rejects_job_dirs():
+    import tempfile
+
+    from roast_my_harness.runner.patch_guard import has_trial_logs
+
+    with tempfile.TemporaryDirectory() as tmp:
+        assert not has_trial_logs(Path(tmp))
+        flat = make_trial_dir(Path(tmp), "t1__X")
+        assert has_trial_logs(flat)
+
+
+def test_patch_size_falls_back_to_last_step():
+    import tempfile
+
+    from roast_my_harness.runner.patch_guard import patch_size_bytes
+
+    with tempfile.TemporaryDirectory() as tmp:
+        trial = make_stepped_trial(Path(tmp))
+        (trial / "steps" / "a" / "artifacts" / "model.patch").write_text("xxx")
+        (trial / "steps" / "b" / "artifacts" / "model.patch").write_text("xxxxx")
+        assert patch_size_bytes(trial) == 5
+
+
+def test_mutation_evidence_scans_step_logs():
+    import tempfile
+
+    from roast_my_harness.runner.patch_guard import agent_mutation_evidence
+
+    with tempfile.TemporaryDirectory() as tmp:
+        trial = make_stepped_trial(Path(tmp))
+        assert not agent_mutation_evidence(trial)
+        (trial / "steps" / "b" / "agent" / "pi-events.jsonl").write_text(
+            '{"type": "tool_execution_start", "toolName": "edit"}\n'
+        )
+        assert agent_mutation_evidence(trial)

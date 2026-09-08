@@ -8,6 +8,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from roast_my_harness.runner.patch_guard import step_dirs
+
 READ_TOOL_NAMES = {"read"}
 
 
@@ -236,32 +238,68 @@ def fold_sidecar_line(m: dict[str, Any], line: str) -> None:
         m["_turn_start_ms"] = None
 
 
+def event_log_pairs(trial_dir: Path) -> list[tuple[Path, Path]]:
+    """(events, sidecar) log pairs in fold order.
+
+    Single-step trials read the trial-root agent/ pair (today's behavior).
+    Once a staged trial relocates its first step, the per-step pairs under
+    steps/<name>/agent/ are authoritative and the trial-root pair is
+    skipped: it holds only the in-progress step's partial events, which
+    would double-count after relocation into steps/.
+    """
+    steps = step_dirs(trial_dir)
+    if steps:
+        return [
+            (
+                step / "agent" / "pi-events.jsonl",
+                step / "agent" / "pi-event-times.log",
+            )
+            for step in steps
+        ]
+    agent = trial_dir / "agent"
+    return [(agent / "pi-events.jsonl", agent / "pi-event-times.log")]
+
+
 def final_event_metrics(trial_dir: Path) -> dict[str, Any]:
     """Authoritative per-trial telemetry. Rereads from byte zero."""
     m: dict[str, Any] = {**new_event_metrics(), **new_tool_metrics()}
-    events = trial_dir / "agent" / "pi-events.jsonl"
-    if events.is_file():
-        for line in _safe_lines(events):
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            fold_event(m, event)
-            if event.get("type") == "tool_execution_start":
-                fold_tool_event(m, event)
-    sidecar = trial_dir / "agent" / "pi-event-times.log"
-    if sidecar.is_file():
-        for line in _safe_lines(sidecar):
-            fold_sidecar_line(m, line)
+    for events, sidecar in event_log_pairs(trial_dir):
+        if events.is_file():
+            for line in _safe_lines(events):
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                fold_event(m, event)
+                if event.get("type") == "tool_execution_start":
+                    fold_tool_event(m, event)
+        if sidecar.is_file():
+            for line in _safe_lines(sidecar):
+                fold_sidecar_line(m, line)
     return finalize_metrics(m)
+
+
+def _new_file_part() -> dict[str, int]:
+    return {"off": 0, "size": 0, "mtime_ns": 0}
+
+
+def _file_part_valid(part: Any) -> bool:
+    return (
+        isinstance(part, dict)
+        and all(isinstance(part.get(k), int) for k in ("off", "size", "mtime_ns"))
+        and part["off"] >= 0
+        and part["size"] >= 0
+    )
 
 
 def new_fold_state() -> dict[str, Any]:
     """Empty incremental fold state for one trial dir (JSON-compatible)."""
     return {
         "work": {**new_event_metrics(), **new_tool_metrics()},
-        "events": {"off": 0, "size": 0, "mtime_ns": 0},
-        "sidecar": {"off": 0, "size": 0, "mtime_ns": 0},
+        "mode": "root",
+        "events": _new_file_part(),
+        "sidecar": _new_file_part(),
+        "step_files": {},
     }
 
 
@@ -271,13 +309,20 @@ def fold_state_valid(state: Any) -> bool:
     work = state.get("work")
     if not isinstance(work, dict):
         return False
+    if state.get("mode", "root") not in ("root", "steps"):
+        return False
     for key in ("events", "sidecar"):
-        part = state.get(key)
-        if not isinstance(part, dict):
+        if not _file_part_valid(state.get(key)):
             return False
-        if not all(isinstance(part.get(k), int) for k in ("off", "size", "mtime_ns")):
+    step_files = state.get("step_files", {})
+    if not isinstance(step_files, dict):
+        return False
+    for sub in step_files.values():
+        if not isinstance(sub, dict):
             return False
-        if part["off"] < 0 or part["size"] < 0:
+        if not _file_part_valid(sub.get("events")):
+            return False
+        if not _file_part_valid(sub.get("sidecar")):
             return False
     seen = work.get("_seen", {})
     if not isinstance(seen, dict):
@@ -354,6 +399,19 @@ class _FileRewritten(Exception):
     pass
 
 
+def _fold_pair(
+    m: dict[str, Any],
+    events_path: Path,
+    events_part: dict[str, int],
+    sidecar_path: Path,
+    sidecar_part: dict[str, int],
+) -> int:
+    """Fold one (events, sidecar) pair; returns lines folded."""
+    folded = _fold_new_bytes(m, events_path, events_part, True)
+    folded += _fold_new_bytes(m, sidecar_path, sidecar_part, False)
+    return folded
+
+
 def fold_trial_incremental(
     trial_dir: Path, state: dict[str, Any] | None
 ) -> tuple[dict[str, Any], dict[str, Any], int]:
@@ -364,25 +422,59 @@ def fold_trial_incremental(
     trial was rewritten, so the fold restarts from zero rather than reuse
     stale counters. The returned metrics are a finalized copy; the state
     keeps the working counters for the next poll.
+
+    Staged trials fold per-step pairs (see event_log_pairs) under a
+    "steps" mode state; switching modes restarts from zero so relocated
+    bytes are never double-counted.
     """
     import copy as _copy
 
-    if not fold_state_valid(state):
+    pairs = event_log_pairs(trial_dir)
+    want_mode = "steps" if step_dirs(trial_dir) else "root"
+    if not fold_state_valid(state) or state.get("mode", "root") != want_mode:  # type: ignore[union-attr]
         state = new_fold_state()
+        state["mode"] = want_mode
     assert state is not None
-    events_path = trial_dir / "agent" / "pi-events.jsonl"
-    sidecar_path = trial_dir / "agent" / "pi-event-times.log"
     m = state["work"]
-    folded = 0
     try:
-        folded += _fold_new_bytes(m, events_path, state["events"], True)
-        folded += _fold_new_bytes(m, sidecar_path, state["sidecar"], False)
+        folded = _fold_pairs(state, pairs, want_mode, m)
     except _FileRewritten:
         state = new_fold_state()
+        state["mode"] = want_mode
         m = state["work"]
-        folded = _fold_new_bytes(m, events_path, state["events"], True)
-        folded += _fold_new_bytes(m, sidecar_path, state["sidecar"], False)
+        folded = _fold_pairs(state, pairs, want_mode, m)
     return finalize_metrics(_copy.deepcopy(m)), state, folded
+
+
+def _fold_pairs(
+    state: dict[str, Any],
+    pairs: list[tuple[Path, Path]],
+    want_mode: str,
+    m: dict[str, Any],
+) -> int:
+    """Fold every pair into m with per-pair offsets; returns lines folded."""
+    folded = 0
+    if want_mode == "steps":
+        files = state.setdefault("step_files", {})
+        for events_path, sidecar_path in pairs:
+            key = events_path.parent.parent.name
+            sub = files.get(key)
+            if not isinstance(sub, dict):
+                sub = {}
+                files[key] = sub
+            if not _file_part_valid(sub.get("events")):
+                sub["events"] = _new_file_part()
+            if not _file_part_valid(sub.get("sidecar")):
+                sub["sidecar"] = _new_file_part()
+            folded += _fold_pair(
+                m, events_path, sub["events"], sidecar_path, sub["sidecar"]
+            )
+    else:
+        events_path, sidecar_path = pairs[0]
+        folded += _fold_pair(
+            m, events_path, state["events"], sidecar_path, state["sidecar"]
+        )
+    return folded
 
 
 def _safe_lines(path: Path) -> Iterator[str]:

@@ -9,13 +9,39 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from roast_my_harness.runner.patch_guard import classify_empty_patch
+from roast_my_harness.runner.patch_guard import (
+    classify_empty_patch,
+    has_trial_logs,
+)
 
 PASS_THRESHOLD = 0.999
 
 _log = logging.getLogger(__name__)
 
 _ATTEMPT_SEQ_RE = re.compile(r"(\d+)\s*$")
+
+
+REPLICATE_DIR_PREFIX = "replicate-"
+"""Jobs subdir segment per rollout: jobs/<variant>/replicate-N/... .
+
+Single-repetition runs keep the legacy flat layout (jobs/<variant>/...),
+which always reads as replicate 1, so old runs resume unchanged.
+"""
+
+
+def replicate_of(variant_dir: Path, trial_dir: Path) -> int:
+    """Rollout number from the trial path; 1 when no replicate segment."""
+    try:
+        rel = trial_dir.relative_to(variant_dir)
+    except ValueError:
+        return 1
+    for part in rel.parts[:-1]:
+        if part.startswith(REPLICATE_DIR_PREFIX):
+            try:
+                return max(1, int(part[len(REPLICATE_DIR_PREFIX):]))
+            except ValueError:
+                continue
+    return 1
 
 
 @dataclass(frozen=True)
@@ -26,6 +52,7 @@ class Cell:
     reward: float
     job_path: str
     finished_at: str | None
+    replicate: int = 1
     exception_type: str | None = None
 
 
@@ -51,17 +78,19 @@ def _attempt_seq(trial_dir: Path) -> int:
     return -1
 
 
-def reconcile_variant(variant_id: str, jobs_dir: Path, known_tasks: set[str]) -> dict[str, Cell]:
-    """Newest valid attempt per task from trial dirs under jobs/<variant>/.
+def reconcile_variant(
+    variant_id: str, jobs_dir: Path, known_tasks: set[str]
+) -> dict[tuple[str, int], Cell]:
+    """Newest valid attempt per (task, replicate) under jobs/<variant>/.
 
     A trial directory must contain agent/ and verifier/ plus result.json.
     """
-    cells: dict[str, tuple[float, int, str, Cell]] = {}
+    cells: dict[tuple[str, int], tuple[float, int, str, Cell]] = {}
     if not jobs_dir.is_dir():
         return {}
     for result_path in sorted(jobs_dir.rglob("result.json")):
         trial_dir = result_path.parent
-        if not ((trial_dir / "agent").is_dir() and (trial_dir / "verifier").is_dir()):
+        if not has_trial_logs(trial_dir):
             continue  # job-level summary, not a trial
         try:
             result = json.loads(result_path.read_text())
@@ -135,6 +164,7 @@ def reconcile_variant(variant_id: str, jobs_dir: Path, known_tasks: set[str]) ->
                     exception = guard
         timing = result.get("agent_execution") or {}
         finished = timing.get("finished_at")
+        replicate = replicate_of(jobs_dir, trial_dir)
         cell = Cell(
             variant_id=variant_id,
             task_id=task_id,
@@ -142,18 +172,28 @@ def reconcile_variant(variant_id: str, jobs_dir: Path, known_tasks: set[str]) ->
             reward=reward,
             job_path=str(trial_dir),
             finished_at=finished or datetime.fromtimestamp(_mtime(result_path), tz=UTC).isoformat(),
+            replicate=replicate,
             exception_type=str(exception) if exception else None,
         )
         stamp = _mtime(result_path)
         key = (_attempt_seq(trial_dir), str(result_path))
-        prev = cells.get(task_id)
+        trial = (task_id, replicate)
+        prev = cells.get(trial)
         if prev is None or stamp > prev[0] or (stamp == prev[0] and key < (prev[1], prev[2])):
-            cells[task_id] = (stamp, key[0], key[1], cell)
-    return {task: cell for task, (_, _, _, cell) in cells.items()}
+            cells[trial] = (stamp, key[0], key[1], cell)
+    return {trial: cell for trial, (_, _, _, cell) in cells.items()}
 
 
-def missing_tasks(cells: dict[str, Cell], all_tasks: list[str]) -> list[str]:
-    return [t for t in all_tasks if t not in cells]
+def missing_replicates(
+    cells: dict[tuple[str, int], Cell], all_tasks: list[str], repetitions: int
+) -> list[tuple[str, int]]:
+    """(task, replicate) trials with no reconciled cell, in task order."""
+    return [
+        (task_id, replicate)
+        for task_id in all_tasks
+        for replicate in range(1, repetitions + 1)
+        if (task_id, replicate) not in cells
+    ]
 
 
 _THROTTLE_MARKERS = (
@@ -229,7 +269,13 @@ def _resolve_task_id(raw_task: str, trial_dir: Path, known_tasks: set[str]) -> s
 
 
 def _cell_from_result(
-    variant_id: str, trial_dir: Path, result: dict, task_id: str, stamp: float
+    variant_id: str,
+    trial_dir: Path,
+    result: dict,
+    task_id: str,
+    stamp: float,
+    *,
+    replicate: int = 1,
 ) -> Cell | None:
     exception_info = result.get("exception_info") or {}
     if not isinstance(exception_info, dict):
@@ -278,6 +324,7 @@ def _cell_from_result(
         reward=reward,
         job_path=str(trial_dir),
         finished_at=finished or datetime.fromtimestamp(stamp, tz=UTC).isoformat(),
+        replicate=replicate,
         exception_type=str(exception) if exception else None,
     )
 
@@ -287,12 +334,13 @@ def reconcile_variant_incremental(
     jobs_dir: Path,
     known_tasks: set[str],
     file_state: dict[str, tuple[float, str, Cell | None]],
-) -> tuple[dict[str, Cell], int]:
+) -> tuple[dict[tuple[str, int], Cell], int]:
     """Delta reconcile: parse only new/changed result.json files.
 
     file_state maps result path -> (mtime, task_id or "", cell or None).
     Mutated in place. Returns (cells, parsed_count). Winner semantics match
-    reconcile_variant exactly; unchanged files cost a stat, not a parse.
+    reconcile_variant exactly (newest valid attempt per (task, replicate));
+    unchanged files cost a stat, not a parse.
     """
     parsed = 0
     if not jobs_dir.is_dir():
@@ -301,7 +349,7 @@ def reconcile_variant_incremental(
     seen: set[str] = set()
     for result_path in sorted(jobs_dir.rglob("result.json")):
         trial_dir = result_path.parent
-        if not ((trial_dir / "agent").is_dir() and (trial_dir / "verifier").is_dir()):
+        if not has_trial_logs(trial_dir):
             continue
         key = str(result_path)
         seen.add(key)
@@ -326,17 +374,25 @@ def reconcile_variant_incremental(
         if task_id is None:
             file_state[key] = (stamp, "", None)
             continue
-        cell = _cell_from_result(variant_id, trial_dir, result, task_id, stamp)
+        cell = _cell_from_result(
+            variant_id,
+            trial_dir,
+            result,
+            task_id,
+            stamp,
+            replicate=replicate_of(jobs_dir, trial_dir),
+        )
         file_state[key] = (stamp, task_id, cell)
     for stale in [k for k in file_state if k not in seen]:
         del file_state[stale]
-    winners: dict[str, tuple[float, int, str, Cell]] = {}
+    winners: dict[tuple[str, int], tuple[float, int, str, Cell]] = {}
     for key, (stamp, task_id, cell) in file_state.items():
         if not task_id or cell is None:
             continue
         trial_dir = Path(key).parent
+        trial = (task_id, cell.replicate)
         seq_path = (_attempt_seq(trial_dir), key)
-        prev = winners.get(task_id)
+        prev = winners.get(trial)
         if prev is None or stamp > prev[0] or (stamp == prev[0] and seq_path < (prev[1], prev[2])):
-            winners[task_id] = (stamp, seq_path[0], seq_path[1], cell)
-    return {task: cell for task, (_, _, _, cell) in winners.items()}, parsed
+            winners[trial] = (stamp, seq_path[0], seq_path[1], cell)
+    return {trial: cell for trial, (_, _, _, cell) in winners.items()}, parsed
