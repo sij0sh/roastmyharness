@@ -27,8 +27,9 @@ from roast_my_harness import ADAPTER_PROTOCOL_VERSION, __version__
 from roast_my_harness.agent import models
 from roast_my_harness.constants import EXIT_CODES
 from roast_my_harness.errors import RoastMyHarnessError, SpecError
+from roast_my_harness.evals.registry import cohort_eval_id, eval_label, resolve_eval
 from roast_my_harness.files import atomic_write_text
-from roast_my_harness.homes.sources import source_tree_hash
+from roast_my_harness.homes.sources import source_file_hash, source_tree_hash
 from roast_my_harness.paths import data_dir, database_path, run_dir
 from roast_my_harness.report.collect import (
     aggregate_by_variant,
@@ -40,16 +41,15 @@ from roast_my_harness.runner import preflight
 from roast_my_harness.runner.controller import ExperimentController
 from roast_my_harness.runner.lock_probe import lock_is_free
 from roast_my_harness.runner.signals import install_cancel_handlers, install_sync_cancel_handlers
-from roast_my_harness.spec.hashes import (
-    experiment_hash as compute_experiment_hash,
-)
-from roast_my_harness.spec.hashes import sha256_canonical
+from roast_my_harness.spec.hashes import resolved_experiment_hash, sha256_canonical
 from roast_my_harness.spec.hashes import spec_hash as compute_spec_hash
 from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.spec.models import ExperimentSpec
 from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
+from roast_my_harness.spec.resolved import identity_payload, resolve_run_spec
 from roast_my_harness.store.locking import ExperimentLock
 from roast_my_harness.store.repository import Repository
+from roast_my_harness.tasks.catalog import catalog_info
 from roast_my_harness.tasks.discover import discover_tasks
 from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 from roast_my_harness.telemetry.result import trial_row, trial_row_cached
@@ -88,7 +88,8 @@ def _utc_now() -> str:
 
 
 def _source_hashes(spec: ExperimentSpec) -> dict[str, str]:
-    """Hash every local extension/skill tree the run would copy."""
+    """Hash every local source the run would copy: extension/skill trees
+    plus explicit context files."""
     hashes: dict[str, str] = {}
     for variant in spec.arms():
         for item in variant.extensions:
@@ -100,22 +101,57 @@ def _source_hashes(spec: ExperimentSpec) -> dict[str, str]:
             hashes[f"{variant.id}/skill/{item.name or item.path.name}"] = source_tree_hash(
                 item.path
             )
+        for item in variant.context_files:
+            try:
+                hashes[f"{variant.id}/ctx/{item.name or item.path.name}"] = (
+                    source_file_hash(item.path)
+                )
+            except OSError as error:
+                raise SpecError(
+                    f"variant {variant.id!r} context file is not readable: "
+                    f"{item.path} ({error})"
+                ) from error
     return hashes
 
 
 def plan_bindings(spec: ExperimentSpec, tasks: list[Any]) -> dict[str, Any]:
-    """Everything a plan_id binds: config, task content, sources, versions."""
+    """Everything a plan_id binds: config, task content, sources, versions.
+
+    Agent versions resolve once here; the frozen ResolvedRunSpec travels
+    in the bindings so start() rejects a plan whose `latest` moved since
+    approval, and the run id derives from resolved content.
+    """
     task_pairs = [(t.task_id, compute_task_hash(t.path)) for t in tasks]
+    catalog_revision, catalog_hash = catalog_info(spec.tasks.path)
+    eval_frozen = resolve_eval(
+        spec,
+        spec.tasks.path,
+        catalog_revision=catalog_revision,
+        catalog_hash=catalog_hash,
+    )
+    resolved = resolve_run_spec(
+        spec,
+        task_pairs,
+        repetitions=spec.execution.repetitions,
+        catalog_revision=catalog_revision,
+        catalog_hash=catalog_hash,
+        eval=eval_frozen,
+    )
     return {
         "spec_hash": compute_spec_hash(spec),
-        "experiment_hash": compute_experiment_hash(spec, task_pairs),
+        "experiment_hash": resolved_experiment_hash(identity_payload(resolved)),
         "task_hashes": [[task_id, h] for task_id, h in task_pairs],
         "source_hashes": _source_hashes(spec),
+        "resolved": resolved.model_dump(mode="json"),
         "model_hash": sha256_canonical(
             {"model": spec.model.model_dump(mode="json"), "thinking": spec.thinking}
         ),
         "versions": {
             "pi_version": spec.pi_version,
+            "resolved_pi_version": resolved.resolved_agent_versions.get(
+                "pi", spec.pi_version
+            ),
+            "resolved_agent_versions": resolved.resolved_agent_versions,
             "pier_version_constraint": spec.pier_version,
             "pier_version": pier_mod.pier_version(),
             "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
@@ -142,11 +178,18 @@ WATCH_TRIAL_STAT_KEYS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _path_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _trial_stats(
     rd: Path,
     variant: str,
     task: str,
-    newest_maps: dict[str, dict[str, Path]] | None = None,
+    newest_maps: dict[str, dict[tuple[str, int], Path]] | None = None,
     variant_tasks: list[str] | None = None,
     fold_cache: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -157,15 +200,21 @@ def _trial_stats(
     agent never finished (crash) carry no agent_result; they report no
     stats rather than zero defaults. When newest_maps is given, the caller's
     single per-variant enumeration serves the lookup instead of re-walking
-    the variant tree per completed cell. When fold_cache is given, event
+    the variant tree per completed cell. With repetitions, stats come from
+    the newest result across replicates. When fold_cache is given, event
     bytes fold incrementally instead of from zero.
     """
     if newest_maps is not None:
-        by_task = newest_maps.get(variant)
-        if by_task is None:
-            by_task = newest_result_paths(rd / "jobs" / variant, variant_tasks or [task])
-            newest_maps[variant] = by_task
-        result_path = by_task.get(task)
+        by_trial = newest_maps.get(variant)
+        if by_trial is None:
+            by_trial = newest_result_paths(rd / "jobs" / variant, variant_tasks or [task])
+            newest_maps[variant] = by_trial
+        reps = sorted(
+            (trial, path) for trial, path in by_trial.items() if trial[0] == task
+        )
+        if not reps:
+            return {}
+        result_path = max(reps, key=lambda item: _path_mtime(item[1]))[1]
     else:
         result_path = latest_result_path(rd / "jobs", variant, task)
     if not result_path:
@@ -222,7 +271,12 @@ class AgentService:
             first = failures[0]
             return _needs_input(f"preflight.{first.name}", first.detail, choices=None)
 
-        bindings = plan_bindings(spec, tasks)
+        try:
+            bindings = plan_bindings(spec, tasks)
+        except RuntimeError as error:
+            return _needs_input("versions", str(error))
+        except SpecError as error:
+            return _needs_input("variants", str(error))
         plan_id = "plan_" + sha256_canonical(bindings)[:12]
         experiment_id = make_experiment_id(spec.name, bindings["experiment_hash"])
         self._write_plan(
@@ -235,6 +289,8 @@ class AgentService:
             }
         )
         arms = spec.arms()
+        repetitions = bindings["resolved"]["repetitions"]
+        resolved_pi_version = bindings["versions"].get("resolved_pi_version")
         return models.PrepareResult(
             ok=True,
             state="ready_for_confirmation",
@@ -243,21 +299,23 @@ class AgentService:
             experiment=models.ExperimentSummary(
                 tasks=len(tasks),
                 arms=len(arms),
-                trials=len(tasks) * len(arms),
+                trials=len(tasks) * len(arms) * repetitions,
                 max_parallel=spec.peak_concurrency(),
                 model=spec.model.full_id(),
                 name=spec.name,
                 pi_version=spec.pi_version,
+                resolved_pi_version=resolved_pi_version,
                 thinking=spec.thinking,
+                repetitions=repetitions,
+                evaluation=eval_label(spec),
+                hypothesis=spec.hypothesis,
                 control=(
                     "excluded"
                     if spec.control is None or not spec.control.enabled
-                    else "fresh"
-                    if spec.control.reuse == "never"
-                    else "historic"
+                    else spec.control.mode
                 ),
                 control_reuse=(
-                    spec.control.reuse
+                    spec.control.mode
                     if spec.control is not None and spec.control.enabled
                     else None
                 ),
@@ -282,6 +340,104 @@ class AgentService:
             warnings=warnings,
             next_action="start",
         )
+
+    def historic_availability(self, spec_path: Path) -> dict[str, Any]:
+        """Historic-control availability for one spec, without preparing.
+
+        Computes, after model and tasks are known, which selected tasks
+        have exact-matching history: eligible/total counts, sample sizes,
+        age range, and the sentinel subset. The Pi wizard shows this
+        before the final review; the runner recomputes the same plan at
+        prepare. Raises SpecError for an unloadable spec.
+        """
+        from roast_my_harness.homes.builder import compute_variant_hash
+        from roast_my_harness.spec.hashes import control_cohort_key
+        from roast_my_harness.spec.hashes import spec_hash as _spec_hash
+        from roast_my_harness.store import controls as controls_mod
+
+        spec = load_experiment(spec_path.expanduser().resolve())
+        control = spec.control
+        if control is None or not control.enabled:
+            return {"available": False, "reason": "no control arm"}
+        try:
+            tasks = discover_tasks(
+                spec.tasks.path, spec.tasks.include, spec.tasks.exclude
+            )
+        except RoastMyHarnessError as error:
+            return {"available": False, "reason": str(error)}
+        agents = spec.resolved_agents()
+        control_agent = agents["control"]
+        try:
+            agent_version = spec.resolved_version_for(control_agent)
+        except RuntimeError as error:
+            return {"available": False, "reason": str(error)}
+        control_variant = next(v for v in spec.arms() if v.id == "control")
+        control_hash = compute_variant_hash(
+            control_variant,
+            spec.pi_version,
+            agent=control_agent,
+            agent_version=agent_version,
+        )
+        task_hashes = {t.task_id: compute_task_hash(t.path) for t in tasks}
+        eval_id = cohort_eval_id(spec)
+        cohort_keys = {
+            task_id: control_cohort_key(
+                control_hash,
+                spec.model,
+                spec.thinking,
+                task_hash,
+                agent=control_agent,
+                agent_version=agent_version,
+                eval_id=eval_id,
+            )
+            for task_id, task_hash in task_hashes.items()
+        }
+        repo = Repository(self.db_path)
+        try:
+            pools = repo.control_pools(cohort_keys, task_hashes)
+        finally:
+            repo.close()
+        seed = int(_spec_hash(spec)[:8], 16)
+        plan = controls_mod.plan_reuse(
+            mode=control.mode,
+            scope=control.history_scope,
+            selected=[t.task_id for t in tasks],
+            pools=pools,
+            minimum_runs=control.minimum_runs_per_task,
+            maximum_age_days=control.maximum_age_days,
+            sentinel_count=control.sentinel_tasks,
+            seed=seed,
+        )
+        eligible_counts = {
+            task_id: plan.pool_counts.get(task_id, 0)
+            for task_id in plan.eligible_tasks
+        }
+        dates = [
+            bound
+            for task_id in plan.eligible_tasks
+            for bound in plan.pool_date_ranges.get(task_id, ("", ""))
+            if bound
+        ]
+        return {
+            "available": True,
+            "mode": control.mode,
+            "history_scope": control.history_scope,
+            "status": plan.status,
+            "eligible": len(plan.eligible_tasks),
+            "total": len(tasks),
+            "eligible_tasks": sorted(plan.eligible_tasks),
+            "missing_tasks": sorted(
+                set(plan.reuse_by_task) - set(plan.eligible_tasks)
+            ),
+            "eligible_counts": eligible_counts,
+            "total_samples": sum(eligible_counts.values()),
+            "age_range": [min(dates), max(dates)] if dates else ["", ""],
+            "sentinel_tasks": sorted(plan.sentinel_tasks),
+            "model": spec.model.full_id(),
+            "thinking": spec.thinking,
+            "agent": control_agent,
+            "agent_version": agent_version,
+        }
 
     def start(self, plan_id: str, *, skip_docker: bool = False) -> models.StartResult:
         """Launch an approved plan. Idempotent per plan_id; rejects stale bytes."""
@@ -494,7 +650,7 @@ class AgentService:
                     state_prev = state
                     last_emit = now
                 if matrix != matrix_prev:
-                    newest_maps: dict[str, dict[str, Path]] = {}
+                    newest_maps: dict[str, dict[tuple[str, int], Path]] = {}
                     for variant, cells in matrix.items():
                         old = matrix_prev.get(variant, {})
                         for task, status in cells.items():
@@ -781,8 +937,6 @@ def run_experiment(
     spec_path: Path,
     *,
     progress: Callable[[str], None] | None = None,
-    ask: Callable[[str], bool] | None = None,
-    interactive: bool = False,
 ) -> tuple[str, str]:
     """Run one experiment headless; return (experiment_id, final state).
 
@@ -791,13 +945,22 @@ def run_experiment(
     """
     spec = load_experiment(spec_path)
     tasks = discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
-    experiment_id = make_experiment_id(
-        spec.name,
-        compute_experiment_hash(
-            spec,
-            [(t.task_id, compute_task_hash(t.path)) for t in tasks],
-        ),
+    catalog_revision, catalog_hash = catalog_info(spec.tasks.path)
+    eval_frozen = resolve_eval(
+        spec,
+        spec.tasks.path,
+        catalog_revision=catalog_revision,
+        catalog_hash=catalog_hash,
     )
+    resolved = resolve_run_spec(
+        spec,
+        [(t.task_id, compute_task_hash(t.path)) for t in tasks],
+        repetitions=spec.execution.repetitions,
+        catalog_revision=catalog_revision,
+        catalog_hash=catalog_hash,
+        eval=eval_frozen,
+    )
+    experiment_id = resolved.run_id
     repo = Repository(database_path())
     controller = ExperimentController(
         spec,
@@ -805,7 +968,6 @@ def run_experiment(
         run_dir(experiment_id),
         repo,
         progress=progress,
-        ask=ask,
     )
     with ExperimentLock(controller.run_dir):
         loop = asyncio.new_event_loop()
@@ -813,8 +975,8 @@ def run_experiment(
         sync_cleanup = install_sync_cancel_handlers(controller.request_cancel)
         try:
             try:
-                controller.prepare(spec_path)
-                controller.enforce_reuse_policy(interactive=interactive)
+                controller.prepare(spec_path, resolved=resolved)
+                controller.enforce_reuse_policy()
             except (asyncio.CancelledError, KeyboardInterrupt):
                 sync_cleanup()
                 final = loop.run_until_complete(controller._cancel("CANCELLED"))

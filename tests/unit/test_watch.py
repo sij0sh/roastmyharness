@@ -14,7 +14,7 @@ from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.store.repository import Repository
 
 SPEC = """
-schema_version = 1
+schema_version = 2
 name = "watch"
 pi_version = "0.84.3"
 

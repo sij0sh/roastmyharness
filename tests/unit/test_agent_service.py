@@ -16,7 +16,7 @@ from roast_my_harness.agent import service as svc
 from roast_my_harness.spec.load import load_experiment
 
 SPEC = """
-schema_version = 1
+schema_version = 2
 name = "svc"
 pi_version = "0.84.3"
 
@@ -75,14 +75,16 @@ def test_prepare_ready_for_confirmation(tmp_path, green_preflight):
     assert result.plan_id and result.plan_id.startswith("plan_")
     assert result.next_action == "start"
     assert result.experiment.tasks == 1
-    assert result.experiment.arms == 2  
+    assert result.experiment.arms == 2
     assert result.experiment.trials == 2
     assert result.experiment.model == "openai-codex/gpt-5.6-luna"
     assert result.experiment.name == "svc"
     assert result.experiment.pi_version == "0.84.3"
+    assert result.experiment.resolved_pi_version == "0.84.3"
+    assert result.experiment.repetitions == 1
     assert result.experiment.thinking == "high"
     assert result.experiment.control == "fresh"
-    assert result.experiment.control_reuse == "never"
+    assert result.experiment.control_reuse == "fresh"
     assert result.experiment.task_ids == ["t1"]
     assert result.experiment.tasks_path == str((tmp_path / "dataset").resolve())
     assert result.experiment.arm_ids == ["control", "bare"]
@@ -93,6 +95,24 @@ def test_prepare_ready_for_confirmation(tmp_path, green_preflight):
     assert plan["bindings"]["spec_hash"]
     assert plan["bindings"]["task_hashes"] == [["t1", plan["bindings"]["task_hashes"][0][1]]]
     assert plan["bindings"]["versions"]["pi_version"] == "0.84.3"
+
+
+def test_prepare_reports_repetitions_in_trial_math(tmp_path, green_preflight):
+    spec_path = make_spec(tmp_path)
+    spec_path.write_text(
+        SPEC.format(tasks=tmp_path / "dataset").replace(
+            'name = "svc"', 'name = "svc"\nhypothesis = "bare is enough"'
+        )
+        + "\n[execution]\nrepetitions = 3\n"
+    )
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    result = service.prepare(spec_path)
+    assert result.ok is True
+    assert result.experiment.repetitions == 3
+    assert result.experiment.trials == 1 * 2 * 3
+    assert result.experiment.hypothesis == "bare is enough"
 
 
 def test_prepare_needs_input_on_bad_spec(tmp_path):

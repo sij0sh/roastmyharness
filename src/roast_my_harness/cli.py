@@ -23,6 +23,7 @@ from roast_my_harness.runner.signals import install_cancel_handlers, install_syn
 from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.store.locking import ExperimentLock
 from roast_my_harness.store.repository import Repository
+from roast_my_harness.tasks.profiles import ProfileView, load_profiles, rank_profiles
 
 app = typer.Typer(
     name="roastmyharness",
@@ -35,30 +36,37 @@ auth_app = typer.Typer(help="Credential inspection and login.")
 app.add_typer(auth_app, name="auth")
 
 STARTER_TOML = """
-schema_version = 1
+schema_version = 2
 name = "my-comparison"
-pi_version = "latest"   # newest pi release at launch; or pin x.y.z for reproducibility
+pi_version = "latest"   # resolved once at prepare; or pin x.y.z for reproducibility
 thinking = "high"          # off | minimal | low | medium | high | xhigh | max
 
 [model]
 id = "gpt-5.6-luna"
 provider = "openai-codex"
 
+[execution]
+repetitions = 1   # independent scored rollouts per task
+max_retries = 1   # relaunches per errored trial
 
 [tasks]
 path = "/path/to/task-dataset"   # dir of task dirs, each with task.toml
 include = ["*"]
 exclude = []
+# preset = "luna-signal"  # named list from the benchmark catalog, if it has one
 
 [concurrency]
 per_variant = 2
 
 [control]
 enabled = true                  # bare-agent control arm
-reuse = "never"                 # never | ask | require
-minimum_runs_per_task = 10
+mode = "fresh"                  # fresh | historic
+history_scope = "hybrid"        # hybrid | intersection (historic only)
+minimum_runs_per_task = 4
 maximum_age_days = 30
-sentinel_tasks = 6
+sentinel_tasks = 4
+on_drift = "fresh"              # fresh | abort
+on_inconclusive = "fresh"       # fresh | abort
 
 # One [[variants]] block per arm. Local extension example:
 [[variants]]
@@ -117,11 +125,6 @@ def _exit_for_final_state(experiment_id: str, final: str) -> int:
     return code
 
 
-def _ask_reuse(message: str) -> bool:
-    typer.echo(message)
-    return typer.confirm("Reuse this historic control pool?")
-
-
 @app.command()
 def init(
     path: Path | None = typer.Argument(
@@ -168,6 +171,89 @@ def validate(
         raise typer.Exit(1)
 
 
+_DEFAULT_TASKS_ROOT = Path("tasks/deepswe/tasks")
+
+
+def _resolve_tasks_root(value: Path) -> Path:
+    """CLI --tasks path, falling back to the wheel-bundled corpus.
+
+    Only the conventional default falls back: an explicit path that does
+    not exist keeps its error so typos never silently retarget.
+    """
+    if value.expanduser().exists() or value != _DEFAULT_TASKS_ROOT:
+        return value
+    from roast_my_harness import setup as setup_mod
+
+    bundled = setup_mod.bundled_tasks_root()
+    return bundled if bundled is not None else value
+
+
+# -------------------------------------------------------------- profiles --
+
+
+@app.command()
+def profiles(
+    tasks: Path = typer.Option(
+        Path("tasks/deepswe/tasks"),
+        "--tasks",
+        help="Benchmark task root containing profiles.toml.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON for the wizard."
+    ),
+) -> None:
+    """List benchmark model profiles ranked toward the 40-60% band.
+
+    Rates are measured benchmark rates with a recorded basis; unmeasured
+    profiles sort last and never show a rate.
+    """
+    import dataclasses
+
+    tasks = _resolve_tasks_root(tasks)
+    found = load_profiles(tasks.expanduser())
+    if found is None:
+        typer.secho(f"no profiles.toml under {tasks}", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    ranked = rank_profiles(found)
+    views = [
+        ProfileView(
+            id=item.profile.id,
+            label=item.profile.label,
+            full_id=item.profile.full_id(),
+            thinking=item.profile.thinking,
+            expected_rate=item.expected_rate,
+            distance=item.distance,
+            matched=item.matched,
+            samples=item.profile.benchmark_samples,
+            revision=item.profile.benchmark_revision,
+            basis=item.profile.basis,
+        )
+        for item in ranked
+    ]
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "benchmark": found.benchmark,
+                    "revision": found.revision,
+                    "profiles": [dataclasses.asdict(view) for view in views],
+                },
+                indent=2,
+            )
+        )
+        return
+    typer.echo(f"benchmark {found.benchmark} revision {found.revision}")
+    for view in views:
+        if view.expected_rate is None:
+            typer.echo(f"- {view.id} ({view.label}): unmeasured")
+        else:
+            typer.echo(
+                f"- {view.id} ({view.label}): "
+                f"{100 * view.expected_rate:.1f}% over {view.samples} "
+                f"({view.revision})"
+            )
+
+
 # ------------------------------------------------------------------- run --
 
 
@@ -190,12 +276,9 @@ def run(
     if not yes and sys.stdin.isatty():
         if not typer.confirm("Launch now?"):
             raise typer.Exit(0)
-    interactive = sys.stdin.isatty() and not yes
     experiment_id, final = agent_service.run_experiment(
         spec_path,
         progress=_print_progress,
-        ask=_ask_reuse if interactive else None,
-        interactive=interactive,
     )
     raise typer.Exit(_exit_for_final_state(experiment_id, final))
 
@@ -240,7 +323,6 @@ def resume(
         Path(row["run_dir"]),
         repo,
         _print_progress,
-        _ask_reuse if sys.stdin.isatty() else None,
     )
     if task or variant or retry_errors:
         from roast_my_harness.errors import PierError
@@ -267,7 +349,7 @@ async def _run_with_cancel(controller: ExperimentController, *, prepare: bool = 
         if prepare:
             try:
                 controller.prepare()
-                controller.enforce_reuse_policy(interactive=sys.stdin.isatty())
+                controller.enforce_reuse_policy()
             except (asyncio.CancelledError, KeyboardInterrupt):
                 await controller._cancel("CANCELLED")
                 return controller.state
@@ -457,6 +539,57 @@ def doctor() -> None:
 tool_app = typer.Typer(help="Machine-facing JSON tool for agents.")
 app.add_typer(tool_app, name="tool", hidden=True)
 
+eval_app = typer.Typer(help="Author custom evaluations.")
+app.add_typer(eval_app, name="eval")
+
+
+@eval_app.command("init")
+def eval_init(
+    directory: Path = typer.Argument(..., help="Eval workspace root to create."),
+    eval_id: str = typer.Option(..., "--id", help="Eval id for eval.toml."),
+    title: str = typer.Option("", help="Human title for eval.toml."),
+    threshold: float = typer.Option(
+        0.7, help="Contract pass_threshold for validation/self-test.json."
+    ),
+) -> None:
+    """Scaffold a custom-eval workspace (contract templates, empty gate)."""
+    from roast_my_harness.errors import SpecError
+    from roast_my_harness.evals.scaffold import init_eval
+
+    try:
+        root = init_eval(directory, eval_id=eval_id, title=title, threshold=threshold)
+    except SpecError as error:
+        typer.secho(str(error), fg=typer.colors.RED)
+        raise typer.Exit(1) from None
+    typer.secho(f"wrote eval scaffold to {root}", fg=typer.colors.GREEN)
+    typer.echo(
+        "next: fill capability-map.json, add one task dir per task under "
+        f"{root}/, add fixtures to validation/self-test.json, then run: "
+        f"roastmyharness eval validate {root}"
+    )
+
+
+@eval_app.command("validate")
+def eval_validate(
+    directory: Path = typer.Argument(..., help="Eval workspace root to check."),
+) -> None:
+    """Host-side validation for a custom-eval workspace (freeze gate)."""
+    from roast_my_harness.evals.builder import validate_workspace
+
+    report = validate_workspace(directory)
+    if report.ok:
+        typer.secho(
+            f"eval {report.eval_id} valid: "
+            f"{report.task_count} tasks, {report.fixture_count} fixtures green",
+            fg=typer.colors.GREEN,
+        )
+        for warning in report.warnings:
+            typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW)
+        return
+    for error in report.errors:
+        typer.secho(f"error: {error}", fg=typer.colors.RED)
+    raise typer.Exit(1)
+
 
 def _tool_call(fn, *args, **kwargs):
     """Run one service action; ServiceErrors come back as JSON."""
@@ -543,6 +676,136 @@ def tool_watch(
         raise typer.Exit(1) from None
 
 
+@tool_app.command("catalog")
+def tool_catalog(
+    tasks: Path = typer.Option(
+        Path("tasks/deepswe/tasks"),
+        "--tasks",
+        help="Benchmark task root containing catalog.toml/profiles.toml.",
+    ),
+) -> None:
+    """Benchmark catalog for the Pi wizard: presets, profiles, labels (JSON)."""
+    import dataclasses
+
+    from roast_my_harness.tasks.catalog import load_catalog
+    from roast_my_harness.tasks.discover import discover_tasks
+
+    root = _resolve_tasks_root(tasks).expanduser()
+    catalog = load_catalog(root)
+    found = load_profiles(root)
+    from roast_my_harness.evals.descriptor import load_descriptor as _load_eval_descriptor
+
+    try:
+        _early_descriptor = _load_eval_descriptor(root)
+    except RoastMyHarnessError:
+        _early_descriptor = None
+    if catalog is None and found is None and _early_descriptor is None:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "no_catalog",
+                        "message": f"no catalog.toml or profiles.toml under {tasks}",
+                    },
+                }
+            )
+        )
+        raise typer.Exit(1)
+    try:
+        inventory = [task.task_id for task in discover_tasks(root, ["*"], [])]
+    except RoastMyHarnessError:
+        inventory = []
+    ranked = (
+        [
+            ProfileView(
+                id=item.profile.id,
+                label=item.profile.label,
+                full_id=item.profile.full_id(),
+                thinking=item.profile.thinking,
+                expected_rate=item.expected_rate,
+                distance=item.distance,
+                matched=item.matched,
+                samples=item.profile.benchmark_samples,
+                revision=item.profile.benchmark_revision,
+                basis=item.profile.basis,
+            )
+            for item in rank_profiles(found)
+        ]
+        if found is not None
+        else []
+    )
+    labels = (
+        {
+            task_id: {
+                "difficulty": meta.difficulty,
+                "duration": meta.duration,
+                "estimated_minutes": meta.estimated_minutes,
+            }
+            for task_id, meta in catalog.tasks.items()
+            if meta.difficulty is not None
+            or meta.duration is not None
+            or meta.estimated_minutes is not None
+        }
+        if catalog is not None
+        else {}
+    )
+    benchmark = (
+        catalog.benchmark
+        if catalog is not None
+        else (found.benchmark if found is not None else None)
+    )
+    revision = (
+        catalog.revision if catalog is not None else (found.revision if found is not None else None)
+    )
+    descriptor = _early_descriptor
+    eval_info = (
+        {
+            "id": descriptor.id,
+            "revision": descriptor.revision,
+            "title": descriptor.title,
+        }
+        if descriptor is not None
+        else None
+    )
+    print(
+        json.dumps(
+            {
+                "benchmark": benchmark,
+                "revision": revision,
+                "task_count": len(inventory),
+                "eval": eval_info,
+                "presets": [
+                    {
+                        "id": pid,
+                        "label": preset.label,
+                        "count": len(preset.tasks),
+                        "tasks": list(preset.tasks),
+                    }
+                    for pid, preset in (catalog.presets.items() if catalog is not None else [])
+                ],
+                "profiles": [dataclasses.asdict(view) for view in ranked],
+                "labels": labels,
+            },
+            indent=2,
+        )
+    )
+
+
+@tool_app.command("history-availability")
+def tool_history_availability(
+    spec_path: Path = typer.Argument(..., help="Experiment TOML file."),
+) -> None:
+    """Historic-control availability for one spec, without preparing (JSON)."""
+    from pydantic import ValidationError
+
+    try:
+        result = agent_service.AgentService().historic_availability(spec_path)
+    except (RoastMyHarnessError, ValidationError) as error:
+        result = {"available": False, "reason": str(error)}
+    print(json.dumps(result, indent=2, default=str))
+
+
 @app.command("watch")
 def watch_human(
     experiment_id: str = typer.Argument(...),
@@ -593,8 +856,7 @@ def _print_watch_frame(event: dict[str, Any], *, final: bool = False) -> None:
             typer.echo("\t".join([task] + [matrix[v].get(task, ".") for v in variants]))
     for variant, counts in totals.items():
         typer.echo(
-            f"{variant}: P={counts.get('P', 0)} F={counts.get('F', 0)} "
-            f"E={counts.get('E', 0)}"
+            f"{variant}: P={counts.get('P', 0)} F={counts.get('F', 0)} E={counts.get('E', 0)}"
         )
     aggregates = event.get("aggregates") or {}
     for variant, agg in aggregates.items():

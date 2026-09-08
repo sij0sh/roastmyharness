@@ -12,7 +12,7 @@ from roast_my_harness.cli import _exit_for_final_state
 from roast_my_harness.errors import HomeBuildError, PierError, SpecError
 from roast_my_harness.homes.builder import build_home
 from roast_my_harness.homes.sources import copy_source_tree, source_tree_hash
-from roast_my_harness.spec.hashes import experiment_hash, variant_hash
+from roast_my_harness.spec.hashes import variant_hash
 from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.spec.models import (
     ExperimentSpec,
@@ -21,6 +21,7 @@ from roast_my_harness.spec.models import (
     TaskSelection,
     VariantSpec,
 )
+from roast_my_harness.spec.resolved import resolve_run_spec
 
 
 def base_spec(tmp_path: Path, **variant_kwargs) -> ExperimentSpec:
@@ -39,7 +40,7 @@ def base_spec(tmp_path: Path, **variant_kwargs) -> ExperimentSpec:
 def test_unknown_top_level_field_rejected(tmp_path: Path):
     path = tmp_path / "exp.toml"
     path.write_text(
-        'schema_version = 1\nname = "x"\nunknown_field = 1\n'
+        'schema_version = 2\nname = "x"\nunknown_field = 1\n'
         "[tasks]\npath = '/tmp'\n[[variants]]\nid = 'a'\n"
     )
     with pytest.raises(SpecError, match="extra_forbidden|unknown_field"):
@@ -49,7 +50,7 @@ def test_unknown_top_level_field_rejected(tmp_path: Path):
 def test_unknown_concurrency_field_rejected(tmp_path: Path):
     path = tmp_path / "exp.toml"
     path.write_text(
-        'schema_version = 1\nname = "x"\n[tasks]\npath = "/tmp"\n'
+        'schema_version = 2\nname = "x"\n[tasks]\npath = "/tmp"\n'
         '[concurrency]\nper_variant = 2\nglobal_max = 6\n[[variants]]\nid = "a"\n'
     )
     with pytest.raises(SpecError, match="extra_forbidden|global_max"):
@@ -59,7 +60,7 @@ def test_unknown_concurrency_field_rejected(tmp_path: Path):
 def test_unknown_model_field_rejected(tmp_path: Path):
     path = tmp_path / "exp.toml"
     path.write_text(
-        'schema_version = 1\nname = "x"\n[tasks]\npath = "/tmp"\n'
+        'schema_version = 2\nname = "x"\n[tasks]\npath = "/tmp"\n'
         '[model]\nprovider = "openai-codex"\nauth = "codex"\n[[variants]]\nid = "a"\n'
     )
     with pytest.raises(SpecError, match="extra_forbidden|auth"):
@@ -69,7 +70,7 @@ def test_unknown_model_field_rejected(tmp_path: Path):
 def test_stale_example_config_validates(tmp_path: Path):
     path = tmp_path / "my-comparison.toml"
     path.write_text(
-        'schema_version = 1\nname = "my-comparison"\n'
+        'schema_version = 2\nname = "my-comparison"\n'
         '[tasks]\npath = "/tmp"\n[[variants]]\nid = "a"\n'
     )
     spec = load_experiment(path)
@@ -111,7 +112,7 @@ def _task(tmp_path: Path, task_id: str, body: str = "do it\n") -> Path:
     return task
 
 
-def test_experiment_hash_binds_task_content(tmp_path: Path):
+def test_resolved_identity_binds_task_content(tmp_path: Path):
     _task(tmp_path, "t1", "one")
     spec = base_spec(tmp_path)
     from roast_my_harness.tasks.discover import discover_tasks
@@ -119,11 +120,11 @@ def test_experiment_hash_binds_task_content(tmp_path: Path):
 
     tasks = discover_tasks(tmp_path, ["*"], [])
     pairs = [(t.task_id, task_hash(t.path)) for t in tasks]
-    h1 = experiment_hash(spec, pairs)
+    run1 = resolve_run_spec(spec, pairs).run_id
     _task(tmp_path, "t1", "changed")
     tasks = discover_tasks(tmp_path, ["*"], [])
     pairs2 = [(t.task_id, task_hash(t.path)) for t in tasks]
-    assert experiment_hash(spec, pairs2) != h1
+    assert resolve_run_spec(spec, pairs2).run_id != run1
 
 
 def test_resume_refuses_changed_task_content(tmp_path: Path):
@@ -131,7 +132,6 @@ def test_resume_refuses_changed_task_content(tmp_path: Path):
     os.environ["XDG_CACHE_HOME"] = str(tmp_path / "cache")
     _task(tmp_path, "t1", "one")
     from roast_my_harness.runner.controller import ExperimentController
-    from roast_my_harness.spec.normalize import experiment_id
     from roast_my_harness.store.repository import Repository
 
     spec = base_spec(tmp_path)
@@ -140,7 +140,7 @@ def test_resume_refuses_changed_task_content(tmp_path: Path):
 
     tasks = discover_tasks(tmp_path, ["*"], [])
     pairs = [(t.task_id, task_hash(t.path)) for t in tasks]
-    exp_id = experiment_id(spec.name, experiment_hash(spec, pairs))
+    exp_id = resolve_run_spec(spec, pairs).run_id
     repo = Repository(tmp_path / "db.sqlite")
     controller = ExperimentController(spec, exp_id, tmp_path / "run", repo, None)
     controller.prepare()
