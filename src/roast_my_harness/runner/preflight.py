@@ -11,6 +11,10 @@ from pathlib import Path
 from roast_my_harness import __version__
 from roast_my_harness.adapter.registry import get_agent
 from roast_my_harness.auth import service as auth_service
+from roast_my_harness.errors import SpecError
+from roast_my_harness.evals.descriptor import load_descriptor
+from roast_my_harness.evals.registry import resolve_eval
+from roast_my_harness.evals.selftest import run_selftests
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.spec.models import ExperimentSpec
 from roast_my_harness.tasks.discover import discover_tasks
@@ -47,6 +51,7 @@ def run_checks(spec: ExperimentSpec, *, skip_docker: bool = False) -> list[Check
     if not skip_docker:
         results.extend(_docker())
     results.extend(_tasks(spec))
+    results.append(_eval(spec))
     results.extend(_sources(spec))
     results.extend(_npm_packages(spec))
     results.extend(_auth(spec))
@@ -106,6 +111,41 @@ def _tasks(spec: ExperimentSpec) -> list[CheckResult]:
     except Exception as e:
         results.append(_fail("tasks", str(e)))
     return results
+
+
+def _eval(spec: ExperimentSpec) -> CheckResult:
+    """Custom-eval contract gate: descriptor validity plus fixture self-tests.
+
+    Legacy-default runs without an eval.toml beside the task root skip
+    with a pass. Anything else must carry a valid frozen contract whose
+    fixtures discriminate, or launch is refused before spending compute.
+    """
+    try:
+        frozen = resolve_eval(spec, spec.tasks.path)
+    except SpecError as error:
+        return _fail("eval", str(error))
+    try:
+        descriptor = load_descriptor(spec.tasks.path)
+    except SpecError as error:
+        return _fail("eval", str(error))
+    if descriptor is None:
+        label = f"{frozen.type} eval {frozen.id}" if frozen is not None else "legacy default"
+        return _ok("eval", f"no eval descriptor; {label}")
+    try:
+        result = run_selftests(spec.tasks.path, descriptor)
+    except SpecError as error:
+        return _fail("eval", str(error))
+    if not result.passed:
+        first = result.failures[0]
+        extra = (
+            f" (+{len(result.failures) - 1} more)"
+            if len(result.failures) > 1
+            else ""
+        )
+        return _fail("eval", f"self-test {first.fixture}: {first.message}{extra}")
+    return _ok(
+        "eval", f"{descriptor.id} contract self-tests green ({result.evaluated} fixtures)"
+    )
 
 
 def _sources(spec: ExperimentSpec) -> list[CheckResult]:

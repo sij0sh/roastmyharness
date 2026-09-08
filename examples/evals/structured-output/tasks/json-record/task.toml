@@ -1,0 +1,50 @@
+schema_version = "1.3"
+artifacts = ["/logs/artifacts/model.patch"]
+
+[task]
+name = "structured-output/json-record"
+description = "Write an exact JSON record"
+authors = []
+keywords = ["structured-output", "example"]
+
+[metadata]
+task_id = "json-record"
+display_title = "Write an exact JSON record"
+display_description = "Emit a JSON document matching an exact schema: required keys, value formats, no extras."
+category = "example"
+language = "none"
+repository_url = ""
+base_commit_hash = ""
+
+[verifier]
+network_mode = "no-network"
+environment_mode = "separate"
+timeout_sec = 600.0
+
+[verifier.env]
+
+[verifier.environment]
+build_timeout_sec = 600.0
+cpus = 1
+memory_mb = 2048
+storage_mb = 10240
+
+[[verifier.collect]]
+command = "cd /app && mkdir -p /logs/artifacts && git config --global --add safe.directory /app && (git add -N -- . 2>/dev/null || true) && git diff --binary HEAD -- . > /logs/artifacts/model.patch && git status --porcelain=v1 -uall > /logs/artifacts/worktree-status.txt"
+timeout_sec = 120.0
+
+[agent]
+network_mode = "no-network"
+timeout_sec = 1800.0
+
+[environment]
+build_timeout_sec = 1200.0
+os = "linux"
+cpus = 1
+memory_mb = 2048
+storage_mb = 10240
+gpus = 0
+
+[environment.env]
+
+[solution.env]

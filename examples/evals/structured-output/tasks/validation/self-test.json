@@ -1,0 +1,40 @@
+{
+  "fixtures": [
+    {
+      "name": "json-record-perfect",
+      "task": "json-record",
+      "rewards": {"reward": 1.0, "reward_deterministic": 1.0},
+      "expect_resolved": true
+    },
+    {
+      "name": "json-record-wrong-type",
+      "task": "json-record",
+      "rewards": {"reward": 0.0, "reward_deterministic": 0.33},
+      "expect_resolved": false
+    },
+    {
+      "name": "edit-preserve-clean",
+      "task": "edit-preserve",
+      "rewards": {"reward": 1.0, "reward_deterministic": 1.0},
+      "expect_resolved": true
+    },
+    {
+      "name": "edit-preserve-clobbered",
+      "task": "edit-preserve",
+      "rewards": {"reward": 0.0, "reward_deterministic": 0.25},
+      "expect_resolved": false
+    },
+    {
+      "name": "headed-notes-exact",
+      "task": "headed-notes",
+      "rewards": {"reward": 1.0, "reward_deterministic": 1.0},
+      "expect_resolved": true
+    },
+    {
+      "name": "headed-notes-missing-heading",
+      "task": "headed-notes",
+      "rewards": {"reward": 0.0, "reward_deterministic": 0.4},
+      "expect_resolved": false
+    }
+  ]
+}
