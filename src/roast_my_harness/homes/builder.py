@@ -244,6 +244,7 @@ def build_home(
             setup=setup,
             egress_urls=list(variant.egress_urls),
             pi_flags=list(variant.pi_flags),
+            runtime_agent_install=variant.runtime_agent_install,
         )
         (tmp / "variant.json").write_text(
             json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n"

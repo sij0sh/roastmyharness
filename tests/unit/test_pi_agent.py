@@ -183,3 +183,33 @@ async def test_setup_git_identity_runs_as_agent_user(tmp_path: Path):
     command, _ = calls[0]
     assert "user.name roastmyharness" in command
     assert "user.email roastmyharness@local" in command
+
+
+def test_install_spec_none_when_runtime_flagged(tmp_path: Path):
+    agent = _pi_agent(tmp_path, "runtime", runtime_agent_install=True)
+    assert agent.install_spec() is None
+
+
+def test_install_spec_present_by_default(tmp_path: Path):
+    agent = _pi_agent(tmp_path, "buildtime")
+    assert agent.install_spec() is not None
+
+
+async def test_runtime_install_runs_both_steps_as_root(tmp_path: Path):
+    import asyncio
+
+    agent = _pi_agent(tmp_path, "rtinst", runtime_agent_install=True)
+    calls = []
+
+    async def fake_root(environment, command, **kwargs):
+        calls.append(command)
+        return None
+
+    agent.exec_as_root = fake_root
+    agent.exec_as_agent = lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("agent user must not run install steps")
+    )
+    await agent.install(environment=None)
+    assert len(calls) == 2
+    assert any("nodejs npm" in call for call in calls)
+    assert any("npm install -g" in call for call in calls)

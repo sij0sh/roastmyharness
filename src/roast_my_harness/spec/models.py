@@ -282,6 +282,7 @@ class VariantSpec(BaseModel):
     setup: list[SetupSpec] = Field(default_factory=list)
     egress_urls: list[str] = Field(default_factory=list)
     pi_flags: list[str] = Field(default_factory=list)
+    runtime_agent_install: bool = False
 
     @field_validator("id")
     @classmethod

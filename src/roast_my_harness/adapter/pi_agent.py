@@ -232,7 +232,8 @@ class PiAgent(BaseInstalledAgent):
 
     # ---------------------------------------------------------- install ---
 
-    def install_spec(self) -> AgentInstallSpec:
+    def _install_runs(self) -> list[tuple[str, str]]:
+        """(user, run) pairs shared by build-time and runtime install."""
         package = self.PACKAGE
         if self._pi_version and self._pi_version != LATEST:
             package += f"@{self._pi_version}"
@@ -246,15 +247,33 @@ class PiAgent(BaseInstalledAgent):
         agent_run = (
             f"set -e; npm install -g {package} && {self.BINARY} --version"
         )
+        return [("root", root_run), ("root", agent_run)]
+
+    def install_spec(self) -> AgentInstallSpec | None:
+        # Compose tasks cannot bake the agent in at build time (pier
+        # supports build-time install for Dockerfile/prebuilt tasks only),
+        # so they install once at setup instead; None also selects pier's
+        # prebuilt-image path. Default off: every existing task is unchanged.
+        if self._manifest.get("runtime_agent_install"):
+            return None
         return AgentInstallSpec(
             agent_name=self.name(),
             version=self._pi_version,
             steps=[
-                InstallStep(user="root", run=root_run),
-                InstallStep(user="root", run=agent_run),
+                InstallStep(user=user, run=run)
+                for user, run in self._install_runs()
             ],
             verification_command=self.get_version_command(),
         )
+
+    async def install(self, environment: BaseEnvironment) -> None:
+        """Runtime install for compose tasks (pier calls this at setup
+        when install_spec is None). Matches base privilege handling."""
+        for user, run in self._install_runs():
+            if user == "root":
+                await self.exec_as_root(environment, command=run)
+            else:
+                await self.exec_as_agent(environment, command=run)
 
     def network_allowlist(self) -> NetworkAllowlist:
         urls: list[str] = []

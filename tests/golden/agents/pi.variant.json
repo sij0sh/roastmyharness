@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "variant_id": "control",
-  "variant_hash": "c686e33c59ab79a81abb557392eeaa76344d6637783d76cde247895263d616f0",
+  "variant_hash": "ef615b8d297ec6f05804fde4254b5ad24f4766c1744d07afbd4a7fca87464f4c",
   "pi_version": "0.84.3",
   "agent": "pi",
   "agent_version": "0.84.3",
@@ -14,5 +14,6 @@
   "env_from_host": [],
   "setup": [],
   "egress_urls": [],
-  "pi_flags": []
+  "pi_flags": [],
+  "runtime_agent_install": false
 }
