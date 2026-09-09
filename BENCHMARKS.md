@@ -223,7 +223,7 @@ model.
 | Run id | `pi-vs-claude-bare-ed2d5b93` |
 | Date | 2026-09-09 |
 | Spec | `pi-vs-claude-bare.toml` |
-| Branch | `ad-hoc/claude-bare` (Claude arm support restored from `8585ce8`) |
+| Branch | `ad-hoc/claude-bare` (Claude arm support restored from `40f6383`) |
 | Harness | roastmyharness 0.1.0, pier 0.3.1 |
 | Model (both arms) | `anthropic-gateway/claude-opus-5` |
 | Thinking (both arms) | `low` |
@@ -310,7 +310,7 @@ The claude arm's token/cost cells initially reported zero. Cause:
 Claude Code writes its transcript and `.claude.json` mode 0600/0700
 as the container user; pier's host-side relocate preserved that, so
 the ATIF converter failed with PermissionError and silently dropped
-all metrics. Fixed in `fe030e4` (scan tolerance) and `9c69b96`
+all metrics. Fixed in `f628ec7` (scan tolerance) and `c8a134a`
 (container-side chmod after agent exit). The numbers above were then
 recovered from this same trial's artifacts: transcript converted with
 pier's own ATIF converter, metrics folded into `result.json`, report
