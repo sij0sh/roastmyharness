@@ -16,6 +16,200 @@ How to read:
 
 ---
 
+## Token baselines: gpt-5.6-luna, low vs high thinking
+
+Not one experiment but a cross-run aggregate: every stored RoastMyHarness
+run through 2026-09-09 that used gpt-5.6-luna, pooled to answer one
+question - what is the normal token footprint per task, and when is a
+new run far outside the norm? Full per-task tables for reasoning and
+total tokens live in
+`.agents/artifacts/token-analysis-gpt-5.6-luna.md`; this section carries
+the headline output-token norms inline.
+
+### Identity and scope
+
+| field | value |
+|---|---|
+| Model | `gpt-5.6-luna` |
+| Thinking levels | `low`, `high` (stray medium/off trials exist, out of scope) |
+| Window | 2026-08-27 to 2026-09-09 |
+| Run dirs scanned | 146 |
+| Experiments contributing trials | 124 |
+| Trials | 801 total, 768 usable (33 zero-token crashes excluded) |
+| Distinct tasks seen | 77 (bundled DeepSWE datacurve corpus) |
+| Baseline-arm trials (the norm) | 138 low, 105 high, 56 tasks |
+| Analysis script | `.agents/artifacts/token_stats_analysis.py` |
+
+### Method
+
+- "Norm" tables pool baseline arms only (`control`/`baseline`: the
+  unmodified pi harness). Treatment arms change token behaviour by
+  design, so they are excluded from the norm and pooled separately.
+- Metrics: `output_tokens` = generated tokens; `reasoning_tokens` =
+  thinking subset of output; `total` = input + cache-read + output
+  (cumulative context consumption).
+- sigma is the sample standard deviation; 1-sigma and 2-sigma ranges
+  are mean +/- sigma and mean +/- 2*sigma, clamped at 0. CV = sigma/mean.
+- Per-task sigma from n < 5 samples is unstable. For those tasks use
+  the pooled fallback below: sigma_hat = CV_pooled * task_mean.
+- Accounting on the gateway used: `input_tokens` counts only non-cached
+  input (tens to hundreds per trial); `cache_tokens` carries the bulk.
+  `peak_context_tokens` is not usable for this model (near-constant
+  value) and is excluded - a telemetry gap, disclosed here rather than
+  silently dropped.
+
+### Model-level overview
+
+| thinking | n | output mean | output sigma | output median | output 2-sigma range | reasoning mean | total mean | total sigma |
+|---|---|---|---|---|---|---|---|---|
+| low | 565 | 4,790 | 9,626 | 3,211 | [0, 24.0k] | 400 | 246.4k | 176.0k |
+| high | 203 | 32.2k | 28.2k | 25.5k | [0, 88.6k] | 13.7k | 4.86M | 4.44M |
+
+Thinking levels separate cleanly: high median reasoning is ~40x low
+(13.4k vs 0.3k). A low run producing high-level reasoning counts, or
+vice versa, is a config error, not noise - the cheapest anomaly check
+in the stack.
+
+### Per-task output norms: thinking = low (22 tasks, 138 trials)
+
+15 of 22 tasks have n < 5; treat their sigma as provisional.
+
+| task | n | mean | sigma | 1-sigma range | 2-sigma range | median | max | CV |
+|---|---|---|---|---|---|---|---|---|
+| helm-unified-manifest-stream | 4 | 19.8k | 32.2k | [0, 52.0k] | [0, 84.2k] | 4090 | 68.1k | 1.63 |
+| bandit-incremental-cache-control | 18 | 10.3k | 20.6k | [0, 31.0k] | [0, 51.6k] | 3320 | 67.2k | 2.00 |
+| obsidian-linter-link-format-conversion | 23 | 5910 | 13.3k | [0, 19.2k] | [0, 32.4k] | 3167 | 66.7k | 2.24 |
+| httpx-deterministic-cookie-store | 3 | 4411 | 946 | [3466, 5357] | [2520, 6302] | 4041 | 5486 | 0.21 |
+| vitest-duration-sharding | 3 | 4115 | 560 | [3555, 4675] | [2996, 5234] | 4293 | 4564 | 0.14 |
+| go-critic-doc-link-checker | 4 | 3866 | 545 | [3321, 4411] | [2776, 4956] | 3886 | 4494 | 0.14 |
+| vulture-persistent-analysis-cache | 3 | 3628 | 434 | [3194, 4062] | [2760, 4496] | 3713 | 4013 | 0.12 |
+| koota-entity-snapshot-rollback | 2 | 3612 | 46 | [3567, 3658] | [3521, 3704] | 3612 | 3645 | 0.01 |
+| fastapi-deprecation-response-headers | 3 | 3591 | 559 | [3032, 4150] | [2473, 4709] | 3601 | 4145 | 0.16 |
+| go-git-worktree-merge-conflicts | 17 | 3476 | 591 | [2885, 4067] | [2295, 4658] | 3513 | 4319 | 0.17 |
+| sqlfmt-create-table-ddl-formatting | 14 | 3312 | 881 | [2431, 4193] | [1549, 5074] | 3436 | 4596 | 0.27 |
+| participle-grammar-conflict-analysis | 3 | 3302 | 193 | [3109, 3494] | [2916, 3687] | 3211 | 3523 | 0.06 |
+| wazero-multi-module-snapshots | 17 | 3281 | 447 | [2834, 3728] | [2387, 4176] | 3216 | 4587 | 0.14 |
+| bandit-structured-nosec-directives | 1 | 3253 | - | - | - | 3253 | 3253 | - |
+| ts-pattern-match-each | 1 | 3240 | - | - | - | 3240 | 3240 | - |
+| wasmi-trap-coredumps | 6 | 3085 | 222 | [2863, 3307] | [2641, 3529] | 3046 | 3420 | 0.07 |
+| sql-formatter-bigquery-pipe-formatting | 5 | 2996 | 113 | [2884, 3109] | [2771, 3221] | 3051 | 3058 | 0.04 |
+| numba-stencil-boundary-modes | 1 | 2874 | - | - | - | 2874 | 2874 | - |
+| tengo-destructuring-bindings | 3 | 2823 | 481 | [2342, 3303] | [1861, 3784] | 3012 | 3180 | 0.17 |
+| quill-shared-toolbar-focus | 2 | 2818 | 474 | [2344, 3293] | [1870, 3767] | 2818 | 3154 | 0.17 |
+| obsidian-linter-auto-table-of-contents | 4 | 2762 | 238 | [2524, 3000] | [2286, 3238] | 2718 | 3075 | 0.09 |
+| helm-array-merge-strategies | 1 | 2212 | - | - | - | 2212 | 2212 | - |
+
+Task names are `datacurve/`-prefixed; the prefix is dropped for width.
+
+### Per-task output norms: thinking = high (49 tasks, 105 trials)
+
+47 of 49 tasks have n < 5 - the pooled fallback is the primary guide
+here, the per-task sigma is directional only.
+
+| task | n | mean | sigma | 1-sigma range | 2-sigma range | median | max | CV |
+|---|---|---|---|---|---|---|---|---|
+| optique-conditional-option-dependencies | 1 | 105.7k | - | - | - | 105.7k | 105.7k | - |
+| dynamodb-toolbox-lazy-recursive-schemas | 1 | 69.6k | - | - | - | 69.6k | 69.6k | - |
+| mashumaro-flattened-dataclass-fields | 2 | 64.1k | 46.7k | [17.5k, 110.8k] | [0, 157.5k] | 64.1k | 97.1k | 0.73 |
+| fastapi-deprecation-response-headers | 2 | 52.3k | 47.9k | [4421, 100.2k] | [0, 148.1k] | 52.3k | 86.2k | 0.92 |
+| obsidian-linter-link-format-conversion | 2 | 51.5k | 41.9k | [9644, 93.4k] | [0, 135.3k] | 51.5k | 81.1k | 0.81 |
+| koota-composite-trait-aspects | 1 | 50.7k | - | - | - | 50.7k | 50.7k | - |
+| pebble-durability-wait-apis | 2 | 37.5k | 492 | [37.0k, 38.0k] | [36.5k, 38.5k] | 37.5k | 37.9k | 0.01 |
+| valibot-recursive-schema-composition | 1 | 37.2k | - | - | - | 37.2k | 37.2k | - |
+| tomlkit-toml-table-converters | 2 | 36.2k | 795 | [35.4k, 37.0k] | [34.6k, 37.8k] | 36.2k | 36.7k | 0.02 |
+| koota-deferred-mutation-buffer | 1 | 35.5k | - | - | - | 35.5k | 35.5k | - |
+| quill-shared-toolbar-focus | 4 | 35.4k | 4054 | [31.3k, 39.5k] | [27.3k, 43.5k] | 33.6k | 41.5k | 0.11 |
+| helm-unified-manifest-stream | 1 | 34.3k | - | - | - | 34.3k | 34.3k | - |
+| tengo-destructuring-bindings | 3 | 29.6k | 1787 | [27.8k, 31.4k] | [26.1k, 33.2k] | 28.9k | 31.7k | 0.06 |
+| csstree-shorthand-expansion-compression | 2 | 29.5k | 38 | [29.4k, 29.5k] | [29.4k, 29.6k] | 29.5k | 29.5k | 0.00 |
+| etree-xml-diff-patch | 2 | 29.3k | 5809 | [23.5k, 35.1k] | [17.7k, 40.9k] | 29.3k | 33.4k | 0.20 |
+| tengo-callable-instance-isolation | 4 | 28.7k | 4366 | [24.3k, 33.1k] | [20.0k, 37.4k] | 27.5k | 35.0k | 0.15 |
+| python-statemachine-state-data-scoping | 1 | 28.6k | - | - | - | 28.6k | 28.6k | - |
+| vulture-persistent-analysis-cache | 4 | 27.6k | 896 | [26.7k, 28.5k] | [25.8k, 29.4k] | 27.6k | 28.6k | 0.03 |
+| cliffy-config-file-parsing | 2 | 27.3k | 2966 | [24.4k, 30.3k] | [21.4k, 33.3k] | 27.3k | 29.4k | 0.11 |
+| oxvg-structural-selector-preservation | 1 | 27.1k | - | - | - | 27.1k | 27.1k | - |
+| httpx-deterministic-cookie-store | 2 | 26.6k | 7362 | [19.3k, 34.0k] | [11.9k, 41.4k] | 26.6k | 31.9k | 0.28 |
+| go-critic-doc-link-checker | 2 | 26.2k | 2265 | [23.9k, 28.4k] | [21.6k, 30.7k] | 26.2k | 27.8k | 0.09 |
+| httpx-multipart-response-parsing | 2 | 25.8k | 936 | [24.8k, 26.7k] | [23.9k, 27.6k] | 25.8k | 26.4k | 0.04 |
+| kysely-window-grouping-helpers | 2 | 25.6k | 1082 | [24.5k, 26.7k] | [23.4k, 27.8k] | 25.6k | 26.4k | 0.04 |
+| arcane-drift-detection-baselines | 1 | 25.6k | - | - | - | 25.6k | 25.6k | - |
+| ofetch-per-origin-circuit-breaker | 1 | 25.6k | - | - | - | 25.6k | 25.6k | - |
+| aiomonitor-task-snapshots-diff | 1 | 25.5k | - | - | - | 25.5k | 25.5k | - |
+| participle-grammar-conflict-analysis | 2 | 25.3k | 236 | [25.1k, 25.6k] | [24.9k, 25.8k] | 25.3k | 25.5k | 0.01 |
+| vitest-duration-sharding | 2 | 24.9k | 135 | [24.7k, 25.0k] | [24.6k, 25.1k] | 24.9k | 25.0k | 0.01 |
+| mobly-grouped-test-barriers | 3 | 24.9k | 1864 | [23.0k, 26.7k] | [21.1k, 28.6k] | 25.3k | 26.4k | 0.07 |
+| returns-validated-error-accumulation | 4 | 24.3k | 1601 | [22.7k, 25.9k] | [21.1k, 27.5k] | 24.4k | 26.1k | 0.07 |
+| bandit-incremental-cache-control | 4 | 24.3k | 1767 | [22.5k, 26.1k] | [20.8k, 27.8k] | 24.7k | 26.0k | 0.07 |
+| cattrs-partial-structuring-recovery | 1 | 24.3k | - | - | - | 24.3k | 24.3k | - |
+| obsidian-linter-auto-table-of-contents | 3 | 24.2k | 1208 | [23.0k, 25.4k] | [21.8k, 26.6k] | 24.8k | 25.0k | 0.05 |
+| prometheus-typed-label-sorting | 6 | 24.0k | 2096 | [21.9k, 26.1k] | [19.8k, 28.2k] | 24.4k | 26.9k | 0.09 |
+| prometheus-transactional-reload-status | 3 | 23.5k | 971 | [22.6k, 24.5k] | [21.6k, 25.5k] | 23.0k | 24.6k | 0.04 |
+| drizzle-orm-window-function-builders | 1 | 23.3k | - | - | - | 23.3k | 23.3k | - |
+| sqlfmt-create-table-ddl-formatting | 2 | 23.3k | 3823 | [19.4k, 27.1k] | [15.6k, 30.9k] | 23.3k | 26.0k | 0.16 |
+| sql-formatter-bigquery-pipe-formatting | 2 | 22.5k | 235 | [22.2k, 22.7k] | [22.0k, 22.9k] | 22.5k | 22.6k | 0.01 |
+| narwhals-rolling-window-suite | 1 | 22.1k | - | - | - | 22.1k | 22.1k | - |
+| anko-typed-variable-bindings | 1 | 21.9k | - | - | - | 21.9k | 21.9k | - |
+| onedump-dump-encryption-pipeline | 2 | 21.6k | 1855 | [19.8k, 23.5k] | [17.9k, 25.3k] | 21.6k | 22.9k | 0.09 |
+| koota-entity-snapshot-rollback | 2 | 21.3k | 841 | [20.5k, 22.1k] | [19.6k, 23.0k] | 21.3k | 21.9k | 0.04 |
+| actionlint-action-pinning-lint | 1 | 21.3k | - | - | - | 21.3k | 21.3k | - |
+| sqlite-utils-safe-import-checkpoints | 1 | 21.1k | - | - | - | 21.1k | 21.1k | - |
+| skrub-duration-encoding | 2 | 20.9k | 907 | [20.0k, 21.9k] | [19.1k, 22.8k] | 20.9k | 21.6k | 0.04 |
+| kgateway-consistent-hash-policy | 4 | 20.7k | 1096 | [19.6k, 21.8k] | [18.5k, 22.9k] | 20.6k | 22.1k | 0.05 |
+| wazero-multi-module-snapshots | 6 | 20.6k | 3527 | [17.1k, 24.1k] | [13.5k, 27.7k] | 20.2k | 26.4k | 0.17 |
+| true-myth-iterable-collection-combinators | 2 | 19.5k | 938 | [18.6k, 20.5k] | [17.6k, 21.4k] | 19.5k | 20.2k | 0.05 |
+
+### Flagged trials (beyond 2 sigma of their task norm)
+
+| z | thinking | task | variant | date | output | resolved | reward |
+|---|---|---|---|---|---|---|---|
+| +4.6 | low | obsidian-linter-link-format-conversion | control | 2026-09-07 | 66.7k | 0 | 0.0 |
+| +2.9 | low | wazero-multi-module-snapshots | control | 2026-09-07 | 4587 | 0 | 0.0 |
+| +2.8 | low | bandit-incremental-cache-control | control | 2026-09-07 | 67.2k | 0 | 0.0 |
+| +2.7 | low | bandit-incremental-cache-control | control | 2026-09-08 | 66.9k | 0 | 0.0 |
+
+All 4 flagged trials were unresolved failures. Low-thinking outliers are
+runaway/loop runs: a token count far above the 2-sigma band predicts a
+failed run before the verdict lands. No high-thinking trial breached
+its task norm.
+
+### Fallback norm for tasks with few samples
+
+When a task has n < 5, use the pooled relative spread:
+sigma_hat = CV_pooled * task_mean.
+
+| thinking | CV median | CV p75 | CV p90 | guidance for 1-sigma band |
+|---|---|---|---|---|
+| low | 0.15 | 0.21 | 1.63 | mean +/- 0.15*mean |
+| high | 0.07 | 0.09 | 0.11 | mean +/- 0.07*mean |
+
+High thinking is intrinsically consistent (median CV ~0.07): even one
+test run more than ~30% off the task mean is unusual. Low thinking is
+heavier tailed (median CV ~0.15, runaway runs up to CV 2+): use ~2x the
+median CV before flagging. The low p90 of 1.63 is the runaway tail, not
+steady-state spread - do not size normal bands from it.
+
+### Interpretation
+
+- Usable norm, honest caveat: per-task sigma at n < 5 is provisional.
+  The tables are a living baseline; re-run the analysis script after new
+  experiments and the bands tighten on their own.
+- Immediate triage rule for a single new run: output outside the task's
+  2-sigma band (or the fallback band) plus unresolved status = runaway;
+  reasoning tokens off by an order of magnitude = thinking-level misconfig.
+- The low-thinking failure mode is spending (66-68k output loops on
+  tasks whose norm is 3-10k); the high-thinking failure mode has not
+  shown up in tokens at all.
+
+### Reproduce
+
+```bash
+python3 .agents/artifacts/token_stats_analysis.py
+# rewrites .agents/artifacts/token-analysis-gpt-5.6-luna.md
+# from ~/.local/share/roastmyharness/runs
+```
+
+---
+
 ## Claude Code bare vs Pi bare
 
 First harness-only comparison: both arms ran the SAME model at the
