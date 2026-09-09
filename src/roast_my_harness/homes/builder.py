@@ -297,6 +297,8 @@ def _setup_args(step) -> dict[str, str]:
         return args
     if step.handler == "codegraph_index":
         return {"bundle": str(step.bundle)}
+    if step.handler == "snoop_index":
+        return {"binary": str(step.binary)}
     return {}
 
 

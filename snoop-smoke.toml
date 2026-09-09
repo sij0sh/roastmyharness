@@ -1,0 +1,44 @@
+# Smoke test: fresh pi control vs pi + snoop on one DeepSWE task.
+#
+# The snoop arm gets the snoop-pi extension plus a pre-built repository
+# index: the snoop_index setup step installs the snoop CLI into the task
+# container and runs `snoop init` in /app before the agent starts, so
+# .agents/snoop.db exists and the extension's `context` tool can query
+# it during the run. The binary must be a Debian 12-compatible build
+# (built in rust:bookworm); a host-Fedora build fails on older glibc.
+
+schema_version = 2
+name = "snoop-smoke"
+pi_version = "latest"
+thinking = "high"
+
+[model]
+id = "gpt-5.6-luna"
+provider = "gateway-responses"
+
+[tasks]
+path = "/home/joshsimon/Projects/RoastMyHarness/tasks/deepswe/tasks"
+preset = "luna-signal"
+include = ["*"]
+exclude = []
+
+[concurrency]
+per_variant = 2
+
+[control]
+enabled = true
+mode = "fresh"
+
+[[variants]]
+id = "snoop"
+name = "pi + snoop"
+
+[[variants.extensions]]
+kind = "local"
+path = "/home/joshsimon/Projects/snoop/extensions"
+entry = "snoop-pi.ts"
+name = "snoop"
+
+[[variants.setup]]
+handler = "snoop_index"
+binary = "/home/joshsimon/Projects/snoop/target/release/snoop"

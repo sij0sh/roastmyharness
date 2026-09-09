@@ -98,6 +98,50 @@ async def run_rtk_init(agent, environment, step: dict[str, Any]) -> None:
     )
 
 
+async def snoop_index(agent, environment, step: dict[str, Any]) -> None:
+    """Install the snoop CLI from a local binary and pre-index /app.
+
+    The agent runs with no network, so the repository index must exist
+    before the trial starts; the snoop pi extension only queries the
+    existing .agents/snoop.db during the run. The index must also stay
+    out of the collected patch, matching the codegraph exclude below.
+    """
+    binary = step.get("binary") or ""
+    if not binary:
+        raise ValueError("snoop_index requires binary")
+    if not _is_file(binary):
+        raise FileNotFoundError(f"snoop binary missing: {binary}")
+    name = binary.rsplit("/", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z0-9_.+-]+", name):
+        raise ValueError(f"snoop_index binary name is unsafe: {name!r}")
+    remote_tmp = f"{REMOTE_TMP}/roastmyharness-snoop"
+    await environment.upload_file(binary, remote_tmp)
+    agent.logger.info("installing snoop CLI")
+    target = f"/usr/local/bin/{name}"
+    await agent.exec_as_root(
+        environment,
+        command=(
+            "set -e; "
+            f"install -m 0755 {shlex.quote(remote_tmp)} {shlex.quote(target)} "
+            f"&& rm -f {shlex.quote(remote_tmp)} "
+            f"&& {shlex.quote(target)} --version"
+        ),
+    )
+    agent.logger.info("building snoop index for /app")
+    await agent.exec_as_agent(
+        environment,
+        command=(
+            "set -e; snoop init "
+            "&& test -s /app/.agents/snoop.db "
+            "&& snoop status "
+            "&& mkdir -p /app/.git/info "
+            "&& echo '.agents/' >> /app/.git/info/exclude"
+        ),
+        cwd="/app",
+        timeout_sec=1800,
+    )
+
+
 async def codegraph_index(agent, environment, step: dict[str, Any]) -> None:
     """Install the CodeGraph CLI from a vendored bundle and index /app."""
     bundle = step.get("bundle") or ""
@@ -173,6 +217,7 @@ HANDLERS = {
     "install_binary": install_binary,
     "run_rtk_init": run_rtk_init,
     "codegraph_index": codegraph_index,
+    "snoop_index": snoop_index,
 }
 
 
@@ -181,4 +226,6 @@ async def run_setup_step(agent, environment, step: dict[str, Any]) -> None:
     fn = HANDLERS.get(handler)
     if fn is None:
         raise ValueError(f"unknown setup handler: {handler!r}")
-    await fn(agent, environment, step)
+    # variant.json nests handler fields under "args"; handlers read
+    # their inputs from the step dict directly, so flatten before dispatch.
+    await fn(agent, environment, {**step, **(step.get("args") or {})})

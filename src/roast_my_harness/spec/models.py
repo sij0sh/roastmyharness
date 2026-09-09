@@ -262,8 +262,15 @@ class CodegraphIndex(BaseModel):
     bundle: Path
 
 
+class SnoopIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    handler: Literal["snoop_index"]
+    binary: Path
+
+
 SetupSpec = Annotated[
-    NpmPiInstall | InstallBinary | RunRtkInit | CodegraphIndex,
+    NpmPiInstall | InstallBinary | RunRtkInit | CodegraphIndex | SnoopIndex,
     Field(discriminator="handler"),
 ]
 

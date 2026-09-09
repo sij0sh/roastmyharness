@@ -119,9 +119,14 @@ def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
             for c in variant.context_files
         ]
         setups = []
+        setup_path_fields = {
+            "install_binary": "source",
+            "codegraph_index": "bundle",
+            "snoop_index": "binary",
+        }
         for setup in variant.setup:
-            if setup.handler in ("install_binary", "codegraph_index"):
-                field = "source" if setup.handler == "install_binary" else "bundle"
+            field = setup_path_fields.get(setup.handler)
+            if field:
                 setup = setup.model_copy(
                     update={field: absolute(getattr(setup, field), base_dir)}
                 )
