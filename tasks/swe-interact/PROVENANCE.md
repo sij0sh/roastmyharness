@@ -32,6 +32,15 @@ for this deployment name. Verified: litellm with tools +
 `reasoning_effort=high` + `max_completion_tokens` completes against
 the gateway.
 
+4. Ownership hardening (same class as the staged S2 fix): `trap
+   'chmod -R a+rwX /logs/agent /logs/artifacts /logs/verifier ...'
+   EXIT` at the top of `tests/test.sh` and
+   `steps/05_test_handoff/tests/test.sh`, and the 05 finale
+   `exec bash /tests/canonical_test.sh` restructured to
+   run-then-chmod-then-`exit $rc` (`exec` skips EXIT traps).
+   Without this, root-owned verifier outputs break pier's host-side
+   per-step relocate with PermissionError (observed r3).
+
 Nothing else changed: 5 steps, FINAL strategy, intermediate
 reward-1 verifiers, docker-compose sidecar, MCP server declaration,
 timeouts, and instructions are byte-identical to upstream.

