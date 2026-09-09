@@ -14,17 +14,18 @@ from roast_my_harness.errors import PierError
 def pier_executable() -> str:
     exe = shutil.which("pier")
     if not exe:
-        raise PierError(
-            "pier not on PATH (uv tool install datacurve-pier)"
-        )
+        raise PierError("pier not on PATH (uv tool install datacurve-pier)")
     return exe
 
 
 def pier_version() -> str | None:
     try:
         result = subprocess.run(
-            [pier_executable(), "--version"], capture_output=True, text=True,
-            timeout=30, check=False,
+            [pier_executable(), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -83,21 +84,36 @@ def build_run_args(
     ``pi_version=``).
     """
     agent_def = get_agent(agent)
+    if agent_def.family == "claude-code":
+        # pier's ClaudeCode maps --model onto ANTHROPIC_MODEL verbatim;
+        # gateways expect the bare model id, so strip the provider prefix.
+        # The manifest keeps the full provider/model id for provenance.
+        model_id = model_id.rsplit("/", 1)[-1]
     args = [
-        pier_executable(), "run",
-        "--path", str(task_root),
+        pier_executable(),
+        "run",
+        "--path",
+        str(task_root),
     ]
     for task in include_tasks or []:
         args += ["--include-task-name", task]
     args += [
-        "--agent-import-path", agent_def.import_path,
-        "--ak", f"variant_manifest={manifest_path}",
-        "--ak", f"thinking={thinking}",
-        "--ak", f"{agent_def.version_field}={pi_version}",
-        "--model", model_id,
-        "--n-concurrent", str(n_concurrent),
-        "--jobs-dir", str(jobs_dir),
-        "--job-name", job_name,
+        "--agent-import-path",
+        agent_def.import_path,
+        "--ak",
+        f"variant_manifest={manifest_path}",
+        "--ak",
+        f"thinking={thinking}",
+        "--ak",
+        f"{agent_def.version_field}={pi_version}",
+        "--model",
+        model_id,
+        "--n-concurrent",
+        str(n_concurrent),
+        "--jobs-dir",
+        str(jobs_dir),
+        "--job-name",
+        job_name,
         "--yes",
     ]
     return args

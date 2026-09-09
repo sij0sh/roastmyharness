@@ -26,9 +26,9 @@ def is_default_evaluation_dump(value: object) -> bool:
 
 
 def canonical_json_bytes(obj: Any) -> bytes:
-    return json.dumps(
-        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
 
 
 def sha256_canonical(obj: Any) -> str:
@@ -40,11 +40,12 @@ def spec_hash(spec: ExperimentSpec) -> str:
     # differ only in prose must keep one identity so history stays joined.
     # A missing [evaluation] block likewise keeps legacy identity: it pops
     # from the payload so pre-eval runs and default-eval runs hash alike.
-    payload = spec.model_dump(
-        mode="json", exclude={"tasks": {"path"}, "hypothesis": True}
-    )
+    payload = spec.model_dump(mode="json", exclude={"tasks": {"path"}, "hypothesis": True})
     if is_default_evaluation_dump(payload.get("evaluation")):
         payload.pop("evaluation", None)
+    for v in payload.get("variants") or []:
+        if isinstance(v, dict) and v.get("model") is None:
+            v.pop("model")
     return sha256_canonical(payload)
 
 
@@ -82,7 +83,10 @@ def variant_hash(
     env values are safely shared. Env names and env_from_host names are
     covered so structural changes still re-key the cache.
     """
-    variant_data = variant.model_dump(mode="json", exclude={"env"})
+    variant_data = variant.model_dump(
+        mode="json",
+        exclude={"env"} | (set() if variant.model is not None else {"model"}),
+    )
     return sha256_canonical(
         {
             "variant": variant_data,

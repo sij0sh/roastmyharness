@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from roast_my_harness.auth import service as auth_service
 from roast_my_harness.auth import staging
 from roast_my_harness.spec.models import ExperimentSpec, TaskSelection, VariantSpec
@@ -13,10 +15,19 @@ from roast_my_harness.spec.models import ExperimentSpec, TaskSelection, VariantS
 
 def test_codex_credential_shape(monkeypatch, tmp_path: Path):
     auth_file = tmp_path / "auth.json"
-    auth_file.write_text(json.dumps({
-        "openai-codex": {"type": "oauth", "access": "tok", "refresh": "r",
-                          "expires": 4102444800, "accountId": "acc"}
-    }))
+    auth_file.write_text(
+        json.dumps(
+            {
+                "openai-codex": {
+                    "type": "oauth",
+                    "access": "tok",
+                    "refresh": "r",
+                    "expires": 4102444800,
+                    "accountId": "acc",
+                }
+            }
+        )
+    )
     monkeypatch.setattr(auth_service, "pi_auth_file", lambda: auth_file)
     cred = auth_service.codex_credential()
     assert cred is not None and cred["access"] == "tok"
@@ -38,7 +49,8 @@ def test_stage_home_copies_credential(tmp_path: Path, monkeypatch):
     (home / "extensions").mkdir(parents=True)
     (home / "variant.json").write_text("{}")
     monkeypatch.setattr(
-        staging, "codex_credential",
+        staging,
+        "codex_credential",
         lambda: {"type": "oauth", "access": "t", "expires": 1},
     )
     spec = ExperimentSpec(
@@ -57,6 +69,7 @@ def test_stage_home_copies_credential(tmp_path: Path, monkeypatch):
 
 def test_stage_custom_renders_per_agent_format(tmp_path: Path):
     from roast_my_harness.spec.models import ModelSpec
+
     models_json = tmp_path / "models.json"
     models_json.write_text('{"providers": {"p": {"apiKey": "$MY_KEY"}}}')
     home = tmp_path / "cached"
@@ -81,3 +94,48 @@ def test_scan_for_secrets_covers_non_log_artifacts(tmp_path: Path):
     (run_dir / "summary.json").write_text('{"key": "sk-secret"}\n')
     hits = staging.scan_for_secrets(run_dir)
     assert hits == [str(logs / "b.log"), str(run_dir / "summary.json")]
+
+
+def test_stage_home_claude_writes_anthropic_env(tmp_path: Path, monkeypatch):
+    home = tmp_path / "cached"
+    home.mkdir()
+    (home / "settings.json").write_text("{}")
+    monkeypatch.setattr(
+        staging,
+        "host_provider_block",
+        lambda provider: {
+            "baseUrl": "https://gw.example.com/anthropic",
+            "apiKey": "$TEST_ANTHROPIC_KEY",
+        },
+    )
+    monkeypatch.setenv("TEST_ANTHROPIC_KEY", "tok-123")
+    spec = ExperimentSpec(
+        name="t",
+        tasks=TaskSelection(path=tmp_path),
+        variants=[VariantSpec(id="a")],
+    )
+    from roast_my_harness.spec.models import ModelSpec
+
+    model = ModelSpec(provider="gw", id="claude-opus-5")
+    dest = staging.stage_home(home, tmp_path / "staged", spec, agent_id="claude", model=model)
+    env = json.loads((dest / "env.json").read_text())
+    assert env["ANTHROPIC_BASE_URL"] == "https://gw.example.com/anthropic"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "tok-123"
+    assert (os.stat(dest / "env.json").st_mode & 0o777) == 0o600
+    assert not (home / "env.json").exists()
+
+
+def test_stage_home_claude_requires_gateway(tmp_path: Path, monkeypatch):
+    home = tmp_path / "cached"
+    home.mkdir()
+    monkeypatch.setattr(staging, "host_provider_block", lambda provider: None)
+    spec = ExperimentSpec(
+        name="t",
+        tasks=TaskSelection(path=tmp_path),
+        variants=[VariantSpec(id="a")],
+    )
+    from roast_my_harness.spec.models import ModelSpec
+
+    model = ModelSpec(provider="missing-gw", id="claude-opus-5")
+    with pytest.raises(Exception, match="not in host pi models.json"):
+        staging.stage_home(home, tmp_path / "staged", spec, agent_id="claude", model=model)

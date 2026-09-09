@@ -16,6 +16,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from roast_my_harness.adapter.registry import get_agent
 from roast_my_harness.errors import HomeBuildError
 from roast_my_harness.homes.manifest import (
     ManifestContextFile,
@@ -135,17 +136,14 @@ def build_home(
     agent_version: str | None = None,
 ) -> HomeBuild:
     """Build (or return cached) home for one variant arm."""
-    agent_id, agent_version = resolve_arm_agent(
-        spec, variant, agent_version=agent_version
-    )
+    agent_id, agent_version = resolve_arm_agent(spec, variant, agent_version=agent_version)
     # Files (unlike trees) must exist before hashing: a missing file has
     # no content to bind, so fail here with a domain error instead of an
     # OSError from the hash step.
     for ctx in variant.context_files:
         if not ctx.path.is_file():
             raise HomeBuildError(
-                f"context file {_context_file_name(ctx)!r} is not a file "
-                f"at {ctx.path}"
+                f"context file {_context_file_name(ctx)!r} is not a file at {ctx.path}"
             )
     v_hash = compute_variant_hash(
         variant, spec.pi_version, agent=agent_id, agent_version=agent_version
@@ -183,17 +181,11 @@ def build_home(
                 copy_runtime_packages(ext.path, dst, ext.runtime_packages)
                 entry = f"extensions/{name}/{ext.entry}"
                 if not (tmp / entry).is_file():
-                    raise HomeBuildError(
-                        f"extension {name!r} entry point missing: {tmp / entry}"
-                    )
+                    raise HomeBuildError(f"extension {name!r} entry point missing: {tmp / entry}")
                 entries.append(entry)
-                manifest_exts.append(
-                    ManifestExtension(name=name, entry=entry)
-                )
+                manifest_exts.append(ManifestExtension(name=name, entry=entry))
             else:  # npm: installed in-container during adapter setup
-                manifest_exts.append(
-                    ManifestExtension(name=ext.package, entry="")
-                )
+                manifest_exts.append(ManifestExtension(name=ext.package, entry=""))
 
         skills: list[ManifestSkill] = []
         for skill in variant.skills:
@@ -213,28 +205,24 @@ def build_home(
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(ctx.path.read_bytes())
             rel = f"context-files/{name}"
-            context_files.append(
-                ManifestContextFile(name=name, path=rel, kind=ctx.kind)
-            )
+            context_files.append(ManifestContextFile(name=name, path=rel, kind=ctx.kind))
 
         (tmp / "settings.json").write_text(
-            json.dumps({"extensions": entries}, indent=2) + "\n"
+            json.dumps(_settings_payload(agent_id, variant, spec, entries), indent=2) + "\n"
         )
 
         setup = [
             ManifestSetupStep(handler=step.handler, args=_setup_args(step))
             for step in variant.setup
         ]
-        npm_packages = [
-            ext.package for ext in variant.extensions if ext.kind == "npm"
-        ]
+        npm_packages = [ext.package for ext in variant.extensions if ext.kind == "npm"]
         manifest = VariantManifest(
             variant_id=variant.id,
             variant_hash=v_hash,
             pi_version=spec.pi_version,
             agent=agent_id,
             agent_version=agent_version,
-            model_id=spec.model.full_id(),
+            model_id=spec.model_for(variant).full_id(),
             extensions=manifest_exts,
             skills=skills,
             context_files=context_files,
@@ -287,6 +275,34 @@ def build_home(
     return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash)
 
 
+def _settings_payload(
+    agent_id: str,
+    variant: VariantSpec,
+    spec: ExperimentSpec,
+    entries: list[str],
+) -> dict:
+    """The home's settings.json, shaped per agent family.
+
+    pi-family pins extension entry points. claude-code gets a pinned
+    fairness contract: the arm's model, bypassed permissions (matching
+    pier's --permission-mode), and telemetry/auto-update shutdowns.
+    """
+    if get_agent(agent_id).family == "claude-code":
+        model_id = spec.model_for(variant).full_id()
+        return {
+            "model": model_id.rsplit("/", 1)[-1],
+            "permissions": {"defaultMode": "bypassPermissions"},
+            "env": {
+                "DISABLE_AUTOUPDATER": "1",
+                "DISABLE_TELEMETRY": "1",
+                "DISABLE_ERROR_REPORTING": "1",
+                "DISABLE_BUG_COMMAND": "1",
+                "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
+            },
+        }
+    return {"extensions": entries}
+
+
 def _setup_args(step) -> dict[str, str]:
     if step.handler == "npm_pi_install":
         return {"package": step.package}
@@ -309,8 +325,7 @@ def _validate_sources(variant: VariantSpec) -> None:
     for path in paths:
         if path.exists() and (path.stat().st_mode & 0o002):
             raise HomeBuildError(
-                f"source directory is world-writable: {path} "
-                "(chmod o-w the source to proceed)"
+                f"source directory is world-writable: {path} (chmod o-w the source to proceed)"
             )
 
 
@@ -321,9 +336,7 @@ def _assert_no_instruction_leaks(home: Path) -> None:
     leaked = [
         str(p.relative_to(home))
         for p in home.rglob("*")
-        if p.is_file()
-        and p.name in INSTRUCTION_FILES
-        and staged not in p.parents
+        if p.is_file() and p.name in INSTRUCTION_FILES and staged not in p.parents
     ]
     if leaked:
         raise HomeBuildError(f"instruction files leaked into home: {leaked}")
@@ -331,9 +344,7 @@ def _assert_no_instruction_leaks(home: Path) -> None:
 
 def _published_home(home: Path, v_hash: str) -> HomeBuild:
     """HomeBuild for an existing same-hash cache home; trusted on existence."""
-    manifest = VariantManifest.model_validate(
-        json.loads((home / "variant.json").read_text())
-    )
+    manifest = VariantManifest.model_validate(json.loads((home / "variant.json").read_text()))
     return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash)
 
 

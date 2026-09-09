@@ -70,7 +70,7 @@ def test_pi_registry_entry():
 
 
 def test_get_agent_unknown_lists_known():
-    with pytest.raises(ValueError, match="known agents: omp, pi"):
+    with pytest.raises(ValueError, match="known agents: claude, omp, pi"):
         get_agent("nope")
 
 
@@ -96,7 +96,7 @@ def test_variant_agent_override(tmp_path: Path):
 
 def test_unknown_agent_on_spec_rejected(tmp_path: Path):
     with pytest.raises(Exception, match="unknown agent"):
-        load_experiment(write(tmp_path, spec_toml(top='agent = "claude"')))
+        load_experiment(write(tmp_path, spec_toml(top='agent = "nope"')))
 
 
 def test_unknown_agent_on_variant_rejected(tmp_path: Path):
@@ -246,9 +246,7 @@ def test_build_run_args_unknown_agent_rejected(monkeypatch, tmp_path: Path):
 
 def test_control_cohort_distinguishes_resolved_agent_identity():
     model = ModelSpec()
-    pi = control_cohort_key(
-        "control", model, "high", "task", agent="pi", agent_version="0.84.3"
-    )
+    pi = control_cohort_key("control", model, "high", "task", agent="pi", agent_version="0.84.3")
     assert pi != control_cohort_key(
         "control", model, "high", "task", agent="omp", agent_version="18.0.9"
     )
@@ -279,9 +277,7 @@ def test_build_home_manifest_records_agent(tmp_path: Path):
 def test_resolved_version_for_latest_queries_registry(monkeypatch):
     from roast_my_harness.spec import models as spec_models
 
-    monkeypatch.setattr(
-        spec_models, "resolve_package_version", lambda package, pin: "0.85.1"
-    )
+    monkeypatch.setattr(spec_models, "resolve_package_version", lambda package, pin: "0.85.1")
     spec = direct_spec(variants=[VariantSpec(id="a")])
     assert spec.agent_version_for("pi") == "latest"
     assert spec.resolved_version_for("pi") == "0.85.1"
@@ -290,9 +286,7 @@ def test_resolved_version_for_latest_queries_registry(monkeypatch):
 def test_build_home_stages_resolved_latest(monkeypatch, tmp_path: Path):
     from roast_my_harness.spec import models as spec_models
 
-    monkeypatch.setattr(
-        spec_models, "resolve_package_version", lambda package, pin: "0.85.1"
-    )
+    monkeypatch.setattr(spec_models, "resolve_package_version", lambda package, pin: "0.85.1")
     spec = direct_spec(variants=[VariantSpec(id="bareish")])
     home = build_home(VariantSpec(id="bareish"), spec, tmp_path / "homes")
     manifest = json.loads((home.path / "variant.json").read_text())

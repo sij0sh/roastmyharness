@@ -51,9 +51,11 @@ def test_local_extension_home(tmp_path: Path):
     src = make_ext(tmp_path)
     spec = spec_for(
         tmp_path,
-        [VariantSpec(id="a", extensions=[
-            LocalExtension(kind="local", path=src, entry="src/index.ts")
-        ])],
+        [
+            VariantSpec(
+                id="a", extensions=[LocalExtension(kind="local", path=src, entry="src/index.ts")]
+            )
+        ],
     )
     home = build_home(spec.variants[0], spec, tmp_path / "homes")
     entry = home.path / "extensions" / "myext" / "src" / "index.ts"
@@ -67,9 +69,11 @@ def test_dot_dir_extension_home(tmp_path: Path):
     src = make_ext(tmp_path, name=".pi-git-suite")
     spec = spec_for(
         tmp_path,
-        [VariantSpec(id="a", extensions=[
-            LocalExtension(kind="local", path=src, entry="src/index.ts")
-        ])],
+        [
+            VariantSpec(
+                id="a", extensions=[LocalExtension(kind="local", path=src, entry="src/index.ts")]
+            )
+        ],
     )
     home = build_home(spec.variants[0], spec, tmp_path / "homes")
     settings = json.loads((home.path / "settings.json").read_text())
@@ -81,9 +85,11 @@ def test_missing_entry_fails(tmp_path: Path):
     src = make_ext(tmp_path)
     spec = spec_for(
         tmp_path,
-        [VariantSpec(id="a", extensions=[
-            LocalExtension(kind="local", path=src, entry="src/nope.ts")
-        ])],
+        [
+            VariantSpec(
+                id="a", extensions=[LocalExtension(kind="local", path=src, entry="src/nope.ts")]
+            )
+        ],
     )
     with pytest.raises(HomeBuildError, match="entry point missing"):
         build_home(spec.variants[0], spec, tmp_path / "homes")
@@ -92,9 +98,7 @@ def test_missing_entry_fails(tmp_path: Path):
 def test_skill_requires_skill_md(tmp_path: Path):
     skill = tmp_path / "sources" / "sk"
     skill.mkdir(parents=True)
-    spec = spec_for(
-        tmp_path, [VariantSpec(id="a", skills=[SkillSpec(path=skill)])]
-    )
+    spec = spec_for(tmp_path, [VariantSpec(id="a", skills=[SkillSpec(path=skill)])])
     with pytest.raises(HomeBuildError, match="SKILL.md"):
         build_home(spec.variants[0], spec, tmp_path / "homes")
 
@@ -103,9 +107,7 @@ def test_skill_home(tmp_path: Path):
     skill = tmp_path / "sources" / "sk"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("# skill\n")
-    spec = spec_for(
-        tmp_path, [VariantSpec(id="a", skills=[SkillSpec(path=skill)])]
-    )
+    spec = spec_for(tmp_path, [VariantSpec(id="a", skills=[SkillSpec(path=skill)])])
     home = build_home(spec.variants[0], spec, tmp_path / "homes")
     assert (home.path / "skills" / "sk" / "SKILL.md").is_file()
     manifest = json.loads((home.path / "variant.json").read_text())
@@ -125,9 +127,11 @@ def test_cache_invalidated_by_source_change(tmp_path: Path):
     src = make_ext(tmp_path)
     spec = spec_for(
         tmp_path,
-        [VariantSpec(id="a", extensions=[
-            LocalExtension(kind="local", path=src, entry="src/index.ts")
-        ])],
+        [
+            VariantSpec(
+                id="a", extensions=[LocalExtension(kind="local", path=src, entry="src/index.ts")]
+            )
+        ],
     )
     homes = tmp_path / "homes"
     first = build_home(spec.variants[0], spec, homes)
@@ -142,9 +146,11 @@ def test_instruction_file_leak_rejected(tmp_path: Path):
     (src / "AGENTS.md").write_text("leak")  # sanitizer should drop it anyway
     spec = spec_for(
         tmp_path,
-        [VariantSpec(id="a", extensions=[
-            LocalExtension(kind="local", path=src, entry="src/index.ts")
-        ])],
+        [
+            VariantSpec(
+                id="a", extensions=[LocalExtension(kind="local", path=src, entry="src/index.ts")]
+            )
+        ],
     )
     home = build_home(spec.variants[0], spec, tmp_path / "homes")
     assert not list(home.path.rglob("AGENTS.md"))
@@ -155,9 +161,11 @@ def test_world_writable_source_rejected(tmp_path: Path):
     src.chmod(0o777)
     spec = spec_for(
         tmp_path,
-        [VariantSpec(id="a", extensions=[
-            LocalExtension(kind="local", path=src, entry="src/index.ts")
-        ])],
+        [
+            VariantSpec(
+                id="a", extensions=[LocalExtension(kind="local", path=src, entry="src/index.ts")]
+            )
+        ],
     )
     with pytest.raises(HomeBuildError, match="world-writable"):
         build_home(spec.variants[0], spec, tmp_path / "homes")
@@ -270,3 +278,37 @@ def test_failed_publish_leaves_no_tmp_dir(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         build_home(spec.variants[0], spec, homes)
     assert not [p for p in homes.iterdir() if p.name.startswith(".build-")]
+
+
+def test_claude_arm_home_pinned_settings(tmp_path: Path):
+    from roast_my_harness.spec.models import ModelSpec
+
+    arm = VariantSpec(
+        id="cl",
+        agent="claude",
+        model=ModelSpec(provider="anthropic-gateway", id="claude-opus-5"),
+    )
+    spec = spec_for(tmp_path, [arm])
+    home = build_home(arm, spec, tmp_path / "homes")
+    manifest = json.loads((home.path / "variant.json").read_text())
+    assert manifest["agent"] == "claude"
+    assert manifest["model_id"] == "anthropic-gateway/claude-opus-5"
+    settings = json.loads((home.path / "settings.json").read_text())
+    assert settings["model"] == "claude-opus-5"
+    assert settings["permissions"] == {"defaultMode": "bypassPermissions"}
+    assert settings["env"]["DISABLE_AUTOUPDATER"] == "1"
+    build_manifest = json.loads((home.path / "build-manifest.json").read_text())
+    assert build_manifest["agent"] == "claude"
+
+
+def test_control_arm_uses_global_model_in_manifest(tmp_path: Path):
+    spec = spec_for(tmp_path, [VariantSpec(id="cl", agent="claude")])
+    spec = spec.model_copy(
+        update={
+            "control": ControlSpec(enabled=True, mode="fresh"),
+        }
+    )
+    arm = spec.arms()[0]
+    home = build_home(arm, spec, tmp_path / "homes")
+    manifest = json.loads((home.path / "variant.json").read_text())
+    assert manifest["model_id"] == spec.model.full_id()

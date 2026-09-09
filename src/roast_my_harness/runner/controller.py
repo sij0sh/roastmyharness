@@ -231,9 +231,7 @@ class ExperimentController:
                 f"{self.experiment_id}; old `latest` pins may have moved. "
                 "Create a new experiment instead of resuming this one"
             )
-        atomic_write_text(
-            self._resolved_path(), fresh.model_dump_json(indent=2) + "\n"
-        )
+        atomic_write_text(self._resolved_path(), fresh.model_dump_json(indent=2) + "\n")
         return fresh
 
     def prepare(
@@ -284,6 +282,7 @@ class ExperimentController:
                 self.run_dir / "staging" / variant.id,
                 self.spec,
                 agent_id=build.manifest.agent,
+                model=self.spec.model_for(variant),
             )
             self._stage_env(staged, variant)
             manifest_path = staged / "variant.json"
@@ -386,11 +385,15 @@ class ExperimentController:
         """
         if not variant.env:
             return
-        atomic_write_text(
-            staged / "env.json",
-            json.dumps(dict(variant.env)) + "\n",
-            mode=0o600,
-        )
+        env_path = staged / "env.json"
+        env: dict = {}
+        if env_path.is_file():
+            try:
+                env = json.loads(env_path.read_text())
+            except json.JSONDecodeError:
+                env = {}
+        env.update(dict(variant.env))
+        atomic_write_text(env_path, json.dumps(env) + "\n", mode=0o600)
 
     def load_for_observation(self) -> None:
         """Load an existing run without rebuilding homes or changing state."""
@@ -461,9 +464,7 @@ class ExperimentController:
             "catalog_revision": self.resolved.catalog_revision
             if self.resolved is not None
             else None,
-            "catalog_hash": self.resolved.catalog_hash
-            if self.resolved is not None
-            else None,
+            "catalog_hash": self.resolved.catalog_hash if self.resolved is not None else None,
             "evaluation": {
                 "type": self.resolved.eval_type,
                 "id": self.resolved.eval_id,
@@ -472,9 +473,7 @@ class ExperimentController:
             }
             if self.resolved is not None
             else None,
-            "requested_agent_versions": dict(
-                self.resolved.requested_agent_versions
-            )
+            "requested_agent_versions": dict(self.resolved.requested_agent_versions)
             if self.resolved is not None
             else {},
             "resolved_agent_versions": frozen,
@@ -693,6 +692,7 @@ class ExperimentController:
         ):
             self._progress("rerun filter matched no runnable cells")
         n_concurrent = self.spec.concurrency.effective_per_variant(len(missing_by_launch))
+        arm_by_id = {arm.id: arm for arm in self.spec.arms()}
         for job in self.jobs.values():
             agent_id = agents[job.variant_id]
             for replicate in range(1, repetitions + 1):
@@ -708,7 +708,7 @@ class ExperimentController:
                         + (f"-r{replicate}" if multi else "")
                     ),
                     manifest_path=job.manifest_path,
-                    model_id=self.spec.model.full_id(),
+                    model_id=self.spec.model_for(arm_by_id[job.variant_id]).full_id(),
                     thinking=self.spec.thinking,
                     pi_version=self.version_for(agent_id),
                     n_concurrent=n_concurrent,
@@ -716,8 +716,7 @@ class ExperimentController:
                     agent=agent_id,
                 )
                 log_name = (
-                    f"{job.variant_id}-r{replicate}.log" if multi
-                    else f"{job.variant_id}.log"
+                    f"{job.variant_id}-r{replicate}.log" if multi else f"{job.variant_id}.log"
                 )
                 log = self.run_dir / "logs" / log_name
                 job.procs.append(process_mod.VariantProcess(job.variant_id, argv, log))
@@ -760,9 +759,7 @@ class ExperimentController:
     async def _watch(self) -> None:
         env = self._pier_env()
         await self._start_gated(env)
-        process_mod.require_all_started(
-            [proc for j in self.jobs.values() for proc in j.procs]
-        )
+        process_mod.require_all_started([proc for j in self.jobs.values() for proc in j.procs])
         tasks = discover_tasks(
             self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
         )
@@ -794,9 +791,7 @@ class ExperimentController:
         _tick_start = _time.monotonic()
         multi = self._repetitions() > 1
         previous = {
-            (v, t, r): c.status
-            for v, cells in self.cells.items()
-            for (t, r), c in cells.items()
+            (v, t, r): c.status for v, cells in self.cells.items() for (t, r), c in cells.items()
         }
         self._refresh_cells()
         for variant_id, cells in self.cells.items():
@@ -950,9 +945,7 @@ class ExperimentController:
         try:
             analysis = report_analyst.write_analysis(self.run_dir)
         except Exception as error:
-            self._logger.emit(
-                "progress", state=self.state, message=f"analyst unavailable: {error}"
-            )
+            self._logger.emit("progress", state=self.state, message=f"analyst unavailable: {error}")
         self._set_state("COMPLETE")
         self._progress(f"reports written: {csv}, {report}" + (f", {analysis}" if analysis else ""))
 

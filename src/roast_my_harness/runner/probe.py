@@ -66,12 +66,13 @@ def probe_argv(
     agent_id = spec.resolved_agents()[variant_id]
     if agent_version is None:
         agent_version = spec.resolved_version_for(agent_id)
+    arm = next(a for a in spec.arms() if a.id == variant_id)
     return pier_mod.build_run_args(
         task_root=spec.tasks.path,
         jobs_dir=job.staged.parent / "probe-jobs",
         job_name=f"smoke-{variant_id}",
         manifest_path=job.manifest_path,
-        model_id=spec.model.full_id(),
+        model_id=spec.model_for(arm).full_id(),
         thinking=spec.thinking,
         pi_version=agent_version,
         n_concurrent=1,
@@ -100,9 +101,7 @@ def select_probe_task(tasks: list[Any], catalog: Any | None) -> str:
     ids = {t.task_id for t in tasks}
     if catalog is not None:
         smoked = sorted(
-            task_id
-            for task_id, meta in catalog.tasks.items()
-            if meta.smoke and task_id in ids
+            task_id for task_id, meta in catalog.tasks.items() if meta.smoke and task_id in ids
         )
         if smoked:
             fast_easy = [
@@ -140,7 +139,10 @@ async def run_probe(
     agent_id = spec.resolved_agents()[variant_id]
     frozen = (resolved_versions or {}).get(agent_id)
     argv = probe_argv(
-        spec=spec, jobs=jobs, task_id=task_id, variant_id=variant_id,
+        spec=spec,
+        jobs=jobs,
+        task_id=task_id,
+        variant_id=variant_id,
         agent_version=frozen,
     )
     log_path = run_dir / "logs" / f"smoke-{variant_id}.log"
