@@ -196,7 +196,6 @@ def test_install_spec_present_by_default(tmp_path: Path):
 
 
 async def test_runtime_install_runs_both_steps_as_root(tmp_path: Path):
-    import asyncio
 
     agent = _pi_agent(tmp_path, "rtinst", runtime_agent_install=True)
     calls = []

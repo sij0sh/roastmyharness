@@ -47,13 +47,6 @@ def parse_ctrf(path):
         nm = str(tc.get("name") or "").strip()
         if not nm:
             continue
-        su_raw = tc.get("suite")
-        if isinstance(su_raw, list) and su_raw:
-            su = str(su_raw[0]).strip()
-        elif isinstance(su_raw, str):
-            su = su_raw.strip()
-        else:
-            su = ""
         # Match the shared grader's node_id="name" derivation: the CTRF
         # reporter already joins suite and test name, so the bare name is
         # the id. (No suite.name join here by design.)

