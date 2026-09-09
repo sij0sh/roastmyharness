@@ -19,7 +19,9 @@ from roast_my_harness.runner import process as process_mod
 from roast_my_harness.tasks.discover import discover_tasks
 
 SMOKE_MIN_TRIALS = 20
-PROBE_TIMEOUT_SEC = 600.0
+# Deadline must clear the slowest healthy trial, not just catch load
+# failures (those error in seconds). Luna High trials run 400-1500s.
+PROBE_TIMEOUT_SEC = float(os.environ.get("ROAST_PROBE_TIMEOUT", "1800"))
 PROBE_KILL_GRACE_SEC = 10.0
 
 
