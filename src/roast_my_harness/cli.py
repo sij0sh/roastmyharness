@@ -315,7 +315,9 @@ def resume(
         typer.secho(f"unknown experiment {experiment_id}", fg=typer.colors.RED)
         raise typer.Exit(1)
     from roast_my_harness.spec.models import ExperimentSpec
+    from roast_my_harness.store import retention as retention_mod
 
+    retention_mod.enforce_storage_policy(exclude=experiment_id, progress=_print_progress)
     spec = ExperimentSpec.model_validate(json.loads(row["spec_json"]))
     controller = ExperimentController(
         spec,
