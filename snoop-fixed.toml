@@ -1,0 +1,56 @@
+# Snoop-fixed arm only: same 30-task luna-signal matrix as snoop-smoke-b120e547,
+# pi + snoop with the Phase A-E retrieval fixes. No control arm; the historic
+# cancelled run (legacy DB) supplies the control baseline for comparison.
+#
+# Binary must be the Debian 12-compatible build (rust:bookworm); rebuilt after
+# the relevance work. Extension source is live from the snoop repo.
+
+schema_version = 2
+name = "snoop-fixed"
+pi_version = "latest"
+thinking = "high"
+
+[model]
+id = "gpt-5.6-luna"
+provider = "gateway-responses"
+
+[tasks]
+path = "/home/joshsimon/Projects/RoastMyHarness/tasks/deepswe/tasks"
+preset = "luna-signal"
+include = [
+  "arcane-drift-detection-baselines",
+  "bandit-incremental-cache-control",
+  "boa-hierarchical-evaluation-cancellation",
+  "cattrs-partial-structuring-recovery",
+  "clack-async-autocomplete-options",
+  "claude-code-by-agents-recursive-delegation",
+  "etree-xml-diff-patch",
+  "fastapi-implicit-head-options",
+  "httpx-deterministic-cookie-store",
+  "ipython-session-bundle-replay",
+  "kcp-go-multiplexed-kcp-streams",
+  "kgateway-consistent-hash-policy",
+  "kombu-single-active-consumer-priority",
+  "kombu-virtual-queue-dead-lettering",
+]
+exclude = []
+
+[concurrency]
+per_variant = 2
+
+[control]
+enabled = false
+
+[[variants]]
+id = "snoop"
+name = "pi + snoop"
+
+[[variants.extensions]]
+kind = "local"
+path = "/home/joshsimon/Projects/snoop/extensions"
+entry = "snoop-pi.ts"
+name = "snoop"
+
+[[variants.setup]]
+handler = "snoop_index"
+binary = "/home/joshsimon/Projects/snoop/target/release/snoop"

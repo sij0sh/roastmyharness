@@ -210,6 +210,103 @@ python3 .agents/artifacts/token_stats_analysis.py
 
 ---
 
+## Snoop fixed retrieval (Phases A-E) vs historic arms
+
+### Headlines
+
+- ipython is the cleanest retrieval win: the old packet completely lacked the history files the task needs; both fixed packets have them all. Beats control too.
+- fastapi win is retrieval-plausible in rep 2 (translations gone, key files present); rep 1 won without calling snoop once, so that's agent variance.
+- boa and bandit exonerate the retrieval changes: boa fails the same single test 16/17 in both fixed runs with no uniformly-lost evidence; bandit's three snoop runs all land 88-89/89 with old and rep-2 failing the identical file-size edge test. Both sit at capability edge - single-test flips, not packet regressions.
+
+### Identity and scope
+
+| field | value |
+|---|---|
+| New runs | `snoop-fixed-fac02adf` (rep 1, COMPLETE), `snoop-fixed-d231ee72` (rep 2, matrix complete) |
+| Historic baseline | `snoop-smoke-b120e547` (CANCELLED, 31 trials: control + old-snoop arms) |
+| Spec | `snoop-fixed.toml`: snoop arm only, `control.enabled = false` |
+| Snoop code | Phases A-E (per-commit cap, locale collapse, lane + history fill gating); Debian-12 binary rebuilt post-change |
+| Model / thinking | `gpt-5.6-luna` / high, all arms |
+| Tasks | 14 paired tasks where both historic arms resolved (plus 4 probe artifacts in rep 2, excluded) |
+| Date | 2026-09-09 |
+
+### Results
+
+| Task | control | old-snoop | fixed r1 | fixed r2 |
+|---|---|---|---|---|
+| arcane-drift-detection-baselines | P | P | P | P |
+| bandit-incremental-cache-control | P | F | P | F |
+| boa-hierarchical-evaluation-cancellation | F | P | F | F |
+| cattrs-partial-structuring-recovery | P | P | F | P |
+| clack-async-autocomplete-options | F | F | F | F |
+| claude-code-by-agents-recursive-delegation | P | F | P | P |
+| etree-xml-diff-patch | F | F | P | F |
+| fastapi-implicit-head-options | P | F | P | P |
+| httpx-deterministic-cookie-store | P | P | P | P |
+| ipython-session-bundle-replay | F | F | P | P |
+| kcp-go-multiplexed-kcp-streams | P | F | P | F |
+| kgateway-consistent-hash-policy | F | F | F | F |
+| kombu-single-active-consumer-priority | P | P | P | F |
+| kombu-virtual-queue-dead-lettering | F | F | F | F |
+| **Totals** | **8** | **5** | **9** | **6** |
+
+### Paired flips (fixed runs vs old-snoop)
+
+- Rescued in both replicates: fastapi, claude-code, ipython.
+- Lost in both replicates: boa.
+- Split between replicates (variance, no call): bandit, kcp, cattrs, etree, kombu-single.
+- Stable: arcane, httpx (pass); clack, kgateway, kombu-dead (fail).
+
+### Discordant-pair deep dive
+
+Packet comparison across old-snoop, fixed-r1, fixed-r2 (queries, item kinds,
+commit shas, code locators) plus verifier reports:
+
+- **ipython, retrieval-attributable win.** Old packet lacks `history.py`,
+  `historyapp.py`, `magics/history.py`, `test_history.py` - the exact files
+  the task needs. Both fixed packets contain all of them. Old had
+  `aaa5a456x3`, fixed runs cap at x2. Control failed too, so fixed snoop
+  beats control here.
+- **fastapi, retrieval-plausible win (rep 2).** Old q1 packet: 8 translated
+  `first-steps.md` siblings plus a x3 commit. Rep-2 q1: English-only docs,
+  no x3, `routing.py`/`models.py`/security files present. Rep-1 won with
+  zero `context` calls, so that replicate is agent path variance, not snoop.
+- **claude-code, weak-positive.** No x3 recurrence in fixed runs
+  (old had `6a9c59a5x3`), but agent queries diverged across all three
+  trials, so the win cannot be isolated to retrieval.
+- **boa, no retrieval attribution.** No commit is uniformly lost across the
+  fixed packets (empty set diff); code composition is similar. Both fixed
+  runs produce ~29KB patches failing the SAME single test 16/17
+  (`cancelled_session_jobs_are_skipped_but_unrelated_jobs_still_run`).
+  Task at capability edge; historic pass likely luck.
+- **bandit, edge-test noise.** All three snoop runs reach 88-89/89; old and
+  rep-2 fail the IDENTICAL single test
+  (`test_cache_stats_shows_cache_file_size_bytes`, file-size-in-bytes);
+  rep-1 passes fully. Not a retrieval story.
+
+### Interpretation
+
+Fixed retrieval converts three historic snoop fails to stable passes with
+packet-level mechanisms (missing key files surfacing, translation flood and
+x3 duplicates gone), holds code/docs recall at zero locator losses (A5
+replay), and shows no packet-attributable loss on boa/bandit - both sit at
+capability edge with single-test flips. Remaining variance (split
+replicates) dominates small-n reading; don't rank on totals.
+
+### Incidents affecting the numbers
+
+- The 30-task `snoop-fixed` launch was SIGTERMed on its wrapper instead of
+  the runner; the runner survived and lazily enumerated the by-then-narrowed
+  14-task spec, completing as `fac02adf` (rep 1). Rep 2 (`d231ee72`) ran the
+  same 14 plus 4 probe artifacts (arktype/optique errors, mobly/onedump
+  probe fails from probe retries), excluded above.
+- Both fixed runs executed concurrently with each other and with unrelated
+  swe experiments; CPU contention may inflate split-replicate noise.
+- Stale `fac02adf`-era runner lingered post-COMPLETE and was reaped; no
+  trials affected.
+
+---
+
 ## Claude Code bare vs Pi bare
 
 First harness-only comparison: both arms ran the SAME model at the
