@@ -200,6 +200,27 @@ class RobmyClaude(ClaudeCode):
         urls.extend(self._manifest.get("egress_urls") or [])
         return allowlist_from_urls(urls, default_domains=setup_handlers.install_domains())
 
+    async def run(self, instruction: str, environment: BaseEnvironment, context) -> None:
+        await super().run(instruction, environment, context)
+        await self._open_relocated_home(environment)
+
+    async def _open_relocated_home(self, environment: BaseEnvironment) -> None:
+        """Make the session home readable before pier relocates it.
+
+        Claude Code writes .claude.json and session transcripts 0600/0700
+        as the container user; the host-side relocate preserves that, and
+        the ATIF conversion (host-side) then fails with PermissionError,
+        dropping all token/cost metrics. Run while the container is still
+        up; a failure here costs metrics only, never the trial.
+        """
+        try:
+            await self.exec_as_root(
+                environment,
+                command=("chmod -R a+rX /logs/agent/sessions 2>/dev/null || true"),
+            )
+        except Exception as exc:
+            self.logger.warning(f"could not relax session-home perms: {exc}")
+
     async def setup(self, environment: BaseEnvironment) -> None:
         await super().setup(environment)
         await self._upload_home(environment)

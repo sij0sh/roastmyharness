@@ -239,3 +239,29 @@ def test_claude_find_session_dir(tmp_path: Path):
     (project / "session.jsonl").write_text("{}\n")
     assert agent._find_session_dir(config) == project
     assert agent._find_session_dir(tmp_path / "logs" / "empty") is None
+
+
+def test_claude_opens_relocated_home(tmp_path: Path):
+    agent = _agent(tmp_path)
+    calls: list[str] = []
+
+    async def fake_exec(environment, command):
+        calls.append(command)
+
+    agent.exec_as_root = fake_exec
+    import asyncio
+
+    asyncio.run(agent._open_relocated_home(object()))
+    assert calls == ["chmod -R a+rX /logs/agent/sessions 2>/dev/null || true"]
+
+
+def test_claude_open_relocated_home_failure_is_soft(tmp_path: Path):
+    agent = _agent(tmp_path)
+
+    async def boom(environment, command):
+        raise RuntimeError("container gone")
+
+    agent.exec_as_root = boom
+    import asyncio
+
+    asyncio.run(agent._open_relocated_home(object()))
