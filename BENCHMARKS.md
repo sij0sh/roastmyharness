@@ -343,6 +343,162 @@ Requires `GATEWAY_API_KEY` exported, docker running, and the
 
 ---
 
+## Pi bare vs OMP bare (partial, cancelled)
+
+The first cross-agent comparison in this log, and the run that drove
+omp support (`1d285a6`). Both arms ran the SAME model at the SAME
+thinking level, so arm differences isolate the harness plumbing. The
+run was cancelled partway, so the omp column is partial - disclosed
+here rather than dropped.
+
+### Identity
+
+| field | value |
+|---|---|
+| Run id | `omp-9task-53a89fc3` (9-task) + `omp-live-smoke-16a9f2f7` (smoke) |
+| Date | 2026-08-28 |
+| Harness | roastmyharness 0.1.0, pier 0.3.x, schema v1 (pre-catalog, pre-bundled corpus) |
+| Model (both arms) | `gpt-5.6-luna` (same hosted gateway as every other section) |
+| Thinking (both arms) | `high` |
+| Pi arm | pi 0.84.3 |
+| OMP arm | oh-my-pi (omp) 18.0.9, first omp support (`1d285a6`) |
+| Task corpus | DeepSWE via external DSE-tests checkout (pre-bundling), 9 hand-picked tasks |
+| Status | CANCELLED at 20:27 UTC; control finished 7/9, omp 4/9 |
+| Run dir | `~/.roastmyharness/runs/omp-9task-53a89fc3` |
+
+### Design
+
+Nine DeepSWE tasks across TypeScript (awilix, clack, happy-dom), Go
+(etree), Python (httpx, ipython), and rendering/parsers (katex),
+`per_variant = 2`, bare control enabled, no repetitions. This predates
+presets and the catalog: tasks were listed explicitly in the spec.
+
+Fairness contracts (bare means bare):
+
+| arm | contract |
+|---|---|
+| pi control | `-nc --no-skills --no-prompt-templates --no-themes`, no extensions, no skills |
+| omp | `--no-skills` plus staged `config.yml` disabling implicit provider-config auto-load; Bun pinned because task images shadow it |
+
+Both arms ran the identical instruction, container image, egress
+allowlist, and git identity.
+
+### Results (4 matched tasks; 3 control-only, 2 never started)
+
+| task | pi | omp | pi f2p | omp f2p | verdict |
+|---|---|---|---|---|---|
+| awilix-async-container-initialization | F | F | 23/24 | 22/24 | omp misses one more test than pi |
+| clack-async-autocomplete-options | F | F | 79/82 | 72/82 | omp misses 10 vs pi's 3 |
+| etree-xml-diff-patch | P | F | 52/52 | 51/52 | broken flip: omp one test short |
+| happy-dom-abort-pending-body-reads | P | P | 14/14 | 14/14 | both pass |
+
+Control-only (omp cancelled before starting): httpx (pi F, 114/115),
+ipython (pi P), katex (pi F, 92/94). Never started on either arm:
+optique, numba.
+
+| metric (4 matched tasks) | pi control | omp |
+|---|---|---|
+| Resolved | 2/4 | 1/4 |
+| Cached input tokens | 11.9M | 39.5M (3.3x) |
+| Output tokens | 114.4k | 141.2k (1.2x) |
+| Agent steps | 222 | 421 (1.9x) |
+| Wall time (sum) | 58m | 101m (1.7x) |
+| Errors / timeouts / empty patches | 0 | 0 |
+
+Per-task cached-input ratio omp/pi: 2.75x, 6.58x, 3.79x, 2.85x -
+omp's context amplification is consistent, not one outlier.
+
+Paired flips (omp vs pi): 1 broken (etree), 0 rescued, 1 both-pass,
+2 both-fail.
+
+### The broken flip: etree one test short
+
+omp scored 51/52 on etree-xml-diff-patch and lost the task on a single
+fail-to-pass test:
+
+```
+[f2p] github.com/beevik/etree.TestMerge3WayStructuralConflict
+```
+
+pi passed all 52. Same shape as pi's near miss in the Claude smoke:
+an all-or-nothing verifier turns one semantic edge case (three-way
+merge conflict resolution here) into reward 0.0 despite a ~98% correct
+implementation.
+
+### Both-fail anatomy
+
+- awilix: pi missed exactly one test ("allows scope.initialize()
+  without calling parent.initialize"); omp missed that same test plus
+  "initialization failure triggers rollback leaves container in failed
+  state". Strictly worse by one test, same semantic neighborhood.
+- clack: pi missed 3, omp missed 10 - a cluster of AbortController,
+  retry, and loading-state semantics ("AbortError from fetch is
+  silently swallowed", "loading remains true between retries", ...).
+  omp reached 102 steps vs pi's 32 and still left more of the
+  cluster red: its extra activity did not convert into coverage.
+
+### The smoke that preceded it
+
+`omp-live-smoke-16a9f2f7` (same day, one task:
+ofetch-per-origin-circuit-breaker): both arms PASS 60/60 (47 f2p + 13
+p2p). pi 9.5m wall, 1.9M cached input, 42 steps; omp 19.7m wall, 5.2M
+cached input (2.7x), 63 steps. Identical verdicts, so the smoke only
+validated plumbing - and foreshadowed the token/steps gap the 9-task
+run then measured.
+
+### Behavioral notes
+
+- omp's stable signature: ~3x pi's cached input, ~1.9x the steps,
+  ~1.2x the output, ~1.7-2.1x the wall time, on every matched task.
+  Its session/prompt wiring re-reads far more context per turn; the
+  extra turns are mostly verification and re-checking.
+- pi's failures were never mechanical: no timeouts, no empty patches,
+  no infra errors on either arm. Every miss was a semantic test gap.
+- All four arms' failures sit in async-lifecycle semantics (abort,
+  retry, rollback, cleanup) - the shared model likely drives the
+  shared blind spots; the harness shapes only how far it gets.
+
+### Telemetry provenance
+
+The run was cancelled before finalize, so no summary/report was
+generated at run time. All numbers here were reconciled 2026-09-09
+from the raw trial artifacts (result.json, verifier/ctrf.json,
+verifier/reward.json) with `.agents/artifacts/omp_deep_dive.py`; wall
+times come from result.json started_at/finished_at. Nothing was
+re-run; pass/fail verdicts were never in question. Gaps at this
+harness vintage, disclosed: reasoning-token split and tool-call counts
+were not captured by the adapter payload, and `peak_context_tokens`
+is unusable (same telemetry issue as the token-baseline section).
+
+### Interpretation
+
+- n=4 matched: no ranking signal, and the cancelled tail means the
+  omp arm never saw 5 of 9 tasks. Treat this as a plumbing-validating
+  first cross-agent run with one usable paired flip.
+- The robust finding is cost shape, not outcomes: omp trades ~3x
+  context and ~2x wall time for activity that did not convert into
+  extra passes here - and its one extra missed test (etree) decided
+  the only flip.
+- The near-miss band (one red test on an all-or-nothing verifier) has
+  now appeared in both cross-agent smokes; it is the recurring shape
+  of harness differences at this scale.
+- If resumed today: rebuild the spec on schema v2 against the bundled
+  corpus with `preset = "luna-signal"` and `repetitions >= 1`; the
+  stored run's identity hashes are not comparable to current runs.
+
+### Reproduce
+
+```bash
+python3 .agents/artifacts/omp_deep_dive.py   # per-trial metrics + flips
+roastmyharness status omp-9task-53a89fc3     # matrix (from the merged DB)
+```
+
+Run data lives under `~/.roastmyharness/runs/`; the DB row was
+migrated with run_dir rewritten, so status/report work from the new
+home.
+
+---
+
 ## Adding a new experiment section
 
 Append above the oldest section. Minimum fields: run id, date, spec
