@@ -16,8 +16,8 @@
 #     --config <path-to-sol-pi.json>
 #   Enable the other two mechanisms only after reviewing their implications.
 #
-# Smoke test on one task: set include to a single task id, e.g.
-# include = ["boa-hierarchical-evaluation-cancellation"].
+# Smoke scale: 3 tasks x 1 repetition each (6 trials total with control).
+# For the full 30-task signal screen, set include = ["*"].
 #
 #   roastmyharness validate sol-pi.toml
 #   roastmyharness run sol-pi.toml
@@ -32,10 +32,18 @@ hypothesis = "pi + SoL-Pi (actionFusion, observationPack) resolves more DeepSWE 
 id = "gpt-5.6-luna"
 provider = "azure-gateway-responses"
 
+[execution]
+repetitions = 1
+max_retries = 1
+
 [tasks]
 path = "/home/joshsimon/Projects/RoastMyHarness/tasks/deepswe/tasks"
 preset = "luna-signal"
-include = ["*"]
+include = [
+  "boa-hierarchical-evaluation-cancellation",
+  "bandit-incremental-cache-control",
+  "httpx-deterministic-cookie-store",
+]
 exclude = []
 
 [concurrency]
