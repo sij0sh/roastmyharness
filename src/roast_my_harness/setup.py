@@ -16,6 +16,29 @@ from roast_my_harness.runner import preflight
 
 OBSOLETE_SKILL_NAME = "roastmyharness"
 
+PI_PACKAGE_REPO = "github.com/sij0sh/roastmyharness"
+
+
+def _settings_mentions_package(settings_path: Path) -> bool:
+    try:
+        text = settings_path.read_text()
+    except OSError:
+        return False
+    return "roastmyharness" in text
+
+
+def detect_pi_package(*, home: Path) -> str | None:
+    """Return a human-readable Pi-package location when Pi manages the extension."""
+    clone = home / ".pi/agent/git" / PI_PACKAGE_REPO
+    if (clone / "integrations/pi/roastmyharness.ts").is_file():
+        return str(clone)
+    settings = home / ".pi/agent/settings.json"
+    if _settings_mentions_package(settings):
+        return str(settings)
+    return None
+
+
+
 
 @dataclass(frozen=True)
 class ActionResult:
@@ -68,6 +91,13 @@ def setup(agent: str = "pi", scope: str = "user", *, root: Path | None = None, h
     home = home or Path.home()
     if root is None:
         return [ActionResult("repo", "repo checkout not found; set ROAST_MY_HARNESS_REPO", problem=True)]
+    managed = detect_pi_package(home=home) if scope == "user" else None
+    if managed is not None:
+        return [
+            ActionResult("pi-package", f"managed by Pi at {managed}"),
+            ActionResult("engine", "uv owns the engine; run uv tool upgrade"),
+            _tool_visible(),
+        ]
     base = home / ".pi/agent" if scope == "user" else root / ".pi"
     results = install_pi_extension(
         source_file=root / "integrations/pi/roastmyharness.ts",

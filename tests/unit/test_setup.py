@@ -55,3 +55,21 @@ def test_doctor_reports_health(tmp_path: Path) -> None:
     names = {r.name for r in results}
     assert {"python", "pier", "docker", "auth", "model"} <= names
     assert "mcp" not in names
+
+
+def test_setup_defers_to_pi_package_clone(tmp_path: Path) -> None:
+    root, home = _make_repo(tmp_path / "repo"), tmp_path / "home"
+    clone = home / ".pi/agent/git/github.com/sij0sh/roastmyharness/integrations/pi"
+    clone.mkdir(parents=True, exist_ok=True)
+    (clone / "roastmyharness.ts").write_text("export default {};\n")
+    results = setup_mod.setup("pi", "user", root=root, home=home)
+    assert any(r.name == "pi-package" for r in results)
+    assert not (home / ".pi/agent/extensions/roastmyharness.ts").exists()
+
+
+def test_detect_pi_package_reads_settings(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    settings = home / ".pi/agent/settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text('{"packages": ["git:github.com/sij0sh/roastmyharness@v0.1.0"]}')
+    assert setup_mod.detect_pi_package(home=home) is not None
