@@ -120,8 +120,13 @@ def split_custom(metrics: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any
     return flat, custom
 
 
-def _parse_ts(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+def _parse_ts(value: Any) -> datetime | None:
+    try:
+        if not isinstance(value, str):
+            return None
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
 
 
 def is_trial_dir(path: Path) -> bool:
@@ -188,7 +193,10 @@ def _row_base(result_path: Path, variant: str) -> dict[str, Any] | None:
         started, finished = result.get("started_at"), result.get("finished_at")
     wall_sec: Any = ""
     if started and finished:
-        wall_sec = round((_parse_ts(finished) - _parse_ts(started)).total_seconds(), 1)
+        _start = _parse_ts(started)
+        _end = _parse_ts(finished)
+        if _start is not None and _end is not None:
+            wall_sec = round((_end - _start).total_seconds(), 1)
     steps: Any = ""
     trajectory = trial_dir / "agent" / "trajectory.json"
     if trajectory.is_file():
