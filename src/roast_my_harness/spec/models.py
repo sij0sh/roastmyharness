@@ -31,7 +31,6 @@ ALLOWED_PI_FLAGS = {
 }
 
 
-
 _FAIRNESS_FLAG_NAMES = frozenset(FAIRNESS_FLAGS.split())
 _CONSTRUCTION_PI_FLAGS = {
     "--no-context-files",
@@ -44,6 +43,7 @@ _CONSTRUCTION_PI_FLAGS = {
     "--no-extensions",
 }
 RESERVED_PI_FLAGS = _FAIRNESS_FLAG_NAMES | _CONSTRUCTION_PI_FLAGS
+
 
 def _safe_relative_component(value: str, field: str) -> str:
     """One slug-safe destination component: no separators, no dot specials."""
@@ -61,9 +61,7 @@ def _safe_rel_path(value: str, field: str) -> str:
         raise ValueError(f"{field} must be relative, got {value!r}")
     parts = value.replace("\\", "/").split("/")
     if any(part in ("", ".", "..") for part in parts):
-        raise ValueError(
-            f"{field} must not contain '..', '.', or empty components: {value!r}"
-        )
+        raise ValueError(f"{field} must not contain '..', '.', or empty components: {value!r}")
     return value
 
 
@@ -145,12 +143,9 @@ class LocalExtension(BaseModel):
         for name in value:
             segments = name.split("/")
             if len(segments) > 2 or not all(
-                re.fullmatch(r"@?[A-Za-z0-9][A-Za-z0-9._-]*", segment)
-                for segment in segments
+                re.fullmatch(r"@?[A-Za-z0-9][A-Za-z0-9._-]*", segment) for segment in segments
             ):
-                raise ValueError(
-                    f"runtime_package {name!r} must be a plain npm package name"
-                )
+                raise ValueError(f"runtime_package {name!r} must be a plain npm package name")
         return value
 
 
@@ -176,8 +171,7 @@ class NpmExtension(BaseModel):
             and re.fullmatch(r"\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.-]+)*", version)
         ):
             raise ValueError(
-                f"npm package must pin an exact version, got {value!r} "
-                "(expected name@x.y.z)"
+                f"npm package must pin an exact version, got {value!r} (expected name@x.y.z)"
             )
         return value
 
@@ -234,9 +228,7 @@ class NpmPiInstall(BaseModel):
             and re.fullmatch(r"@?[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)?", name)
             and re.fullmatch(r"\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.-]+)*", version)
         ):
-            raise ValueError(
-                f"npm_pi_install requires an exact package pin, got {value!r}"
-            )
+            raise ValueError(f"npm_pi_install requires an exact package pin, got {value!r}")
         return value
 
 
@@ -281,6 +273,7 @@ class VariantSpec(BaseModel):
     id: str
     name: str | None = None
     agent: str | None = None
+    model: ModelSpec | None = None
     extensions: list[ExtensionSpec] = Field(default_factory=list)
     skills: list[SkillSpec] = Field(default_factory=list)
     context_files: list[ContextFileSpec] = Field(default_factory=list)
@@ -296,8 +289,7 @@ class VariantSpec(BaseModel):
     def _safe_id(cls, value: str) -> str:
         if not _ID_RE.fullmatch(value):
             raise ValueError(
-                f"variant id {value!r} must be lowercase alphanumeric/hyphen, "
-                "starting alphanumeric"
+                f"variant id {value!r} must be lowercase alphanumeric/hyphen, starting alphanumeric"
             )
         return value
 
@@ -339,9 +331,7 @@ class VariantSpec(BaseModel):
         for url in value:
             parsed = urlparse(url)
             if parsed.scheme != "https" or not parsed.netloc:
-                raise ValueError(
-                    f"egress_urls must be absolute https:// URLs, got {url!r}"
-                )
+                raise ValueError(f"egress_urls must be absolute https:// URLs, got {url!r}")
         return value
 
     @field_validator("pi_flags")
@@ -350,8 +340,7 @@ class VariantSpec(BaseModel):
         for flag in value:
             if any(ch.isspace() for ch in flag):
                 raise ValueError(
-                    f"pi_flags entries must be single tokens, got {flag!r}; "
-                    "use --flag=value form"
+                    f"pi_flags entries must be single tokens, got {flag!r}; use --flag=value form"
                 )
             name = flag.split("=", 1)[0]
             if name in RESERVED_PI_FLAGS:
@@ -404,9 +393,7 @@ class EvalSpec(BaseModel):
     @field_validator("id")
     @classmethod
     def _safe_id(cls, value: str | None) -> str | None:
-        return (
-            _safe_relative_component(value, "evaluation id") if value else value
-        )
+        return _safe_relative_component(value, "evaluation id") if value else value
 
     @model_validator(mode="after")
     def _require_known_selection(self) -> EvalSpec:
@@ -417,9 +404,7 @@ class EvalSpec(BaseModel):
                 f"(available: {', '.join(sorted(BUNDLED_EVAL_IDS)) or 'none'})"
             )
         if self.type != "bundled" and not self.id:
-            raise ValueError(
-                f"evaluation.id is required for type {self.type!r}"
-            )
+            raise ValueError(f"evaluation.id is required for type {self.type!r}")
         return self
 
 
@@ -563,39 +548,31 @@ class ExperimentSpec(BaseModel):
                 "schema_version = 2. v2 freezes agent versions at prepare "
                 "time (run identity covers resolved versions, so a moved "
                 "'latest' starts a new run) and defaults repetitions to 1; "
-                "a stored control reuse = \"ask\" must become an explicit "
-                "mode = \"fresh\" or \"historic\" choice"
+                'a stored control reuse = "ask" must become an explicit '
+                'mode = "fresh" or "historic" choice'
             )
         if value != SCHEMA_VERSION:
-            raise ValueError(
-                f"unsupported schema_version {value}, expected {SCHEMA_VERSION}"
-            )
+            raise ValueError(f"unsupported schema_version {value}, expected {SCHEMA_VERSION}")
         return value
 
     @model_validator(mode="after")
     def _require_arms_and_unique_ids(self) -> ExperimentSpec:
         has_control = self.control is not None and self.control.enabled
         if not self.variants and not has_control:
-            raise ValueError("experiment needs at least one variant or an "
-                             "enabled control arm")
+            raise ValueError("experiment needs at least one variant or an enabled control arm")
         ids = [v.id for v in self.variants]
         if len(ids) != len(set(ids)):
             raise ValueError(f"duplicate variant ids: {sorted(ids)}")
         reserved = sorted(set(ids) & RESERVED_VARIANT_IDS)
         if reserved:
-            raise ValueError(
-                f"variant ids reserved for the control arm: {reserved}"
-            )
+            raise ValueError(f"variant ids reserved for the control arm: {reserved}")
         return self
 
     @field_validator("variants")
     @classmethod
     def _cap_variants(cls, value: list[VariantSpec]) -> list[VariantSpec]:
         if len(value) > MAX_VARIANTS:
-            raise ValueError(
-                f"experiment allows at most {MAX_VARIANTS} variants, "
-                f"got {len(value)}"
-            )
+            raise ValueError(f"experiment allows at most {MAX_VARIANTS} variants, got {len(value)}")
         return value
 
     def resolved_agents(self) -> dict[str, str]:
@@ -653,6 +630,11 @@ class ExperimentSpec(BaseModel):
             for v in self.variants
         )
         return arms
+
+    def model_for(self, variant: VariantSpec) -> ModelSpec:
+        """The arm's effective model: the variant override when set, else
+        the global [model]."""
+        return variant.model or self.model
 
     @model_validator(mode="after")
     def _validate_agent_arms(self) -> ExperimentSpec:
@@ -716,6 +698,4 @@ class ExperimentSpec(BaseModel):
         Each (arm, replicate) launches its own pier process, so
         repetitions multiply the launching units.
         """
-        return self.concurrency.peak_parallel(
-            len(self.arms()) * max(self.execution.repetitions, 1)
-        )
+        return self.concurrency.peak_parallel(len(self.arms()) * max(self.execution.repetitions, 1))

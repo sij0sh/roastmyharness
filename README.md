@@ -32,11 +32,36 @@ adapter).
 ## Uninstall
 
     uv tool uninstall roastmyharness
-    rm -rf ~/.local/share/roastmyharness   # database + run outputs
-    rm -rf ~/.cache/roastmyharness         # cached Pi homes
-    
-Run outputs live under the data dir unless `ROAST_MY_HARNESS_RUNS_DIR`
-is set. Set `ROAST_MY_HARNESS_DEBUG=1` to re-raise an unexpected CLI
+    rm -rf ~/.roastmyharness   # database + runs + plans + cache
+
+All run data lives under `~/.roastmyharness` (`%USERPROFILE%\.roastmyharness`
+on Windows) unless overridden. Layout: `runs/` (one dir per experiment),
+`roastmyharness.db`, `plans/`, `cache/homes/`, `config.toml`.
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `ROAST_MY_HARNESS_DATA_DIR` | Home for database, runs, plans, cache | `~/.roastmyharness` |
+| `ROAST_MY_HARNESS_RUNS_DIR` | Run outputs only | `<data-dir>/runs` |
+| `ROAST_MY_HARNESS_CACHE_DIR` | Cached agent homes only | `<data-dir>/cache` |
+| `ROAST_MY_HARNESS_RETENTION` | Size-cap pruning toggle (`true`/`false`) | `true` |
+| `ROAST_MY_HARNESS_RETENTION_MAX_SIZE` | Cap like `500MB`, `2GB` | `5GB` |
+
+`~/.roastmyharness/config.toml` holds the same policy without env vars:
+
+```toml
+[retention]
+enabled = true
+max_size = "500MB"
+```
+
+On every `run`/`resume` the tool totals `runs/`, deletes the oldest
+experiment dirs first until under the cap, and drops their database rows
+(the active run is never deleted). Historic control observations survive
+pruning. Set `enabled = false` to keep everything forever.
+Pre-0.2 installs used `~/.local/share/roastmyharness` +
+`~/.cache/roastmyharness`; move those trees into `~/.roastmyharness/runs/`
+and `~/.roastmyharness/cache/homes/` to migrate.
+Set `ROAST_MY_HARNESS_DEBUG=1` to re-raise an unexpected CLI
 exception with its traceback. The tool stores no credentials of its own; it reuses
 `~/.pi/agent/auth.json`, which belongs to Pi and is not removed here.
 

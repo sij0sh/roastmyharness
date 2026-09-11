@@ -29,7 +29,14 @@ def scan_variant(
         return pending, results
     for path in sorted(variant_dir.rglob("*")):
         if path.is_dir():
-            if not (path / "result.json").exists():
+            try:
+                has_result = (path / "result.json").exists()
+            except OSError:
+                # Relocated agent homes can contain untraversable dirs
+                # (e.g. claude session state owned by the container uid).
+                # Uninspectable means unclassifiable: skip, never re-run.
+                continue
+            if not has_result:
                 pending.add((path.name, replicate_of(variant_dir, path)))
         elif parse_results and path.name == "result.json" and is_trial_dir(path.parent):
             try:

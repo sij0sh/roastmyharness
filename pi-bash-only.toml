@@ -1,0 +1,33 @@
+schema_version = 2
+name = "pi-bash-only"
+pi_version = "latest"
+thinking = "high"
+hypothesis = "Base Pi restricted to Bash only will underperform the fresh full-tool control because file, edit, and search affordances are removed."
+
+[model]
+provider = "azure-gateway-responses"
+id = "gpt-5.6-luna"
+
+[tasks]
+path = "/home/joshsimon/Projects/RoastMyHarness/tasks/swe-interact"
+include = ["deepswe_fastapi-implicit-head-options", "deepswe_kcp-go-multiplexed-kcp-streams", "deepswe_wazero-multi-module-snapshots"]
+exclude = []
+
+[evaluation]
+type = "external"
+id = "swe-interact"
+
+[concurrency]
+per_variant = 2
+
+[control]
+enabled = true
+mode = "fresh"
+
+[execution]
+repetitions = 1
+
+[[variants]]
+id = "bash-only"
+name = "Base Pi bash only"
+pi_flags = ["--no-builtin-tools", "--tools=bash"]

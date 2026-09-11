@@ -36,6 +36,7 @@ def spec_text(tmp_path: Path, extra: str = "") -> Path:
 
 # ------------------------------------------------------------- bounds ----
 
+
 def test_per_variant_below_one_rejected(tmp_path: Path):
     path = spec_text(tmp_path, "[concurrency]\nper_variant = 0")
     with pytest.raises(SpecError, match="greater than or equal to 1"):
@@ -46,7 +47,7 @@ def test_http_egress_url_rejected(tmp_path: Path):
     path = spec_text(tmp_path, "")
     text = path.read_text().replace(
         "[[variants]]",
-        "[[variants]]\negress_urls = [\"http://evil.example\"]",
+        '[[variants]]\negress_urls = ["http://evil.example"]',
         1,
     )
     path.write_text(text)
@@ -64,6 +65,7 @@ def test_too_many_variants_rejected(tmp_path: Path):
 
 
 # -------------------------------------------------------- max_parallel ----
+
 
 def test_max_parallel_divides_concurrency_across_arms():
     c = ConcurrencySpec(per_variant=4, max_parallel=6)
@@ -89,6 +91,7 @@ def test_peak_concurrency_in_preview(tmp_path: Path):
 
 
 # -------------------------------------------------------- smoke probe ----
+
 
 def test_should_probe_large_experiment(tmp_path):
     class Tasks:
@@ -132,18 +135,25 @@ def test_probe_selects_extension_arm():
 
 def test_probe_result_ok():
     r = probe_mod.ProbeResult(
-        state="passed", variant_id="a", task_id="t0",
-        returncode=0, log_path=Path("/dev/null"),
+        state="passed",
+        variant_id="a",
+        task_id="t0",
+        returncode=0,
+        log_path=Path("/dev/null"),
     )
     assert r.ok
     r2 = probe_mod.ProbeResult(
-        state="failed", variant_id="a", task_id="t0",
-        returncode=2, log_path=Path("/dev/null"),
+        state="failed",
+        variant_id="a",
+        task_id="t0",
+        returncode=2,
+        log_path=Path("/dev/null"),
     )
     assert not r2.ok
 
 
 # -------------------------------------------- unsafe-source consistency --
+
 
 def test_no_allow_unsafe_source_flag_anywhere():
     """validate and run share one policy: world-writable sources always fail."""
@@ -162,6 +172,7 @@ def test_no_allow_unsafe_source_flag_anywhere():
 
 # ------------------------------------------------- OAuth expiry preflight --
 
+
 def test_preflight_fails_on_expired_oauth(monkeypatch, tmp_path):
     """Expired codex credentials must fail preflight with the login remedy."""
     from roast_my_harness.runner import preflight
@@ -176,6 +187,9 @@ def test_preflight_fails_on_expired_oauth(monkeypatch, tmp_path):
     class Spec:
         model = ModelSpec(provider="openai-codex", id="gpt-5")
 
+        def arms(self):
+            return []
+
     results = preflight._auth(Spec())
     assert len(results) == 1
     assert results[0].status == "fail"
@@ -188,8 +202,8 @@ def test_preflight_ok_on_valid_oauth(monkeypatch, tmp_path):
 
     from roast_my_harness.runner import preflight
     from roast_my_harness.spec.models import ModelSpec
-    fresh = {"access": "x", "type": "oauth",
-             "expires": (time.time() + 3600) * 1000}
+
+    fresh = {"access": "x", "type": "oauth", "expires": (time.time() + 3600) * 1000}
     monkeypatch.setattr(
         "roast_my_harness.auth.service.codex_credential",
         lambda: fresh,
@@ -197,6 +211,9 @@ def test_preflight_ok_on_valid_oauth(monkeypatch, tmp_path):
 
     class Spec:
         model = ModelSpec(provider="openai-codex", id="gpt-5")
+
+        def arms(self):
+            return []
 
     results = preflight._auth(Spec())
     assert len(results) == 1

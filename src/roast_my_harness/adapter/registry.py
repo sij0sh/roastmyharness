@@ -69,6 +69,19 @@ AGENTS: dict[str, AgentDef] = {
         credential_format="bare-env",
         supports_pi_features=True,
     ),
+    "claude": AgentDef(
+        id="claude",
+        family="claude-code",
+        import_path="roast_my_harness.adapter.claude_agent:RobmyClaude",
+        npm_package="@anthropic-ai/claude-code",
+        binary="claude",
+        home_env="CLAUDE_CONFIG_DIR",
+        version_field="agent_version",
+        fairness_flags="--strict-mcp-config",
+        default_version="2.1.266",
+        supports_pi_features=False,
+        supports_context_files=False,
+    ),
 }
 
 

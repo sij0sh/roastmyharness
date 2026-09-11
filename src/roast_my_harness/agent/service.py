@@ -30,7 +30,8 @@ from roast_my_harness.errors import RoastMyHarnessError, SpecError
 from roast_my_harness.evals.registry import cohort_eval_id, eval_label, resolve_eval
 from roast_my_harness.files import atomic_write_text
 from roast_my_harness.homes.sources import source_file_hash, source_tree_hash
-from roast_my_harness.paths import data_dir, database_path, run_dir
+from roast_my_harness.paths import database_path, run_dir
+from roast_my_harness.paths import plans_dir as default_plans_dir
 from roast_my_harness.report.collect import (
     aggregate_by_variant,
     latest_result_path,
@@ -245,7 +246,7 @@ class AgentService:
         plans_dir: Path | None = None,
         db_path: Path | None = None,
     ) -> None:
-        self.plans_dir = plans_dir or data_dir() / "plans"
+        self.plans_dir = plans_dir or default_plans_dir()
         self.db_path = db_path or database_path()
 
     def prepare(self, spec_path: Path, *, skip_docker: bool = False) -> models.PrepareResult:
@@ -961,6 +962,9 @@ def run_experiment(
         eval=eval_frozen,
     )
     experiment_id = resolved.run_id
+    from roast_my_harness.store import retention as retention_mod
+
+    retention_mod.enforce_storage_policy(exclude=experiment_id, progress=progress)
     repo = Repository(database_path())
     controller = ExperimentController(
         spec,

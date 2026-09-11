@@ -137,15 +137,9 @@ def _eval(spec: ExperimentSpec) -> CheckResult:
         return _fail("eval", str(error))
     if not result.passed:
         first = result.failures[0]
-        extra = (
-            f" (+{len(result.failures) - 1} more)"
-            if len(result.failures) > 1
-            else ""
-        )
+        extra = f" (+{len(result.failures) - 1} more)" if len(result.failures) > 1 else ""
         return _fail("eval", f"self-test {first.fixture}: {first.message}{extra}")
-    return _ok(
-        "eval", f"{descriptor.id} contract self-tests green ({result.evaluated} fixtures)"
-    )
+    return _ok("eval", f"{descriptor.id} contract self-tests green ({result.evaluated} fixtures)")
 
 
 def _sources(spec: ExperimentSpec) -> list[CheckResult]:
@@ -278,50 +272,63 @@ def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
 
 
 def _auth(spec: ExperimentSpec) -> list[CheckResult]:
+    """Credential checks for the global model plus every distinct arm model."""
+    results = _model_auth(spec.model, "auth")
+    default = spec.model.full_id()
+    for arm in spec.arms():
+        model = spec.model_for(arm)
+        if model.full_id() == default and model.models_json is None:
+            continue
+        if any(r.name == f"auth[{arm.id}]" for r in results):
+            continue
+        results.extend(_model_auth(model, f"auth[{arm.id}]"))
+    return results
+
+
+def _model_auth(model, label: str) -> list[CheckResult]:
     results = []
-    model = spec.model
     if model.provider == "openai-codex":
         cred = auth_service.codex_credential()
         if cred is None:
             results.append(
-                _fail("auth", "no openai-codex credential in pi auth file; run pi /login codex")
+                _fail(label, "no openai-codex credential in pi auth file; run pi /login codex")
             )
         elif auth_service.refresh_hint(cred):
             results.append(
                 _fail(
-                    "auth",
+                    label,
                     f"codex OAuth expired{auth_service.credential_expiry(cred)}; "
                     "run pi /login codex to refresh before launching",
                 )
             )
         else:
             expires = auth_service.credential_expiry(cred)
-            results.append(_ok("auth", f"codex OAuth present{expires}"))
+            results.append(_ok(label, f"codex OAuth present{expires}"))
         return results
     if model.provider == "custom":
         if model.models_json is None:
-            results.append(_fail("auth", "custom provider requires models_json"))
+            results.append(_fail(label, "custom provider requires models_json"))
             return results
         if not model.models_json.is_file():
-            results.append(_fail("auth", f"models.json missing: {model.models_json}"))
+            results.append(_fail(label, f"models.json missing: {model.models_json}"))
             return results
         missing = auth_service.missing_env_vars(model.models_json)
         if missing:
-            results.append(_fail("auth", f"unset env vars: {', '.join(missing)}"))
+            results.append(_fail(label, f"unset env vars: {', '.join(missing)}"))
         else:
-            results.append(_ok("auth", "models.json env vars all set"))
+            results.append(_ok(label, "models.json env vars all set"))
         return results
     # Host-configured provider: block must exist, ids must match, no
     # host-only !command keys, env vars must resolve.
     block = auth_service.host_provider_block(model.provider)
     if block is None:
-        results.append(_fail("auth", f"provider '{model.provider}' not in host pi models.json"))
+        results.append(_fail(label, f"provider '{model.provider}' not in host pi models.json"))
         return results
     if model.id not in auth_service.host_model_ids(model.provider):
         available = ", ".join(auth_service.host_model_ids(model.provider)[:8])
         results.append(
             _fail(
-                "auth",
+                label,
                 f"model '{model.id}' not defined for host provider "
                 f"'{model.provider}' (available: {available})",
             )
@@ -330,7 +337,7 @@ def _auth(spec: ExperimentSpec) -> list[CheckResult]:
     if auth_service.has_command_keys(block):
         results.append(
             _fail(
-                "auth",
+                label,
                 f"provider '{model.provider}' uses !command apiKey "
                 "values; host commands cannot run in-container",
             )
@@ -348,12 +355,12 @@ def _auth(spec: ExperimentSpec) -> list[CheckResult]:
     finally:
         block_path.unlink(missing_ok=True)
     if missing:
-        results.append(_fail("auth", f"unset env vars: {', '.join(missing)}"))
+        results.append(_fail(label, f"unset env vars: {', '.join(missing)}"))
     else:
         auth_note = ""
         if auth_service.provider_credential(model.provider) is not None:
             auth_note = ", auth entry present"
-        results.append(_ok("auth", f"host provider '{model.provider}' configured{auth_note}"))
+        results.append(_ok(label, f"host provider '{model.provider}' configured{auth_note}"))
     return results
 
 
