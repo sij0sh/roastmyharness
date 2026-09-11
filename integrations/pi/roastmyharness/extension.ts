@@ -74,13 +74,15 @@ function requestText(
 		"",
 		"Derive the experiment name, variant id, variant file locations, and variant " +
 			"configuration (extensions, skills, settings, env, pi_flags) from the variant request. " +
-			"Verify every local path with read-only tools before writing the TOML.",
+			"Verify every local path with read-only tools before writing the TOML. " +
+			`Continue without stopping: write the TOML, then call ${SUBMIT_TOOL}. ` +
+			"Do not end the turn after writing the TOML.",
 	);
 	return lines.join("\n");
 }
 
 export default function (pi: ExtensionAPI) {
-	let wizardRunning = false;
+	let wizardState: "idle" | "prompting" | "awaiting-submit" = "idle";
 
 	const hideSubmitTool = () => {
 		const active = pi.getActiveTools();
@@ -91,7 +93,10 @@ export default function (pi: ExtensionAPI) {
 		if (!active.includes(SUBMIT_TOOL)) pi.setActiveTools([...active, SUBMIT_TOOL]);
 	};
 
-	pi.on("session_start", () => hideSubmitTool());
+	pi.on("session_start", () => {
+		wizardState = "idle";
+		hideSubmitTool();
+	});
 
 	pi.registerTool({
 		name: SUBMIT_TOOL,
@@ -99,7 +104,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Validate a wizard-authored experiment TOML and launch it with live progress. Only valid during the active /roastmyharness wizard.",
 		parameters: Type.Object({ spec_path: Type.String({ description: "Experiment TOML path the session wrote." }) }),
 		execute: async (_id, params, signal, onUpdate, ctx) => {
-			if (!wizardRunning) {
+			if (wizardState === "idle") {
 				throw new Error(`${SUBMIT_TOOL} is only valid during the active /roastmyharness wizard`);
 			}
 			const target = (params as { spec_path: string }).spec_path;
@@ -129,6 +134,8 @@ export default function (pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: `experiment ${watched.experiment_id}: ${watched.state}` }], details: watched };
 			} finally {
 				ctx.ui.setStatus(WIDGET_ID, undefined);
+				wizardState = "idle";
+				hideSubmitTool();
 			}
 		},
 	});
@@ -144,26 +151,27 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("Wait for the current agent turn to finish.", "warning");
 				return;
 			}
-			if (wizardRunning) {
+			if (wizardState === "prompting") {
 				ctx.ui.notify("The RoastMyHarness wizard is already open.", "warning");
 				return;
 			}
-			wizardRunning = true;
+			wizardState = "prompting";
 			showSubmitTool();
 			try {
 				const collected = await collectWizard(pi, args, ctx);
 				if (!collected) {
 					ctx.ui.notify("RoastMyHarness wizard cancelled.", "info");
+					wizardState = "idle";
+					hideSubmitTool();
 					return;
 				}
 				const { answers, stagedNote } = collected;
 				const specPath = `${ctx.cwd}/.pi-files/roastmyharness/${answers.experimentName}.toml`;
 				ctx.ui.notify("Wizard answers collected. Write the TOML, then submit it.", "info");
+				wizardState = "awaiting-submit";
 				await pi.sendUserMessage(requestText(answers, stagedNote, specPath));
 			} finally {
 				ctx.ui.setStatus(WIDGET_ID, undefined);
-				hideSubmitTool();
-				wizardRunning = false;
 			}
 		},
 	});
