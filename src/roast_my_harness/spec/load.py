@@ -18,136 +18,65 @@ from roast_my_harness.tasks.discover import is_task_dir
 
 
 def _resolve_model(spec: ExperimentSpec) -> ExperimentSpec:
-    """Materialize host model config into the spec.
-
-    For a provider defined in the host pi models.json, record the
-    provider block's hash and its env-var references so spec_hash
-    covers host configuration drift. Codex and custom providers are
-    already fully explicit in the spec and need no resolution.
-    """
     model = spec.model
-    if model.provider in ("openai-codex", "custom"):
+    if model.provider == "openai-codex":
         return spec
     try:
         from roast_my_harness.auth import service as auth_service
-
         block = auth_service.host_provider_block(model.provider)
     except Exception:
-        # Host config unreadable here; preflight reports it with detail.
         return spec
     if block is None:
         return spec
     block_json = json.dumps(block, sort_keys=True, separators=(",", ":"))
     sha = auth_service.provider_block_hash(block)
     names = sorted(set(re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", block_json)))
-    return spec.model_copy(
-        update={
-            "model": model.model_copy(
-                update={
-                    "resolved_model": ResolvedModelSpec(
-                        provider=model.provider,
-                        provider_block_sha256=sha,
-                        env_vars=names,
-                    )
-                }
-            )
-        }
-    )
+    return spec.model_copy(update={"model": model.model_copy(update={
+        "resolved_model": ResolvedModelSpec(provider=model.provider,
+                                            provider_block_sha256=sha, env_vars=names)})})
 
 
 def _apply_preset(tasks: TaskSelection) -> TaskSelection:
-    """Resolve tasks.preset into the effective include list.
-
-    The preset (a catalog task list) is the base set; the user's include
-    globs filter it further. Baking keeps every downstream consumer
-    (discovery, identity, manifest) on the effective set with no
-    call-site changes.
-    """
     if tasks.preset is None:
         return tasks
     catalog = load_catalog(tasks.path)
     if catalog is None:
-        raise SpecError(
-            f"tasks.preset = {tasks.preset!r} needs a benchmark catalog at "
-            f"{tasks.path / 'catalog.toml'}, none found"
-        )
+        raise SpecError(f"tasks.preset = {tasks.preset!r} needs catalog at {tasks.path / 'catalog.toml'}")
     preset = catalog.presets.get(tasks.preset)
     if preset is None:
-        raise SpecError(
-            f"unknown tasks.preset {tasks.preset!r} "
-            f"(available: {', '.join(sorted(catalog.presets)) or 'none'})"
-        )
+        raise SpecError(f"unknown tasks.preset {tasks.preset!r}")
     missing = [t for t in preset.tasks if not is_task_dir(tasks.path / t)]
     if missing:
-        raise SpecError(
-            f"tasks.preset {tasks.preset!r} lists tasks missing under "
-            f"{tasks.path}: {', '.join(missing)}"
-        )
+        raise SpecError(f"tasks.preset {tasks.preset!r} lists missing tasks: {', '.join(missing)}")
     effective = [t for t in preset.tasks if any(fnmatch(t, pat) for pat in tasks.include)]
     return tasks.model_copy(update={"include": effective})
 
 
 def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
     updates: dict = {}
-    updates["tasks"] = _apply_preset(
-        spec.tasks.model_copy(update={"path": absolute(spec.tasks.path, base_dir)})
-    )
-    updates["model"] = spec.model.model_copy(
-        update={
-            "models_json": (
-                absolute(spec.model.models_json, base_dir)
-                if spec.model.models_json
-                else None
-            )
-        }
-    )
+    updates["tasks"] = _apply_preset(spec.tasks.model_copy(update={"path": absolute(spec.tasks.path, base_dir)}))
     variants = []
     for variant in spec.variants:
-        v_updates: dict = {}
-        exts = []
-        for ext in variant.extensions:
-            if ext.kind == "local":
-                exts.append(ext.model_copy(update={"path": absolute(ext.path, base_dir)}))
-            else:
-                exts.append(ext)
-        skills = [
-            s.model_copy(update={"path": absolute(s.path, base_dir)})
-            for s in variant.skills
-        ]
-        context_files = [
-            c.model_copy(update={"path": absolute(c.path, base_dir)})
-            for c in variant.context_files
-        ]
-        setups = []
-        setup_path_fields = {
-            "install_binary": "source",
-            "codegraph_index": "bundle",
-            "snoop_index": "binary",
-        }
-        for setup in variant.setup:
-            field = setup_path_fields.get(setup.handler)
-            if field:
-                setup = setup.model_copy(
-                    update={field: absolute(getattr(setup, field), base_dir)}
-                )
-            setups.append(setup)
-        v_updates.update(
-            extensions=exts, skills=skills, setup=setups, context_files=context_files
-        )
-        variants.append(variant.model_copy(update=v_updates))
+        exts = [e.model_copy(update={"path": absolute(e.path, base_dir)}) if e.kind == "local" else e
+                for e in variant.extensions]
+        skills = [s.model_copy(update={"path": absolute(s.path, base_dir)}) for s in variant.skills]
+        ctx = [c.model_copy(update={"path": absolute(c.path, base_dir)}) for c in variant.context_files]
+        v = variant.model_copy(update={"extensions": exts, "skills": skills, "context_files": ctx})
+        if v.agents_md is not None:
+            v = v.model_copy(update={"agents_md": absolute(v.agents_md, base_dir)})
+        if v.settings is not None:
+            v = v.model_copy(update={"settings": absolute(v.settings, base_dir)})
+        variants.append(v)
     updates["variants"] = variants
-    resolved = spec.model_copy(update=updates)
-    return _resolve_model(resolved)
+    return _resolve_model(spec.model_copy(update=updates))
 
 
 def validation_summary(error: ValidationError) -> str:
-    """Compact, single-line pydantic error summary for agent-facing messages."""
     parts: list[str] = []
     for item in error.errors():
-        loc = ".".join(str(piece) for piece in item.get("loc", ())) or "spec"
+        loc = ".".join(str(p) for p in item.get("loc", ())) or "spec"
         message = str(item.get("msg", "invalid value"))
-        kind = item.get("type", "")
-        if kind == "extra_forbidden":
+        if item.get("type") == "extra_forbidden":
             value = item.get("input")
             shown = str(value) if not isinstance(value, str) else compact_str(value, 120)
             message = f"unknown field: {shown}"
@@ -161,19 +90,15 @@ def compact_str(text: str, limit: int) -> str:
 
 
 def load_experiment(path: Path) -> ExperimentSpec:
-    """Load and validate a TOML experiment. Resolve all paths."""
     path = path.expanduser().resolve()
     try:
-        text = path.read_text()
-        raw = tomllib.loads(text)
+        raw = tomllib.loads(path.read_text())
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise SpecError(f"cannot read experiment file {path}: {e}") from e
     if not isinstance(raw, dict):
-        raise SpecError(f"invalid experiment spec in {path}: expected a mapping")
+        raise SpecError(f"invalid experiment spec in {path}")
     try:
         spec = ExperimentSpec.model_validate(raw)
     except ValidationError as e:
-        raise SpecError(
-            f"invalid experiment spec in {path}: {validation_summary(e)}"
-        ) from e
+        raise SpecError(f"invalid experiment spec in {path}: {validation_summary(e)}") from e
     return _resolve(spec, path.parent)

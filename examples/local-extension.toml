@@ -1,11 +1,8 @@
-schema_version = 2
+schema_version = 3
 name = "local-extension"
 pi_version = "latest"
 thinking = "high"
-
-[model]
-id = "gpt-5.6-luna"
-provider = "openai-codex"
+model = "openai-codex/gpt-5.6-luna"
 
 [tasks]
 path = "~/datasets/my-tasks"
@@ -15,30 +12,14 @@ exclude = []
 [concurrency]
 per_variant = 2
 
-[control]
-enabled = true
-mode = "fresh" # change to "historic" to reuse eligible history
-history_scope = "hybrid" # or "intersection" for history-backed tasks only
-minimum_runs_per_task = 4
-maximum_age_days = 30
-sentinel_tasks = 4
-on_drift = "fresh"
-on_inconclusive = "fresh"
-
 [[variants]]
 id = "my-ext"
 name = "My extension"
+agents_md = "~/my-extensions/my-extension/AGENTS.md"
 
 [[variants.extensions]]
-kind = "local"
 path = "~/my-extensions/my-extension"
 entry = "src/index.ts"
-
-# Explicit repo instruction file, delivered in-context while implicit
-# copies stay stripped (kind = "agents" only for now).
-[[variants.context_files]]
-kind = "agents"
-path = "~/my-extensions/my-extension/AGENTS.md"
 
 [variants.env]
 MY_EXTENSION_SETTING = "2"

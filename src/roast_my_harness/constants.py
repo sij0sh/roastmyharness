@@ -17,9 +17,10 @@ CODEX_PROVIDER = "openai-codex"
 # Process exit code by final experiment state; anything else exits 0.
 EXIT_CODES = {"FAILED": 2, "CANCELLED": 3}
 
-# Fairness flags kept identical for every arm so repo/global context files
-# and per-variant cosmetics cannot differ.
-FAIRNESS_FLAGS = "--no-skills --no-prompt-templates --no-themes -nc"
+# Fairness flags kept identical for every arm. Ambient AGENTS.md/CLAUDE.md
+# copies are sanitized from every staged home, so the declared variant file
+# placed at the home root is discovered through Pi native semantics.
+FAIRNESS_FLAGS = "--no-skills --no-prompt-templates --no-themes"
 
 # Deterministic git identity configured in every agent container at setup.
 # Agents are instructed to commit their work, and patch collection diffs the
