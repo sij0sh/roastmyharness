@@ -55,6 +55,7 @@ export interface AuthorRequest {
 		variant_request: string;
 	};
 	discovered_local_pi_packages: LocalPiPackage[];
+	staged_sources?: StagedGitSource[];
 	hypothesis?: string;
 	current_spec?: string;
 	validation_problem?: string;
@@ -66,6 +67,89 @@ interface LocalPiPackage {
 	version?: string;
 	private?: boolean;
 	entries: string[];
+}
+
+export interface StagedGitSource {
+	url: string;
+	rev: string;
+	staged_path: string;
+	subdir: string;
+}
+
+const SOURCES_CACHE_SEGMENTS = [".roastmyharness", "cache", "sources"] as const;
+
+function sourcesCacheRoot(): string {
+	return join(homedir(), ...SOURCES_CACHE_SEGMENTS);
+}
+
+function slugSubdir(value: string): string {
+	const slug = value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+	return slug.slice(0, 60);
+}
+
+export function detectGitHubUrl(text: string): {
+	cloneUrl: string;
+	owner: string;
+	repo: string;
+	ref: string | null;
+	subdir: string;
+} | null {
+	const match = text.match(/https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:\/tree\/([^\s#]+))?(?=[\s"'`,]|$)/);
+	if (!match) return null;
+	const owner = match[1];
+	const repo = match[2];
+	const tree = (match[3] ?? "").replace(/\/$/, "");
+	let ref: string | null = null;
+	let subdir = "";
+	if (tree) {
+		const slash = tree.indexOf("/");
+		if (slash === -1) ref = tree;
+		else {
+			ref = tree.slice(0, slash);
+			subdir = tree.slice(slash + 1);
+		}
+	}
+	return { cloneUrl: `https://github.com/${owner}/${repo}.git`, owner, repo, ref, subdir };
+}
+
+export async function stageGitHubSource(host: ExecHost, rawText: string): Promise<StagedGitSource> {
+	const found = detectGitHubUrl(rawText);
+	if (!found) throw new Error("No GitHub URL found in the variant request");
+	const base = `${found.owner}-${found.repo}`;
+	const dest = found.subdir
+		? join(sourcesCacheRoot(), `${base}-${slugSubdir(found.subdir)}`)
+		: join(sourcesCacheRoot(), base);
+	try {
+		const head = await host.exec("git", ["rev-parse", "HEAD"], { cwd: dest, timeout: 15_000 });
+		const sha = (head.stdout ?? "").trim();
+		if (head.code === 0 && /^[0-9a-f]{40}$/.test(sha)) {
+			return {
+				url: found.cloneUrl,
+				rev: sha,
+				staged_path: found.subdir ? join(dest, found.subdir) : dest,
+				subdir: found.subdir,
+			};
+		}
+	} catch {
+	}
+	const cloneArgs = ["clone", "--depth", "1"];
+	if (found.ref) cloneArgs.push("--branch", found.ref);
+	cloneArgs.push(found.cloneUrl, dest);
+	const cloned = await host.exec("git", cloneArgs, { timeout: 180_000 });
+	if (cloned.code !== 0) {
+		throw new Error((cloned.stderr || cloned.stdout || `git clone exited ${cloned.code}`).slice(0, 500));
+	}
+	const head = await host.exec("git", ["rev-parse", "HEAD"], { cwd: dest, timeout: 15_000 });
+	const sha = (head.stdout ?? "").trim();
+	if (head.code !== 0 || !/^[0-9a-f]{40}$/.test(sha)) {
+		throw new Error("Cloned the repo but could not resolve its commit SHA");
+	}
+	return {
+		url: found.cloneUrl,
+		rev: sha,
+		staged_path: found.subdir ? join(dest, found.subdir) : dest,
+		subdir: found.subdir,
+	};
 }
 
 const SPEC_AUTHOR_PROMPT = `You author RoastMyHarness schema-version-2 TOML experiment files.
@@ -104,6 +188,13 @@ When the requested variant names a repo instruction file (AGENTS.md or similar),
 declare it under [[variants.context_files]] with kind = "agents" and the verified
 explicit path; verify the file exists with ls first and never invent it. Only
 explicitly declared files are delivered; implicit copies stay stripped.
+When the request includes a staged GitHub source (URL plus SHA plus staged local path),
+use the staged absolute local path in the spec and never the URL. Verify the staged path
+with ls first. Record the source URL plus short SHA in the top-level hypothesis so the run
+stays traceable (for example "Variant stages https://github.com/owner/repo @ abc1234").
+A tool-restriction request maps to pi_flags single tokens with --flag=value form. The only
+tool names are read, bash, edit, write, grep, find, ls. A bash-only variant uses
+pi_flags = ["--no-builtin-tools", "--tools=bash"]. Never invent tool names or flag spellings.
 Required top-level fields are schema_version, name, pi_version, thinking, model, tasks,
 control, concurrency, execution, and variants.
 When current_spec and validation_problem are present, repair only that problem and preserve all

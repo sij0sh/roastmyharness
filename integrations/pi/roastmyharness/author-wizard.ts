@@ -12,10 +12,12 @@ import {
 	type RoastResponse,
 } from "./core.ts";
 import {
+	detectGitHubUrl,
 	discoverTaskIds,
 	expandPath,
 	fetchCatalog,
 	localPiPackages,
+	stageGitHubSource,
 	supportedThinkingLevels,
 	type AuthorRequest,
 	type ControlMode,
@@ -243,13 +245,25 @@ export async function collectWizard(
 		throw new Error("Spec authoring requires an interactive Pi session");
 	}
 
-	const variantRequest = await ctx.ui.editor(
+	const variantAnswer = await ctx.ui.editor(
 		"Step 1/8 - Which variants should run? " +
-			"Accepted: a local extension path with its entry file, a pinned npm package, or a skill path. " +
+			"Accepted: a local extension path with its entry file, a pinned npm package, a skill path, " +
+			"a GitHub repo URL (cloned to a staged local path for you), or a tool restriction such as bash only. " +
 			"The coding harness uses this data to search up the exact paths.",
 		prefill,
 	);
-	if (variantRequest === undefined || !variantRequest.trim()) return null;
+	if (variantAnswer === undefined || !variantAnswer.trim()) return null;
+	let variantRequest = variantAnswer.trim();
+	let stagedSources: AuthorRequest["staged_sources"] = undefined;
+	if (detectGitHubUrl(variantRequest)) {
+		try {
+			const staged = await stageGitHubSource(host, variantRequest);
+			stagedSources = [staged];
+			variantRequest = `${variantRequest}\nStaged GitHub source: ${staged.url} @ ${staged.rev.slice(0, 12)} available at local path ${staged.staged_path}. Use this absolute local path in the spec; record the URL plus short SHA in the hypothesis.`;
+		} catch (error) {
+			ctx.ui.notify(`GitHub staging failed, continuing with the raw request: ${error instanceof Error ? error.message : String(error)}`, "warning");
+		}
+	}
 
 	const discovered = await discoverTaskRoot(ctx, args);
 	const catalog = await fetchCatalog(host, discovered.root);
@@ -428,6 +442,7 @@ export async function collectWizard(
 			variant_request: variantRequest.trim(),
 		},
 		discovered_local_pi_packages: await localPiPackages(ctx.cwd),
+		...(stagedSources ? { staged_sources: stagedSources } : {}),
 		...(hypothesis ? { hypothesis } : {}),
 	};
 	return { answers, request, catalog };
