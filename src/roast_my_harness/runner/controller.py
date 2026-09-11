@@ -625,8 +625,19 @@ class ExperimentController:
 
         Same dir-name heuristic as the pending snapshot: a trial dir
         counts when its name equals the task or starts with task + "__".
+        Retired attempts under logs/retries count too, so moving a trial
+        aside for retry never resets the max_retries budget.
         """
-        scope = self._replicate_jobs_dir(variant_id, replicate)
+        return sum(
+            self._count_attempts(scope, task_id)
+            for scope in (
+                self._replicate_jobs_dir(variant_id, replicate),
+                self._retry_backup_dir(variant_id, replicate),
+            )
+        )
+
+    @staticmethod
+    def _count_attempts(scope: Path, task_id: str) -> int:
         if not scope.is_dir():
             return 0
         prefix = task_id + "__"
@@ -639,6 +650,47 @@ class ExperimentController:
             if name == task_id or name.startswith(prefix):
                 count += 1
         return count
+
+    def _retry_backup_dir(self, variant_id: str, replicate: int) -> Path:
+        """Audit home for attempts retired by retry; outside pier's scan."""
+        return (
+            self.run_dir
+            / "logs"
+            / "retries"
+            / variant_id
+            / f"{REPLICATE_DIR_PREFIX}{replicate}"
+        )
+
+    def _clear_retry_trials(self, variant_id: str, task_id: str, replicate: int) -> None:
+        """Move recorded trial dirs aside so pier starts a new attempt.
+
+        Pier skips trials whose config matches a stored result, so a retry
+        launch over the old dirs would just re-report the old error.
+        """
+        scope = self._replicate_jobs_dir(variant_id, replicate)
+        if not scope.is_dir():
+            return
+        prefix = task_id + "__"
+        moved = 0
+        for result_path in sorted(scope.rglob("result.json")):
+            trial_dir = result_path.parent
+            if not ((trial_dir / "agent").is_dir() and (trial_dir / "verifier").is_dir()):
+                continue
+            name = trial_dir.name
+            if not (name == task_id or name.startswith(prefix)):
+                continue
+            dest = self._retry_backup_dir(variant_id, replicate) / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            suffix = 1
+            while dest.exists():
+                suffix += 1
+                dest = self._retry_backup_dir(variant_id, replicate) / f"{name}~{suffix}"
+            shutil.move(str(trial_dir), str(dest))
+            moved += 1
+        if moved:
+            self._progress(
+                f"retry {variant_id}/{task_id}: moved {moved} old attempt(s) aside"
+            )
 
     def _launch(self) -> None:
         """Prepare process objects per variant with only missing trials.
@@ -682,6 +734,7 @@ class ExperimentController:
                     if (task_id, replicate) in missing:
                         continue
                     if self._attempts_used(job.variant_id, task_id, replicate) <= max_retries:
+                        self._clear_retry_trials(job.variant_id, task_id, replicate)
                         missing.append((task_id, replicate))
             if self._rerun_tasks is not None:
                 missing = [(t, r) for (t, r) in missing if t in self._rerun_tasks]

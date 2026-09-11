@@ -97,6 +97,8 @@ def test_prepare_and_snapshot(tmp_path: Path):
     )
     historic_observer.load_for_observation()
     assert historic_observer.snapshot()["matrix"]["control"]["t2"] == "H"
+
+
     (extra / "task.toml").unlink()
     (extra / "instruction.md").unlink()
     extra.rmdir()
@@ -253,3 +255,15 @@ def test_pier_env_pythonpath_exposes_package_parent(monkeypatch):
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "roast_my_harness.adapter.pi_agent"
+
+
+def test_retry_moves_recorded_trials_aside_but_keeps_budget(tmp_path: Path):
+    controller = _prepared_controller(tmp_path)
+    run = tmp_path / "run"
+    _seed_trial(run, "a", "t1", exception="ValueError")
+    assert controller._attempts_used("a", "t1", 1) == 1
+    controller._clear_retry_trials("a", "t1", 1)
+    assert list((run / "jobs" / "a").rglob("result.json")) == []
+    backup = run / "logs" / "retries" / "a" / "replicate-1" / "t1__X"
+    assert (backup / "result.json").is_file()
+    assert controller._attempts_used("a", "t1", 1) == 1
