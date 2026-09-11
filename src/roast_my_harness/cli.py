@@ -63,6 +63,17 @@ def bridge_inspect(spec_path: Path = typer.Argument(..., help="Experiment TOML f
                       "max_parallel": spec.peak_concurrency()}, indent=2))
 
 
+@bridge_app.command("wizard-context")
+def bridge_wizard_context(task_root: Path = typer.Argument(..., help="Task root directory."),
+                           model: str = typer.Option(..., help="Model as provider/id."),
+                           thinking: str = typer.Option(..., help="Thinking level.")) -> None:
+    from roast_my_harness import wizard as wizard_mod
+    result = wizard_mod.wizard_context(task_root, model, thinking)
+    print(json.dumps(result, indent=2))
+    if not result.get("ok"):
+        raise typer.Exit(1)
+
+
 @bridge_app.command("validate")
 def bridge_validate(spec_path: Path = typer.Argument(..., help="Experiment TOML file."),
                     skip_docker: bool = typer.Option(False, help="Skip docker checks.")) -> None:

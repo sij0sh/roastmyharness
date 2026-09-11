@@ -304,7 +304,7 @@ class AgentService:
                 repetitions=repetitions,
                 evaluation=eval_label(spec),
                 hypothesis=spec.hypothesis,
-                control="fresh",
+                control="fresh" if spec.control else "excluded",
                 task_ids=[task.task_id for task in tasks],
                 tasks_path=str(spec.tasks.path),
                 arm_ids=[arm.id for arm in arms],
