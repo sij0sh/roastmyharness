@@ -1,324 +1,60 @@
 # Changelog
 
-## Unreleased
+## Unreleased — Pi-only refactor (schema v3)
 
-### Added
+RoastMyHarness is now a Pi-native experiment extension. The spec is
+`schema_version = 3`, and every run compares a fresh implicit bare-Pi
+control against explicitly configured Pi variants.
 
-- Evaluations as a first-class concept (`[evaluation]` with
-  `type = "bundled" | "generated" | "external"`): DeepSWE is now one
-  eval (`bundled/deepswe`, the default when the block is absent) rather
-  than the unit of the harness. Eval identity (type, id, revision,
-  contract hash) enters run identity, the run manifest, and
-  historic-control cohort keys, so different evals never share cells or
-  history. Absent or all-default blocks keep byte-identical identity
-  and cohort keys with pre-eval runs.
-- Named scoring dimensions: verifiers may report `reward_deterministic`
-  / `reward_judge` / `judge_model` in the rewards map; rows carry them
-  as appended CSV columns, `summary.json` gains a per-variant
-  `dimensions` block (mean of per-task means with task-bootstrapped
-  CIs), and `report.md` renders a "Scores by dimension" section only
-  when dimensions exist. The scalar `reward` stays the pass/fail
-  outcome; single-dimension runs render exactly as before.
-- Custom-eval authoring contract: `eval.toml` beside the task root
-  (scoring bar, pinned judge), `validation/self-test.json` fixture
-  suite, and a preflight `eval` gate that refuses launch unless the
-  contract validates and fixtures discriminate (oracle-style pass plus
-  nop-style fail, undeclared judges rejected). Ships a hand-built
-  3-task example (`examples/evals/structured-output/`,
-  `examples/structured-output-eval.toml`) with host-testable
-  deterministic verifiers.
-- EvalBuilder host validation + wizard benchmark modes:
-  `roastmyharness eval init` scaffolds a workspace in the example
-  layout (task dirs directly under the root), `eval validate` runs
-  the full host-side freeze gate (descriptor, capability map,
-  rationale, tasks, critic verdict, fixture self-tests), and builder
-  writes are sandboxed to the workspace. The Pi wizard offers
-  Recommended (bundled DeepSWE) / Custom (frozen generated eval) /
-  Existing (external task set) modes, freezes the choice into the
-  spec's `[evaluation]` block, enforces it against author drift, and
-  shows eval provenance on the review screen. The wheel ships the
-  example eval and CI validates it (`eval validate` + catalog)
-  from an installed wheel with no checkout.
+### Removed
 
-- Repetitions are a real dimension (`[execution] repetitions = 4`,
-  `max_retries = 1`, defaults 1/1): trial identity is
-  `(variant, task, replicate)`, retries are attempts within a replicate,
-  and each replicate launches into its own `jobs/<variant>/replicate-N/`
-  dir (single-repetition runs keep the flat layout). Resume fills only
-  missing replicates; `--retry-errors` relaunches within the same
-  replicate, capped by `max_retries`. Scores are means of per-task pass
-  rates with the bootstrap over tasks (identical numbers for
-  single-repetition runs); `summary.csv` gains an appended `replicate`
-  column. Trials DB migrates additively (existing rows become
-  replicate 1).
-- Repetition-aware reports: resolve-rate tables gain a variant `type` column
-  (`control` / `extension` / `skill` / `extension+skill` / `context_file` /
-  `bare`, also in `summary.json` as `variant_types`); a new "Results by
-  task difficulty" section stratifies per-task rates with task-bootstrapped
-  CIs and pp deltas vs control, with unlabeled tasks forming their own
-  accounted stratum (machine-readable in `summary.json` as `stratified`).
-  Difficulty labels 12 DeepSWE tasks from Luna High published solve rates
-  (easy >= 3/4, medium = 2/4, hard <= 1/4, each with recorded basis; the
-  duration axis awaits wall-time calibration). Run manifests now embed the
-  effective spec so reports classify arms without reloading the TOML.
-- Model profiles (`tasks/deepswe/tasks/profiles.toml` + `roastmyharness profiles`):
-  versioned per-model records with measured benchmark rates where they exist
-  (Luna High 44.2% over 452, GLM-5.3-Flash Max 63.4% over 448, both
-  DeepSWE-published mini-swe-agent rollouts cited in `.pi-files/tasks.md`;
-  pi-agent rates unmeasured), ranked toward the 40-60% discrimination band
-  with unmeasured profiles last and never showing a rate. Muse Spark and Sol
-  ship as explicit unmeasured placeholders. The Pi wizard already lists the
-  user's Pi inventory generically (no hardcoded model branches existed to
-  remove); profile display/ranking in the wizard UI lands with the wizard
-  polish pass. Cost tiers are omitted until per-task spend data exists.
-  Also fixed: `roastmyharness init` writes `schema_version = 2` with the v2
-  `[execution]`/`[control]` schema, and the dead interactive `ask` plumbing
-  (CLI, service, controller) is removed.
-- Telemetry generalization: generic `tool_results`, `tool_failures`,
-  `tool_failure_rate`, and `tool_missing_results` columns derive from the
-  normalized ATIF trajectory (every adapter's `trajectory.json`), and
-  read/reread/overlap rates are computed over the same normalized calls.
-  The seven `cm_*` CSV columns move to a namespaced `custom_metrics`
-  object per trial in `summary.json` (prefix stripped, zero counters
-  dropped); the CSV keeps the stable core plus appended columns only.
-  Trials without a trajectory keep pi-event values with failure counters
-  at zero. Pi TTFT/turn-time columns stay as pi-specific enrichment.
-- Historic-control redesign (deterministic TOML policy, no stored `ask`):
-  `[control]` now uses `mode = "fresh" | "historic"`,
-  `history_scope = "hybrid" | "intersection"`, `minimum_runs_per_task = 4`,
-  `sentinel_tasks = 4`, and `on_drift` / `on_inconclusive = "fresh" | "abort"`.
-  Availability (`unavailable` / `partial` / `eligible`) is computed after
-  model and tasks are known and reported before launch; sentinels sample
-  from history-backed tasks only; drift verdicts map to `accepted` /
-  `rejected_drift` / `inconclusive` with the configured fresh-fallback or
-  abort behavior. Intersection scope skips non-backed control trials (shown
-  idle, never launched). Reports render a labeled per-task historical
-  baseline next to fresh extension rates. `AgentService.historic_availability()`
-  exposes the same plan for the wizard. v1 specs are rejected at the version
-  gate; v2 specs with a stale `reuse` field fail strict TOML validation.
-- Benchmark catalog (`tasks/deepswe/tasks/catalog.toml`): benchmark
-  revision, named task presets consolidated verbatim from `suites.json`
-  (`luna-signal`, `luna-confirmation`, `glm-signal`, `glm-confirmation`),
-  and a per-task label table (duration/difficulty/smoke, each requiring a
-  recorded measurement basis; nothing labeled yet). `[tasks] preset`
-  selects a preset list at load time; runs record `catalog_hash` in run
-  identity and the manifest. The smoke probe picks deterministic
-  `smoke`-tagged tasks (fast+easy first), falling back to the first
-  discovered task. `suites.json` stays until the Pi wizard reads the
-  catalog directly.
-- `schema_version = 2` with a frozen run identity (`ResolvedRunSpec`):
-  prepare resolves every agent pin (`latest` included) to an exact
-  version exactly once, and the run id, home cache keys,
-  historic-control cohort keys, launch plan, and manifest all consume
-  that frozen value. A moved `latest` now starts a new run instead of
-  silently reusing old cells; resume reloads `run_dir/resolved.json`
-  instead of re-resolving. v1 specs are rejected with a migration hint;
-  v1 runs stay readable via status/report. Plan bindings freeze the
-  resolved versions, so start rejects a plan whose `latest` moved since
-  approval.
-
-- `resume` accepts `--task`, `--variant` (both repeatable), and
-  `--retry-errors` to rerun individual cells. Pier starts a new attempt
-  per selected cell and reconciliation keeps the newest, so completed
-  cells stay intact; without filters, resume keeps running only missing
-  cells.
-- `/roastmyharness` posts persistent Spec author and Benchmark transcript
-  cards (same rendering as the `roast_harness` tool cards, wrapped in the
-  same colored success/pending/error container) when authoring finishes
-  and when the run ends, so finished work stays in the session. The live
-  widget uses the same container while work streams. Both cards carry
-  telemetry the live views previously omitted: author model, attempts,
-  token usage with cost, and elapsed time; benchmark elapsed time,
-  measured trial token totals, and trials/min rate. No model call is
-  involved.
-- Release packaging: the wheel bundles the Pi extension and the DeepSWE
-  corpus under `roast_my_harness/bundled/` (~4.6 MB compressed), so
-  `setup` and task discovery work from a bare `pip install` with no
-  checkout (`ROAST_MY_HARNESS_REPO` still overrides; the default
-  `./tasks/deepswe/tasks` falls back to the bundled corpus only when
-  absent). A new CI `wheel` job installs the wheel into an empty env and
-  gates on the bundled payload, `setup`, and discovery. Corpus count
-  corrected to 115 runnable tasks (the README said 117; upstream
-  documents 113, matching the older changelog entries).
+- Claude and OMP agents, the agent registry abstraction, and all
+  cross-agent examples, goldens, and credential paths. One adapter
+  remains: `PiAgent`.
+- The standalone MCP server and Claude setup. `setup` installs the Pi
+  extension only, by copying files (no symlinks).
+- The public standalone run workflow (`init`, `validate`, `run`,
+  `resume`, `status`, `watch`, `list`, `report`, `tool ...`, `eval ...`).
+  The binary exposes `setup`, `doctor`, a private `_bridge`
+  (`inspect` / `validate` / `run` / `status` / `cancel`), and a private
+  `_worker`.
+- Historic-control reuse: `ControlSpec`, the `[control]` block,
+  sentinel/drift policy, `history-availability`, and the
+  `control_observations` store API. Every control runs fresh.
+- Custom-eval authoring (`eval init`, scaffolding, fixtures, critic,
+  self-tests) and the `generated` eval type. Supported: bundled DeepSWE
+  and compatible external task roots.
+- Specialized setup handlers (arbitrary binaries, RTK, Codegraph,
+  Snoop). Variants declare Pi configuration; npm extensions install
+  through one generic installer.
+- `context_files` and its prompt-injection delivery. Variants declare
+  `agents_md`, staged as a real `AGENTS.md` discovered through Pi's
+  native semantics. The `-nc` fairness override is gone.
+- Generic-agent vocabulary: `agent`, `agent_version`,
+  `agent_versions`, per-variant models, `resolved_agents()`,
+  `model_for()`. Per-variant `pi_version` overrides remain, frozen per
+  run as `resolved_pi_versions` (resolved envelope v2).
+- The isolated spec-author child session and persistent model tools.
+  The wizard collects facts, the current Pi session writes the TOML,
+  and one temporary `submit_roast_experiment` tool validates and
+  launches it with a live run card.
 
 ### Changed
 
-- `pi_version` defaults to `latest`, which resolves to the newest
-  `@earendil-works/pi-coding-agent` release every time an experiment runs
-  (preflight, home build, probe, and launch all resolve once per process).
-  The exact version is recorded in the staged home, the run manifest, and
-  reports; historic control reuse only matches identical resolved versions.
-  Pin `pi_version = "x.y.z"` for a reproducible version. The `omp` agent
-  stays on its exact default pin.
+- Experiment specs accept `model = "provider/model"`, inferred
+  extension kinds (`path` vs `package`), string shorthand for skills,
+  and `agents_md` / `settings` variant files.
+- Home cache keys exclude literal env values; cached homes stay
+  secret-free.
+- Host locking, process control, and extension install are
+  cross-platform (`host_lock`, `host_process`, copy-based install).
+  The smoke-probe timeout path and the run-lock probe share them.
+- Reports disclose a fresh control section; the historic disclosure
+  section is gone. Variant types classify `agents_md` arms as
+  `context_file`.
 
-- `/roastmyharness` no longer routes through the model. The command opens
-  the wizard directly; freeform text after the command prefills the
-  variant-request step. The isolated spec author stays the only model
-  call and streams its draft into a live card above the editor. The
-  validated plan is shown in a wizard screen where
-  "Confirm and launch" (default) starts the experiment deterministically
-  and "Regenerate with feedback" re-runs the author with freeform
-  feedback. Live watch progress renders in the same widget slot.
-  Author-child failures surface their error message per attempt.
-  The `roast_harness` tool path is unchanged for model-initiated
-  authoring.
+### Kept
 
-- Multi-agent comparison arms. Specs may set `agent` globally or per
-  `[[variants]]` arm. The registry (`adapter/registry.py`) ships `pi`
-  and `omp` (oh-my-pi, a pi-family fork running on Bun). Per-arm
-  identity enters the variant hash, so cached homes never mix agents.
-- omp arms stage `models.yml` + `model-env.json` with bare env names.
-  pi arms keep `models.json` with `$VAR` refs. omp installs a pinned
-  Bun in-container. Fairness contracts are registry-owned per agent.
-  See `examples/omp-variant.toml` and `examples/cross-agent.toml`.
-
-### Restored
-
-- Historic control reuse is opt-in again. `[control]` supports `reuse =
-  "never" | "ask" | "require"`, pool depth and age limits, and sentinel tasks.
-  The default remains `never`, so existing controls still run fresh.
-- Migration 4 recreates `control_observations`. Reuse cohorts bind the resolved
-  control agent, agent version, model, thinking level, control home, and task.
-- Sentinel-gated two-wave execution records fresh controls, excludes the
-  current experiment from its own pool across resume, and renders accepted
-  historic cells as `H` in CLI and API status matrices.
-- Reports disclose reused counts, date ranges, fresh tasks, and sentinel verdicts.
-
-### Changed
-
-- summary.csv is no longer bound to the legacy DSE-tests schema; the column
-  set is tool-owned and may change between releases.
-
-### Added
-
-- The DeepSWE benchmark now ships inside the repo under `tasks/deepswe/` (117
-  Harbor tasks plus upstream README, PROVENANCE, and LICENSE). The Pi wizard
-  resolves it through its installed symlink and defaults to it; an explicit
-  `/roastmyharness <path>` argument still wins.
-- The Pi wizard asks for a curated test suite: GPT-5.6 Luna High or
-  GLM-5.3-Flash Max. It then offers one random task, the curated 30 (signal
-  screen), the curated 60 (signal + confirmation), the full task set, or a
-  custom random count.
-- Suite membership lives in `tasks/deepswe/suites.json`. The wizard validates
-  curated picks against the discovered task ids and aborts on missing ids.
-- The Pi integration now provides the `/roastmyharness` command.
-- The linear wizard collects variants, control mode, model, thinking mode, and
-  task count. Its `roast_harness author` action now runs spec authoring in an
-  ephemeral Pi child context and streams source checks, drafting, repair, and
-  validation into a custom session card. Validation problems render as one
-  compact line, clear before each repair attempt, and appear only after the
-  final attempt. The footer authoring notification is no longer used.
-- Live progress streaming for `roast_harness`. `AgentService.watch` emits
-  read-only NDJSON events: snapshot, trial, state, heartbeat, and a final
-  event with aggregates and report paths. It polls the same filesystem
-  state as `status` and never takes the experiment lock.
-- New CLI commands: `roastmyharness tool watch <id>` (NDJSON) and
-  `roastmyharness watch <id>` (live ASCII matrix).
-- The Pi extension now defaults `start` to watching. The tool card streams
-  live per-trial progress in place with a progress bar, per-variant counts,
-  active cells, and recent trials. The configured tool-expand key shows the
-  full matrix. The final card includes aggregates and report paths. Aborting
-  detaches the watch only; the run continues.
-- New tool params: `watch` (default true), `interval_sec`, and `recent`.
-  New actions: `author` and `watch`. `prepare` summaries now include the
-  experiment name, Pi version, exact control reuse policy, and normalized
-  variant sources. `status` responses now include per-variant aggregates.
-- Per-trial stats on the live watch card. Each `trial` event now carries a
-  `stats` block from `trial_row`: input/output/cache tokens, tool calls,
-  turns, and wall time. Trials whose agent never finished carry no stats.
-  The extension appends one aligned table per completed (task, variant) to
-  the same card. The summary grows as the run progresses and stays for the
-  final aggregates. Trials completed before the watch started are not
-  backfilled.
-
-Simplification pass (complexity audit 20260826184821-a3fbe704, Tiers 0-1).
-
-### Fixed
-
-- Home staging now normalizes extension and skill names derived from
-  dot-directory sources (`~/.pi-git-suite` stages as `pi-git-suite`).
-  Pi rejects leading-dot extension names, which failed home building
-  after the wizard accepted the spec.
-
-- The Pi wizard supplies verified metadata for configured local Pi packages to
-  its isolated authoring context. The author can inspect other sources with
-  read-only tools and cannot launch a benchmark. This prevents guesses about
-  local paths or npm package versions while keeping authoring work out of the
-  main session context.
-- CI now runs locked dependency checks, Ruff, tests with a 70% coverage gate,
-  and a wheel build.
-- Run, resume, and report now use an exclusive per-experiment lock, while
-  status observes existing jobs without rebuilding homes or changing state.
-- SIGINT and SIGTERM share the graceful cancellation path, with a portable
-  fallback for event loops that do not support `add_signal_handler`.
-- Reconciled filesystem attempts update their existing trial row instead of
-  creating duplicates on every poll or finalization.
-- Auth-file updates and report artifacts use atomic replacement, and run
-  diagnostics are structured JSONL with credential redaction.
-- Run-artifact secret scanning covers every regular text-like artifact rather
-  than log files only.
-- Shell-sensitive setup inputs now require safe paths or exact package/version
-  pins before they reach in-container root commands.
-- `PiAgent.network_allowlist` no longer raises `NameError` for the default
-  `openai-codex` provider (regression in the host-model commit that removed
-  `_BUILTIN_PI_PROVIDERS`); covered by new adapter tests.
-- Trial reconciliation no longer overwrites a `verifier/reward.json`
-  fallback reward with 0.0. Cells and control observations now record the
-  true reward for such trials.
-
-- Patch-collection hardening across the bundled DeepSWE tasks and the
-  harness, so agent work can no longer silently grade 0:
-
-  - Every agent container now configures a deterministic git identity
-    (`roastmyharness` / `roastmyharness@local`, plus `safe.directory`
-    for `/app`) during adapter setup, covering the `pi` and `omp` agents.
-    Agent commits previously failed for missing identity, which emptied
-    every commit-dependent patch. The same identity is baked into all 113
-    task `environment/Dockerfile` recipes for future image rebuilds.
-  - All 113 task `[[verifier.collect]]` hooks now diff the working tree
-    against the base commit instead of `base → HEAD`, fold untracked
-    files in via intent-to-add (ignores still respected), and record the
-    collect-time tree in `artifacts/worktree-status.txt`.
-  - Reconcile and report rows now classify a zero-byte `model.patch`
-    beside mutation evidence as `INVALID_EMPTY_PATCH`, and a failed
-    `model.patch` artifact download (per pier's `manifest.json`) as
-    `INFRA_ARTIFACT_COPY`, instead of scoring fail/0. A genuinely idle
-    agent (clean tree, no writes, artifacts copied fine) keeps its fail.
-  - Timeout-shaped errors now match `is_timeout_error` (mirroring
-    `is_throttle_error`) and render as `[infra-timeout]` in progress;
-    pier's per-task `verifier.timeout_sec` remains the hard bound, and
-    `resume --retry-errors` picks timed-out cells back up.
-
-  Task file edits change task content hashes, so experiments created
-  before this change keep their stored identity and refuse resume with a
-  pointer to the new id; start a fresh experiment for the fixed corpus.
-
-### Removed (breaking for experiment ids)
-
-Removed spec fields change `spec_hash` for every existing TOML, so re-running
-`roastmyharness run` on an unchanged TOML now creates a NEW experiment id.
-Existing runs remain resumable (`roastmyharness resume <old-id>` loads the
-stored spec). Spec parsing is strict: unknown keys are rejected.
-
-- `concurrency.global_max` (never enforced by any runtime code)
-- `output.budget_usd` and the whole `[output]` section (the budget check was
-  advisory-only: it printed a warning event that nothing consumed)
-- `[model] auth` (decorative: the provider name alone drives credential
-  staging; `auth = "api_key"` with `provider = "openai-codex"` now fails at
-  staging instead of spec validation)
-- the `extra_flags_json` adapter kwarg (never sent by the runner; use the
-  wired per-variant `pi_flags` spec field instead). If you drove the adapter
-  directly via pier `--ak extra_flags_json=...`, migrate to `pi_flags`.
-
-### Removed (internal, no spec impact)
-
-- The agent skill and its implicit prose workflow. Pi setup now installs only
-  the slash-command extension. Claude setup now installs only the MCP server.
-- Typed event dataclasses; the controller now takes `progress` and `ask`
-  callbacks. `run`/`resume` still print per-trial progress to stderr
-  (`[roast] <variant>/<task>: <status>`).
-- Dead declarations: duplicate `Cell`, `staging_note`, `control_pools`,
-  `homes_for_experiment`, `Repository.trials`, `binomial_two_sided`,
-  unused error classes, `HomeBuild.cached`, unused `build_run_args`
-  parameters (`agent_env`, `extra_args`), `tomlkit` dependency,
-  `config_file`/`config_dir` helpers (no code ever read a config file).
+- `PiAgent`, Pi telemetry, immutable staged homes, `models.json`
+  inventory auth staging, Pier execution, reconciliation, presets,
+  paired flips, measurements, machine-readable summaries, custom cards.
