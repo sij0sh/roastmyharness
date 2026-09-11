@@ -278,7 +278,6 @@ class ExperimentController:
                 variant = variant.model_copy(
                     update={"runtime_agent_install": True}
                 )
-            self._throw_if_cancelled()
             build = build_home(
                 variant,
                 self.spec,
