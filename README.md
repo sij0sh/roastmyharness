@@ -823,4 +823,4 @@ Look at what it cost.
 Then decide.
 ```
 
-**Roast your harness before your harness roasts your code.**
+**Roast your harness before your harness roasts your project.**
