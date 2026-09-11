@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from roast_my_harness.cli import _exit_for_final_state
 from roast_my_harness.errors import HomeBuildError, PierError, SpecError
 from roast_my_harness.homes.builder import build_home
 from roast_my_harness.homes.sources import copy_source_tree, source_tree_hash
@@ -28,7 +27,6 @@ def base_spec(tmp_path: Path, **variant_kwargs) -> ExperimentSpec:
     return ExperimentSpec(
         name="t",
         tasks=TaskSelection(path=tmp_path),
-        control=None,
         variants=[VariantSpec(id="a", **variant_kwargs)],
         pi_version="0.84.3",
     )
@@ -40,7 +38,7 @@ def base_spec(tmp_path: Path, **variant_kwargs) -> ExperimentSpec:
 def test_unknown_top_level_field_rejected(tmp_path: Path):
     path = tmp_path / "exp.toml"
     path.write_text(
-        'schema_version = 2\nname = "x"\nunknown_field = 1\n'
+        'schema_version = 3\nname = "x"\nunknown_field = 1\n'
         "[tasks]\npath = '/tmp'\n[[variants]]\nid = 'a'\n"
     )
     with pytest.raises(SpecError, match="extra_forbidden|unknown_field"):
@@ -50,7 +48,7 @@ def test_unknown_top_level_field_rejected(tmp_path: Path):
 def test_unknown_concurrency_field_rejected(tmp_path: Path):
     path = tmp_path / "exp.toml"
     path.write_text(
-        'schema_version = 2\nname = "x"\n[tasks]\npath = "/tmp"\n'
+        'schema_version = 3\nname = "x"\n[tasks]\npath = "/tmp"\n'
         '[concurrency]\nper_variant = 2\nglobal_max = 6\n[[variants]]\nid = "a"\n'
     )
     with pytest.raises(SpecError, match="extra_forbidden|global_max"):
@@ -60,7 +58,7 @@ def test_unknown_concurrency_field_rejected(tmp_path: Path):
 def test_unknown_model_field_rejected(tmp_path: Path):
     path = tmp_path / "exp.toml"
     path.write_text(
-        'schema_version = 2\nname = "x"\n[tasks]\npath = "/tmp"\n'
+        'schema_version = 3\nname = "x"\n[tasks]\npath = "/tmp"\n'
         '[model]\nprovider = "openai-codex"\nauth = "codex"\n[[variants]]\nid = "a"\n'
     )
     with pytest.raises(SpecError, match="extra_forbidden|auth"):
@@ -70,7 +68,7 @@ def test_unknown_model_field_rejected(tmp_path: Path):
 def test_stale_example_config_validates(tmp_path: Path):
     path = tmp_path / "my-comparison.toml"
     path.write_text(
-        'schema_version = 2\nname = "my-comparison"\n'
+        'schema_version = 3\nname = "my-comparison"\n'
         '[tasks]\npath = "/tmp"\n[[variants]]\nid = "a"\n'
     )
     spec = load_experiment(path)
@@ -78,27 +76,6 @@ def test_stale_example_config_validates(tmp_path: Path):
 
 
 
-
-
-def test_exit_code_failed_is_nonzero_and_structured(capsys):
-    code = _exit_for_final_state("e1", "FAILED")
-    assert code == 2
-    out = capsys.readouterr().out
-    payload = json.loads(out.strip().splitlines()[0])
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "experiment_failed"
-
-
-def test_exit_code_cancelled_is_nonzero_and_structured(capsys):
-    code = _exit_for_final_state("e1", "CANCELLED")
-    assert code == 3
-    out = capsys.readouterr().out
-    payload = json.loads(out.strip().splitlines()[0])
-    assert payload["error"]["code"] == "experiment_cancelled"
-
-
-def test_exit_code_complete_is_zero(capsys):
-    assert _exit_for_final_state("e1", "COMPLETE") == 0
 
 
 

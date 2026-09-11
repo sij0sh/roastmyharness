@@ -14,7 +14,7 @@ from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.store.repository import Repository
 
 SPEC = """
-schema_version = 2
+schema_version = 3
 name = "watch"
 pi_version = "0.84.3"
 
@@ -278,12 +278,7 @@ def test_status_includes_aggregates(environment):
     assert result.aggregates["control"]["resolved"] == 1
 
 
-def test_tool_watch_streams_ndjson(environment, monkeypatch):
-    """The CLI watch command prints one JSON object per line."""
-    from typer.testing import CliRunner
-
-    from roast_my_harness import cli as cli_mod
-
+def test_service_watch_streams_events(environment):
     db_path, run_dir = environment
     repo = Repository(db_path)
     repo.set_status(EXPERIMENT_ID, "COMPLETE", started=True, finished=True)
@@ -291,13 +286,8 @@ def test_tool_watch_streams_ndjson(environment, monkeypatch):
     (run_dir / "report.md").write_text("# report\n")
     (run_dir / "summary.csv").write_text("variant\n")
     service = svc.AgentService(plans_dir=run_dir.parent / "plans", db_path=db_path)
-    monkeypatch.setattr(cli_mod.agent_service, "AgentService", lambda: service)
-
-    runner = CliRunner()
-    result = runner.invoke(cli_mod.tool_app, ["watch", EXPERIMENT_ID, "--interval", "0.01"])
-    assert result.exit_code == 0, result.output
-    lines = [json.loads(line) for line in result.output.splitlines() if line.strip()]
-    assert lines[0]["event"] == "snapshot"
-    assert lines[-1]["event"] == "final"
-    assert lines[-1]["state"] == "COMPLETE"
-    assert lines[-1]["report"]["markdown"].endswith("report.md")
+    events = list(service.watch(EXPERIMENT_ID, interval_sec=0.01))
+    assert events[0]["event"] == "snapshot"
+    assert events[-1]["event"] == "final"
+    assert events[-1]["state"] == "COMPLETE"
+    assert events[-1]["report"]["markdown"].endswith("report.md")

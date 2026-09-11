@@ -139,7 +139,7 @@ def test_shipped_deepswe_catalog():
 def write_spec(tmp_path: Path, tasks_path: Path, extra: str = "") -> Path:
     spec_path = tmp_path / "exp.toml"
     spec_path.write_text(
-        "schema_version = 2\nname = \"cat\"\npi_version = \"0.84.3\"\n"
+        "schema_version = 3\nname = \"cat\"\npi_version = \"0.84.3\"\n"
         f"[tasks]\npath = {str(tasks_path)!r}\n{extra}"
         "[[variants]]\nid = \"a\"\n"
     )

@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from roast_my_harness.cli import app as cli_app
 from roast_my_harness.errors import SpecError
 from roast_my_harness.tasks.profiles import band_distance, load_profiles, rank_profiles
 
@@ -142,18 +139,16 @@ def test_rank_flags_inventory_matches():
     }
 
 
-def test_cli_profiles_json_lists_measured_first():
+def test_profiles_rank_measured_first():
     root = Path(__file__).resolve().parents[2] / "tasks" / "deepswe" / "tasks"
-    result = CliRunner().invoke(cli_app, ["profiles", "--tasks", str(root), "--json"])
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["benchmark"] == "deepswe"
-    first, *_, last = payload["profiles"]
-    assert first["id"] == "luna-high"
-    assert first["expected_rate"] == 0.442
-    assert last["expected_rate"] is None
+    found = load_profiles(root)
+    assert found is not None and found.benchmark == "deepswe"
+    ranked = rank_profiles(found)
+    first, *_, last = ranked
+    assert first.profile.id == "luna-high"
+    assert first.expected_rate == 0.442
+    assert last.expected_rate is None
 
 
-def test_cli_profiles_missing_dir_fails(tmp_path: Path):
-    result = CliRunner().invoke(cli_app, ["profiles", "--tasks", str(tmp_path)])
-    assert result.exit_code == 1
+def test_profiles_missing_dir_returns_none(tmp_path: Path):
+    assert load_profiles(tmp_path) is None

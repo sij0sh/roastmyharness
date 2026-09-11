@@ -16,7 +16,7 @@ from roast_my_harness.agent import service as svc
 from roast_my_harness.spec.load import load_experiment
 
 SPEC = """
-schema_version = 2
+schema_version = 3
 name = "svc"
 pi_version = "0.84.3"
 
@@ -522,30 +522,19 @@ def test_cancel_marker_only_starting_refuses_without_lock(
 
 
 
-def test_tool_start_unknown_plan_prints_json_error(tmp_path, capsys):
-    from typer.testing import CliRunner
+def test_service_start_unknown_plan_raises(tmp_path):
+    from roast_my_harness.agent.service import AgentService, UnknownPlanError
 
-    from roast_my_harness.cli import tool_app
-
-    runner = CliRunner()
-    result = runner.invoke(
-        tool_app, ["start", "plan_ffffffffffff"], env={"HOME": str(tmp_path)}
-    )
-    payload = json.loads(result.output)
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "unknown_plan"
-    assert result.exit_code == 1
+    service = AgentService(plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite")
+    with pytest.raises(UnknownPlanError):
+        service.start("plan_ffffffffffff")
 
 
-def test_tool_prepare_needs_input_exits_nonzero(tmp_path, capsys):
-    from typer.testing import CliRunner
-
-    from roast_my_harness.cli import tool_app
+def test_service_prepare_needs_input(tmp_path):
+    from roast_my_harness.agent.service import AgentService
 
     bad = tmp_path / "bad.toml"
     bad.write_text("bogus = true\n")
-    runner = CliRunner()
-    result = runner.invoke(tool_app, ["prepare", str(bad)])
-    payload = json.loads(result.output)
-    assert payload["state"] == "needs_input"
-    assert result.exit_code == 1
+    service = AgentService(plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite")
+    result = service.prepare(bad)
+    assert result.state == "needs_input"

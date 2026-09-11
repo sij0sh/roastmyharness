@@ -1,6 +1,6 @@
 {
-  "variant_hash": "ef615b8d297ec6f05804fde4254b5ad24f4766c1744d07afbd4a7fca87464f4c",
-  "variant_id": "control",
+  "variant_hash": "5d52272a3368949737fd0a79b77a243fb56a84c9524690cba0e701ec68ed016a",
+  "variant_id": "my-ext",
   "pi_version": "0.84.3",
   "agent": "pi",
   "agent_version": "0.84.3",

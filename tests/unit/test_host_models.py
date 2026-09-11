@@ -156,7 +156,7 @@ def test_stage_home_slices_host_provider(host_pi, tmp_path: Path):
 
 def test_stage_home_rejects_host_provider_drift(host_pi, tmp_path: Path):
     toml = f"""
-schema_version = 2
+schema_version = 3
 name = "drift"
 [model]
 id = "glm-5.3"
@@ -232,7 +232,7 @@ def test_stage_home_codex_path_unchanged(tmp_path: Path, monkeypatch):
 
 def test_load_materializes_host_model(host_pi, tmp_path: Path):
     toml = f"""
-schema_version = 2
+schema_version = 3
 name = "mat"
 pi_version = "0.84.3"
 thinking = "high"
@@ -259,7 +259,7 @@ id = "a"
 
 def test_load_leaves_codex_unresolved(host_pi, tmp_path: Path):
     toml = f"""
-schema_version = 2
+schema_version = 3
 name = "mat"
 pi_version = "0.84.3"
 thinking = "high"

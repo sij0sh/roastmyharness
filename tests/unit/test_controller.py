@@ -12,7 +12,7 @@ from roast_my_harness.tasks.discover import discover_tasks
 from roast_my_harness.tasks.hashes import task_hash
 
 SPEC = """
-schema_version = 2
+schema_version = 3
 name = "ctrl-test"
 [tasks]
 path = "./dataset"

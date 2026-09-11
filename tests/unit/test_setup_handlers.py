@@ -1,23 +1,24 @@
-"""Setup handler inputs cannot escape their intended shell arguments."""
+"""Generic npm installer rejects unsafe pins."""
 
 from __future__ import annotations
 
-from roast_my_harness.adapter.setup_handlers import (
-    _safe_command_path,
-    _safe_npm_pin,
-    _safe_remote_directory,
-)
+import pytest
 
 
-def test_safe_npm_pin_accepts_scoped_exact_versions():
-    assert _safe_npm_pin("@scope/package@1.2.3")
-    assert _safe_npm_pin("package@1.2.3-beta.1")
-    assert not _safe_npm_pin("package@latest")
-    assert not _safe_npm_pin("package@1.2.3; echo leaked")
+def test_npm_install_rejects_non_exact():
+    import asyncio
+    from roast_my_harness.adapter import setup_handlers
 
+    class FakeAgent:
+        logger = type("L", (), {"info": staticmethod(lambda *a, **k: None)})()
 
-def test_safe_install_paths_reject_traversal_and_shell_syntax():
-    assert _safe_remote_directory("/usr/local/bin")
-    assert not _safe_remote_directory("/usr/local/../bin")
-    assert _safe_command_path("/usr/local/bin/tool")
-    assert not _safe_command_path("tool; echo leaked")
+    async def run(pkg: str):
+        await setup_handlers.npm_pi_install(FakeAgent(), object(), {"package": pkg})
+
+    asyncio.run(run("context-mode@1.0.169"))
+    with pytest.raises(ValueError):
+        asyncio.run(run("context-mode"))
+    with pytest.raises(ValueError):
+        asyncio.run(run("context-mode@latest"))
+    with pytest.raises(ValueError):
+        asyncio.run(run("context-mode@1.0.0; echo leaked"))
