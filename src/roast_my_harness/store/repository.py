@@ -203,5 +203,31 @@ class Repository:
             finished_at=finished_at,
         )
 
+    def historic_control_runs(self, model: str, thinking: str) -> dict[str, int]:
+        """Resolved control trials per task for one model/thinking combo.
+
+        Only trials with a verdict (resolved is not null) count as reusable
+        control data. Model matches the stored spec's provider/model id."""
+        counts: dict[str, int] = {}
+        rows = self.conn.execute(
+            "SELECT e.spec_json, t.task_id FROM trials t "
+            "JOIN experiments e ON e.id = t.experiment_id "
+            "WHERE t.variant_id = 'control' AND t.resolved IS NOT NULL"
+        ).fetchall()
+        for row in rows:
+            try:
+                stored = json.loads(row["spec_json"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            spec_model = stored.get("model", {})
+            if isinstance(spec_model, str):
+                full_id = spec_model
+            else:
+                full_id = f"{spec_model.get('provider', '')}/{spec_model.get('id', '')}"
+            if full_id == model and stored.get("thinking") == thinking:
+                task_id = row["task_id"]
+                counts[task_id] = counts.get(task_id, 0) + 1
+        return counts
+
 
 
