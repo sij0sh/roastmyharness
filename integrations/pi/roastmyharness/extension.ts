@@ -11,6 +11,7 @@ import {
 } from "./core.ts";
 import { RUN_CARD_TYPE, postRunCard } from "./cards.ts";
 import { renderRunCard, streamBridgeRun } from "./watch.ts";
+import { checkEngine, type EngineStatus } from "./versions.ts";
 import { collectWizard } from "./wizard.ts";
 import type { WizardAnswers } from "./wizard-options.ts";
 
@@ -131,9 +132,21 @@ export default function (pi: ExtensionAPI) {
 		if (missing.length) pi.setActiveTools([...active, ...missing]);
 	};
 
-	pi.on("session_start", () => {
+	let engineStatus: EngineStatus | null = null;
+
+	pi.on("session_start", async (_event, ctx) => {
 		wizardState = "idle";
 		hideSubmitTool();
+		engineStatus = await checkEngine(pi);
+		if (engineStatus.kind === "missing") {
+			ctx.ui.notify(`RoastMyHarness engine missing. ${engineStatus.hint}`, "error");
+			ctx.ui.setStatus(WIDGET_ID, "engine missing");
+		} else if (engineStatus.kind === "mismatch") {
+			ctx.ui.notify(`RoastMyHarness engine outdated. ${engineStatus.hint}`, "warning");
+			ctx.ui.setStatus(WIDGET_ID, `engine ${engineStatus.found} outdated`);
+		} else {
+			ctx.ui.setStatus(WIDGET_ID, undefined);
+		}
 	});
 
 	pi.registerTool({
@@ -249,6 +262,11 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (!ctx.isIdle()) {
 				ctx.ui.notify("Wait for the current agent turn to finish.", "warning");
+				return;
+			}
+			engineStatus = engineStatus ?? (await checkEngine(pi));
+			if (engineStatus.kind !== "ok") {
+				ctx.ui.notify(`RoastMyHarness engine not ready. ${engineStatus.hint}`, "error");
 				return;
 			}
 			if (wizardState === "prompting") {
