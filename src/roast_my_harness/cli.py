@@ -48,6 +48,13 @@ bridge_app = typer.Typer(help="Private engine protocol for the Pi extension.", h
 app.add_typer(bridge_app, name="_bridge")
 
 
+@bridge_app.command("version")
+def bridge_version() -> None:
+    from roast_my_harness import ADAPTER_PROTOCOL_VERSION, __version__
+    print(json.dumps({"ok": True, "version": __version__,
+                      "adapter_protocol": ADAPTER_PROTOCOL_VERSION}))
+
+
 @bridge_app.command("inspect")
 def bridge_inspect(spec_path: Path = typer.Argument(..., help="Experiment TOML file.")) -> None:
     try:
