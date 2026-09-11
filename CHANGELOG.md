@@ -4,7 +4,26 @@
 
 RoastMyHarness is now a Pi-native experiment extension. The spec is
 `schema_version = 3`, and every run compares a fresh implicit bare-Pi
-control against explicitly configured Pi variants.
+control against explicitly configured Pi variants unless the spec sets
+`control = false`.
+
+### Added
+
+- Six-step `/roastmyharness` wizard. Step 1 takes a freeform variant
+description. Step 2 picks the model from the Pi inventory with Luna,
+Muse Spark, and GLM Flash pinned. Step 3 picks the thinking level
+with per-model defaults. Step 4 picks the control mode. The wizard
+offers historic only when control data exists for the model/thinking
+combo. Step 5 picks the task set: smoke, Luna/GLM curated 30/60,
+full suite, custom, or the historic pool with curated hybrid fill.
+Step 6 picks repetitions 1-4. Pi infers names, paths, and variant
+configuration from the freeform answer and writes the TOML.
+- Top-level `control = false` spec field (default true) for
+variant-only runs. Historic mode uses past control trials as the
+baseline instead of a fresh arm.
+- Private `_bridge wizard-context` command. It reports discovered
+tasks, curated suites filtered to disk, and the historic control pool
+for one model/thinking combo.
 
 ### Removed
 
