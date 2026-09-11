@@ -54,7 +54,7 @@ from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
 from roast_my_harness.spec.resolved import ResolvedRunSpec, resolve_run_spec
 from roast_my_harness.store.repository import Repository
 from roast_my_harness.tasks.catalog import catalog_info, load_catalog
-from roast_my_harness.tasks.discover import discover_tasks
+from roast_my_harness.tasks.discover import discover_tasks, uses_compose
 from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 
 POLL_INTERVAL_SEC = 2.0
@@ -269,7 +269,15 @@ class ExperimentController:
         self._set_state("BUILDING")
         self._throw_if_cancelled()
         homes_root = homes_cache_dir()
+        force_runtime = any(uses_compose(t.path) for t in tasks)
+        if force_runtime:
+            self._progress("compose tasks: using runtime agent install")
         for variant in self.spec.arms():
+            self._throw_if_cancelled()
+            if force_runtime and not variant.runtime_agent_install:
+                variant = variant.model_copy(
+                    update={"runtime_agent_install": True}
+                )
             self._throw_if_cancelled()
             build = build_home(
                 variant,

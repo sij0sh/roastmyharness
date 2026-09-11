@@ -23,6 +23,19 @@ def is_task_dir(path: Path) -> bool:
     return path.is_dir() and (path / "task.toml").is_file()
 
 
+def uses_compose(task_path: Path) -> bool:
+    """True when pier runs this task via docker-compose.
+
+    Pier selects compose when environment/docker-compose.yaml exists;
+    build-time agent install is unsupported for those tasks, so the
+    runner must use runtime install instead.
+    """
+    env = task_path / "environment"
+    return (env / "docker-compose.yaml").is_file() or (
+        env / "docker-compose.yml"
+    ).is_file()
+
+
 def discover_tasks(root: Path, include: list[str], exclude: list[str]) -> list[TaskInfo]:
     root = root.expanduser().resolve()
     if not root.is_dir():
