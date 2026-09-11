@@ -121,3 +121,21 @@ def test_bridge_run_streams_started_then_events(tmp_path: Path, data_dir: Path, 
     assert lines[0]["experiment_id"] == "e1"
     assert lines[-1]["event"] == "final"
     assert lines[-1]["state"] == "COMPLETE"
+
+
+def test_bridge_run_reports_watch_failure_as_final(tmp_path: Path, data_dir: Path, monkeypatch):
+    def _boom(experiment_id, **kwargs):
+        yield {"event": "snapshot", "state": "RUNNING"}
+        raise RuntimeError("mid-walk race")
+
+    service = SimpleNamespace(
+        start=lambda plan_id, skip_docker=False: SimpleNamespace(experiment_id="e1"),
+        watch=_boom,
+    )
+    monkeypatch.setattr(cli_mod.agent_service, "AgentService", lambda: service)
+    result = CliRunner().invoke(cli_mod.app, ["_bridge", "run", "plan_ffffffffffff"])
+    assert result.exit_code == 1, result.output
+    lines = [json.loads(line) for line in result.output.splitlines() if line.strip()]
+    assert lines[0]["event"] == "started"
+    assert lines[-1]["event"] == "final"
+    assert "mid-walk race" in lines[-1]["note"]

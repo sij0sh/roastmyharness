@@ -536,8 +536,18 @@ class AgentService:
         try:
             while True:
                 time.sleep(interval_sec)
-                controller, rd = self._observe(experiment_id)
-                snap = self._watch_snapshot(controller)
+                try:
+                    controller, rd = self._observe(experiment_id)
+                    snap = self._watch_snapshot(controller)
+                except Exception as tick_error:
+                    now = time.monotonic()
+                    yield {
+                        "event": "heartbeat",
+                        "state": state_prev,
+                        "note": f"transient observe error: {tick_error}",
+                    }
+                    last_emit = now
+                    continue
                 state, matrix = snap["state"], snap["matrix"]
                 now = time.monotonic()
                 if state != state_prev:
@@ -557,9 +567,12 @@ class AgentService:
                                     "status": status,
                                     "reward": snap["rewards"].get(variant, {}).get(task),
                                 }
-                                stats = _trial_stats(
-                                    rd, variant, task, newest_maps, list(cells), fold_cache
-                                )
+                                try:
+                                    stats = _trial_stats(
+                                        rd, variant, task, newest_maps, list(cells), fold_cache
+                                    )
+                                except Exception:
+                                    stats = {}
                                 if stats:
                                     event["stats"] = stats
                                 yield event

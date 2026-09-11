@@ -235,6 +235,30 @@ def test_watch_terminates_when_worker_gone(environment, monkeypatch):
     assert "resume" in final["note"]
 
 
+def test_watch_survives_transient_observe_error(environment, monkeypatch):
+    db_path, run_dir = environment
+    service = svc.AgentService(plans_dir=run_dir.parent / "plans", db_path=db_path)
+    original = svc.AgentService._observe
+    calls = {"n": 0}
+
+    def observe(self, experiment_id: str):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("mid-walk race")
+        repo = Repository(self.db_path)
+        repo.set_status(experiment_id, "COMPLETE", started=True)
+        repo.close()
+        return original(self, experiment_id)
+
+    monkeypatch.setattr(svc.AgentService, "_observe", observe)
+    events = list(service.watch(EXPERIMENT_ID, interval_sec=0.01))
+    kinds = [e["event"] for e in events]
+    assert kinds[0] == "snapshot"
+    assert kinds[-1] == "final"
+    heartbeats = [e for e in events if e["event"] == "heartbeat"]
+    assert any("transient observe error" in e.get("note", "") for e in heartbeats)
+
+
 def test_watch_unknown_experiment_raises(tmp_path):
     service = svc.AgentService(
         plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"

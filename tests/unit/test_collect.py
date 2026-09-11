@@ -94,6 +94,20 @@ def test_exception_trial_still_counts_as_error(tmp_path: Path):
     assert rows[0]["reward"] == 0.0
 
 
+def test_scan_variant_survives_midwalk_race(tmp_path: Path, monkeypatch):
+    from roast_my_harness.report import collect as collect_mod
+
+    (tmp_path / "a").mkdir()
+
+    def _boom(self, pattern):
+        raise OSError("dir moved mid-walk")
+
+    monkeypatch.setattr(Path, "rglob", _boom)
+    pending, results = collect_mod.scan_variant(tmp_path / "a")
+    assert pending == set()
+    assert results == []
+
+
 def test_empty_patch_with_mutations_is_invalid_row(tmp_path: Path):
     """Report rows mirror reconcile: contaminated zeros become infra errors."""
     from roast_my_harness.report.statistics import resolved_rows

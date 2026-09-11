@@ -27,7 +27,11 @@ def scan_variant(
     results: list[tuple[Path, str, int, int, dict[str, Any]]] = []
     if not variant_dir.is_dir():
         return pending, results
-    for path in sorted(variant_dir.rglob("*")):
+    try:
+        paths = sorted(variant_dir.rglob("*"))
+    except OSError:
+        return pending, results
+    for path in paths:
         if path.is_dir():
             try:
                 has_result = (path / "result.json").exists()

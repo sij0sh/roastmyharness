@@ -89,6 +89,11 @@ def bridge_wait(
     except agent_service.ServiceError as error:
         print(json.dumps({"ok": False, "error": {"code": error.code, "message": str(error)}}))
         raise typer.Exit(1) from None
+    except Exception as error:
+        print(json.dumps({"event": "final", "final": False,
+                          "note": f"bridge error before a final event: {type(error).__name__}: {error}"}))
+        sys.stdout.flush()
+        raise typer.Exit(1) from None
 
 
 @bridge_app.command("validate")
@@ -117,6 +122,11 @@ def bridge_run(plan_id: str = typer.Argument(..., help="Plan id from validate.")
             sys.stdout.flush()
     except agent_service.UnknownExperimentError:
         print(json.dumps({"ok": False, "error": {"code": "unknown_experiment"}}))
+        raise typer.Exit(1) from None
+    except Exception as error:
+        print(json.dumps({"event": "final", "final": False,
+                          "note": f"bridge error before a final event: {type(error).__name__}: {error}"}))
+        sys.stdout.flush()
         raise typer.Exit(1) from None
 
 
