@@ -24,6 +24,12 @@ baseline instead of a fresh arm.
 - Private `_bridge wizard-context` command. It reports discovered
 tasks, curated suites filtered to disk, and the historic control pool
 for one model/thinking combo.
+- Split retention for control data. `[retention]` gains `variant_max_size`
+(default 3GB), `control_max_size` (default 5GB), `control_keep` (default
+4, resolved control trials kept per task/model/thinking), and
+`control_retention` (default false; true lifts the control size cap and
+keeps only the per-group prune). Legacy `max_size` still feeds the
+variant cap. `enabled = false` keeps everything, as before.
 
 ### Removed
 
