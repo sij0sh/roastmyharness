@@ -74,6 +74,23 @@ def bridge_wizard_context(task_root: Path = typer.Argument(..., help="Task root 
         raise typer.Exit(1)
 
 
+@bridge_app.command("await")
+def bridge_wait(
+    experiment_id: str = typer.Argument(..., help="Experiment id, name, or prefix."),
+    interval_sec: float = typer.Option(2.0, help="Poll interval in seconds."),
+    grace_sec: float = typer.Option(10.0, help="Orphan grace period in seconds."),
+) -> None:
+    try:
+        events = agent_service.AgentService().watch(experiment_id, interval_sec=interval_sec,
+                                                     worker_grace_sec=grace_sec)
+        for event in events:
+            sys.stdout.write(json.dumps(event, default=str) + "\n")
+            sys.stdout.flush()
+    except agent_service.ServiceError as error:
+        print(json.dumps({"ok": False, "error": {"code": error.code, "message": str(error)}}))
+        raise typer.Exit(1) from None
+
+
 @bridge_app.command("validate")
 def bridge_validate(spec_path: Path = typer.Argument(..., help="Experiment TOML file."),
                     skip_docker: bool = typer.Option(False, help="Skip docker checks.")) -> None:

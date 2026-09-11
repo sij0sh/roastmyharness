@@ -163,6 +163,41 @@ def test_bridge_wizard_context_rejects_bad_root(tmp_path: Path):
     assert json.loads(result.output)["ok"] is False
 
 
+def test_bridge_await_reaches_final_on_complete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    data = tmp_path / "data"
+    monkeypatch.setenv("ROAST_MY_HARNESS_DATA_DIR", str(data))
+    tasks = tmp_path / "tasks" / "t1"
+    tasks.mkdir(parents=True)
+    (tasks / "task.toml").write_text('schema_version = "1.3"\n')
+    run_dir = tmp_path / "runs" / "await-exp"
+    (run_dir / "jobs").mkdir(parents=True)
+    repo = Repository(data / "roastmyharness.db")
+    try:
+        repo.create_experiment(experiment_id="await-exp", name="w",
+                               spec={"schema_version": 3, "name": "w",
+                                     "model": {"provider": "p", "id": "m"},
+                                     "thinking": "high", "pi_version": "latest",
+                                     "tasks": {"path": str(tmp_path / "tasks"),
+                                               "include": ["*"], "exclude": []},
+                                     "variants": [{"id": "bare"}]},
+                               spec_hash="h" * 64, run_dir=str(run_dir), status="COMPLETE")
+    finally:
+        repo.close()
+    result = CliRunner().invoke(cli_mod.app, ["_bridge", "await", "await-exp",
+                                               "--interval-sec", "0.01", "--grace-sec", "0"])
+    assert result.exit_code == 0, result.output
+    events = [json.loads(line) for line in result.output.splitlines() if line.strip()]
+    assert [e["event"] for e in events] == ["snapshot", "final"]
+    assert events[-1]["final"] is True
+    assert events[-1]["state"] == "COMPLETE"
+
+
+def test_bridge_await_rejects_unknown_experiment():
+    result = CliRunner().invoke(cli_mod.app, ["_bridge", "await", "missing-exp"])
+    assert result.exit_code == 1
+    assert json.loads(result.output)["ok"] is False
+
+
 def test_bundled_suites_match_catalog_presets():
     from roast_my_harness.setup import repo_root
     base = repo_root()
