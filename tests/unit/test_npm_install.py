@@ -7,13 +7,16 @@ import pytest
 
 def test_npm_install_rejects_non_exact():
     import asyncio
-    from roast_my_harness.adapter import setup_handlers
+    from roast_my_harness.adapter import npm_install
 
     class FakeAgent:
         logger = type("L", (), {"info": staticmethod(lambda *a, **k: None)})()
 
+        async def exec_as_root(self, environment, **kwargs):
+            return None
+
     async def run(pkg: str):
-        await setup_handlers.npm_pi_install(FakeAgent(), object(), {"package": pkg})
+        await npm_install.npm_pi_install(FakeAgent(), object(), pkg)
 
     asyncio.run(run("context-mode@1.0.169"))
     with pytest.raises(ValueError):

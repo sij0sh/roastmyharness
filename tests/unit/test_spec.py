@@ -72,9 +72,9 @@ def test_unsafe_variant_id_rejected(tmp_path: Path):
 def test_pi_version_pins(tmp_path: Path):
     spec = load_experiment(write(tmp_path, 'pi_version = "latest"\n' + MINIMAL))
     assert spec.pi_version == "latest"
-    assert spec.agent_version_for("pi") == "latest"
+    assert spec.pi_version_for(None) == "latest"
     spec = load_experiment(write(tmp_path, 'pi_version = "0.85.1"\n' + MINIMAL))
-    assert spec.resolved_version_for("pi") == "0.85.1"
+    assert spec.resolved_pi_version_for(None) == "0.85.1"
 
 
 def test_variant_pi_version_override(tmp_path: Path):
@@ -160,6 +160,6 @@ def test_variant_spec_id_rules():
         VariantSpec(id="-leading")
 
 
-def test_agents_md_exclusive():
-    with pytest.raises(ValueError):
-        VariantSpec(id="a", agents_md="AGENTS.md", context_files=[{"path": "other.md"}])
+def test_unknown_variant_field_rejected():
+    with pytest.raises(ValueError, match="Extra inputs"):
+        VariantSpec(id="a", context_files=[{"path": "other.md"}])  # type: ignore[call-arg]

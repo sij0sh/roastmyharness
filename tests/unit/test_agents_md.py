@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from roast_my_harness.homes.builder import build_home
-from roast_my_harness.spec.models import ContextFileSpec, ExperimentSpec, TaskSelection, VariantSpec
+from roast_my_harness.spec.models import ExperimentSpec, TaskSelection, VariantSpec
 
 
 def make_spec(tmp_path: Path, variants: list[VariantSpec]) -> ExperimentSpec:
@@ -20,15 +20,7 @@ def test_agents_md_placed_at_home_root(tmp_path: Path):
     home = build_home(spec.variants[0], spec, tmp_path / "homes")
     assert (home.path / "AGENTS.md").read_text() == "Be brief.\n"
     manifest = json.loads((home.path / "variant.json").read_text())
-    assert manifest["context_files"][0]["path"] == "AGENTS.md"
-
-
-def test_context_file_legacy_form_placed_at_root(tmp_path: Path):
-    src = tmp_path / "other.md"
-    src.write_text("Rules.\n")
-    spec = make_spec(tmp_path, [VariantSpec(id="a", context_files=[ContextFileSpec(path=src)])])
-    home = build_home(spec.variants[0], spec, tmp_path / "homes")
-    assert (home.path / "AGENTS.md").read_text() == "Rules.\n"
+    assert manifest["has_agents_md"] is True
 
 
 def test_adapter_does_not_prepend_context(tmp_path: Path):

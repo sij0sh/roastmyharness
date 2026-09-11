@@ -109,13 +109,6 @@ def generate_report(
             f"{wall / 60:.0f}m |"
         )
     lines.append("")
-    reuse = provenance.get("control_reuse") or {}
-    if reuse.get("enabled") and reuse.get("total_reused"):
-        lines.append(
-            "Control resolve rates use fresh current-run trials only. "
-            "Historic control observations are disclosed separately below."
-        )
-        lines.append("")
 
     if has_dimensions(rows):
         lines.append("## Scores by dimension\n")
@@ -281,87 +274,8 @@ def generate_report(
             )
         lines.append("")
 
-    lines.append("## Historical control disclosure\n")
-    reuse = provenance.get("control_reuse") or {}
-    reused = provenance.get("reused_control_observations", 0)
-    mode = reuse.get("mode", "fresh")
-    status = reuse.get("status")
-    if reuse.get("enabled") and reuse.get("accepted") and reused:
-        lines.append(
-            f"- Historic control ({mode}, {status}): {reused} observations "
-            f"reused across {len(reuse.get('reused_tasks', []))} tasks."
-        )
-        counts = reuse.get("reused_counts", {})
-        ranges = reuse.get("reused_date_ranges", {})
-        for task in sorted(counts):
-            lo, hi = ranges.get(task, ["", ""])
-            span = f" ({lo[:10]}..{hi[:10]})" if lo else ""
-            lines.append(f"  - {task}: {counts[task]} observations{span}")
-        lines.append(
-            "- Reused controls are not contemporaneous paired observations; "
-            "paired-flip tables cover only run-matched pairs."
-        )
-        baseline = reuse.get("baseline") or {}
-        ext_variants = [v for v in variants if v != "control"]
-        if baseline and ext_variants:
-            lines.append(
-                "- Historical baseline vs fresh extension "
-                "(historical rates are labeled context, not paired evidence):"
-            )
-            lines.append("")
-            lines.append(
-                "| task | historic control | variant | extension | delta |"
-            )
-            lines.append("|---|---|---|---|---|")
-            for task in sorted(baseline):
-                hist = baseline[task]
-                hist_disp = (
-                    f"{hist.get('pass', 0)}/{hist.get('total', 0)} = "
-                    f"{100 * float(hist.get('rate', 0.0)):.1f}%"
-                )
-                for ext in ext_variants:
-                    ext_rows = [
-                        t for t in resolved_rows(list(grouped[ext].values()))
-                        if str(t.get("task")) == task
-                    ]
-                    if not ext_rows:
-                        continue
-                    passed = sum(int(t["resolved"]) for t in ext_rows)
-                    total = len(ext_rows)
-                    rate = passed / total
-                    delta_pp = 100 * (rate - float(hist.get("rate", 0.0)))
-                    lines.append(
-                        f"| {task} | {hist_disp} | {ext} | "
-                        f"{passed}/{total} = {100 * rate:.1f}% | "
-                        f"{delta_pp:+.1f}pp |"
-                    )
-            lines.append("")
-        fresh = reuse.get("fresh_control_tasks", [])
-        if fresh:
-            lines.append(f"- Control tasks run fresh: {', '.join(fresh)}.")
-        out_of_scope = reuse.get("out_of_scope_tasks", [])
-        if out_of_scope:
-            lines.append(
-                "- Control tasks out of scope (no history, "
-                f"intersection scope): {', '.join(out_of_scope)}."
-            )
-        sentinel = reuse.get("sentinel")
-        if sentinel:
-            verdict = "REJECTED (drift suspected)" if sentinel.get("reject") else "passed"
-            if not sentinel.get("informative"):
-                verdict += " but sample too small to be informative"
-            lines.append(
-                f"- Sentinel check: {sentinel.get('matches')}/"
-                f"{sentinel.get('total')} agreed, p={sentinel.get('p_value')}. "
-                f"Result: {verdict}."
-            )
-    elif reuse.get("enabled"):
-        lines.append(
-            "- No historic control observations were reused for this run "
-            f"(mode={mode}, status={status})."
-        )
-    else:
-        lines.append("- No historic control observations were reused for this run.")
+    lines.append("## Control disclosure\n")
+    lines.append("- The control arm ran fresh alongside every variant.")
 
     lines.append("\n## Interpretation guide\n")
     lines.append(

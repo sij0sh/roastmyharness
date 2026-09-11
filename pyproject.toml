@@ -37,7 +37,6 @@ packages = ["src/roast_my_harness"]
 [tool.hatch.build.targets.wheel.force-include]
 "integrations" = "roast_my_harness/bundled/integrations"
 "tasks" = "roast_my_harness/bundled/tasks"
-"examples/evals" = "roast_my_harness/bundled/examples/evals"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

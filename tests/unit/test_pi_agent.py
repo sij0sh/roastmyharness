@@ -113,26 +113,13 @@ def test_git_identity_command_deterministic():
     assert "git config --global --add safe.directory /app" in first
 
 
-async def test_run_prepends_context_files_once(tmp_path: Path):
-    """Explicit files ride in-context ahead of the task; the fairness
-    flags stay on, and resume steps rejoining the session must not see
-    the content a second time."""
+async def test_run_uses_native_context_discovery(tmp_path: Path):
+    """Native Pi semantics: staged AGENTS.md is discovered by Pi itself.
+    The harness never injects context into the prompt."""
     import types
 
-    agent = _pi_agent(
-        tmp_path,
-        "ctxhome",
-        context_files=[
-            {
-                "name": "agents-md",
-                "path": "context-files/agents-md",
-                "kind": "agents",
-            }
-        ],
-    )
-    staged = tmp_path / "ctxhome" / "context-files"
-    staged.mkdir(parents=True)
-    (staged / "agents-md").write_text("Be brief.")
+    agent = _pi_agent(tmp_path, "ctxhome", has_agents_md=True)
+    (tmp_path / "ctxhome" / "AGENTS.md").write_text("Be brief.")
     commands: list[str] = []
 
     async def fake_exec_as_agent(environment, command, **kwargs):
@@ -153,9 +140,8 @@ async def test_run_prepends_context_files_once(tmp_path: Path):
     # the harness-owned command construction only.
     await PiAgent.run.__wrapped__(agent, "Do the task.", environment=None, context=None)
     fresh = commands[-1]
-    assert "<roastmyharness-context-file" in fresh
-    assert fresh.index("Be brief.") < fresh.index("Do the task.")
-    assert "-nc" in fresh
+    assert "<roastmyharness-context-file" not in fresh
+    assert "Do the task." in fresh
     resumed["value"] = True
     await PiAgent.run.__wrapped__(agent, "Do the task.", environment=None, context=None)
     resumed_cmd = commands[-1]

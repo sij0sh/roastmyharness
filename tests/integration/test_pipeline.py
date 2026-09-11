@@ -11,21 +11,18 @@ from roast_my_harness.tasks.discover import discover_tasks
 from roast_my_harness.tasks.hashes import task_hash
 
 SPEC = """
-schema_version = 2
+schema_version = 3
 name = "integration"
 pi_version = "0.84.3"
 thinking = "high"
+model = "openai-codex/gpt-5.6-luna"
 
 [tasks]
 path = "./dataset"
 
-[control]
-enabled = true
-
 [[variants]]
 id = "airhead2"
 [[variants.extensions]]
-kind = "local"
 path = "./ext-src"
 entry = "src/index.ts"
 [variants.env]

@@ -65,7 +65,7 @@ def test_variant_type_classifies_arms():
     assert variant_type("b", variants()) == "extension+skill"
     assert variant_type("plain", variants()) == "bare"
     assert variant_type("ghost", variants()) == "unknown"
-    assert variant_type("c", [{"id": "c", "context_files": [{"kind": "agents"}]}]) == "context_file"
+    assert variant_type("c", [{"id": "c", "agents_md": "./AGENTS.md"}]) == "context_file"
 
 
 def labels():
@@ -111,7 +111,6 @@ def test_stratified_section_renders(tmp_path: Path):
         "experiment_id": "e",
         "tasks_path": str(bench),
         "spec": {"variants": variants()},
-        "control_reuse": {"enabled": False},
     }
     report = generate_report(
         tmp_path, experiment_id="e", rows=rows(), provenance=provenance

@@ -24,7 +24,6 @@ def make_spec(tasks_path: Path, *, pi_version: str = "latest") -> ExperimentSpec
     return ExperimentSpec(
         name="freeze",
         tasks=TaskSelection(path=tasks_path),
-        control=None,
         variants=[VariantSpec(id="a")],
         pi_version=pi_version,
     )
@@ -58,8 +57,8 @@ def test_moved_latest_yields_new_run_id(tmp_path: Path, monkeypatch):
     pairs = pairs_of(spec)
     freeze(monkeypatch, "0.99.1")
     first = resolve_run_spec(spec, pairs)
-    assert first.requested_agent_versions["pi"] == "latest"
-    assert first.resolved_agent_versions["pi"] == "0.99.1"
+    assert first.requested_pi_versions["pi"] == "latest"
+    assert first.resolved_pi_versions["pi"] == "0.99.1"
     freeze(monkeypatch, "0.99.2")
     second = resolve_run_spec(spec, pairs)
     assert second.run_id != first.run_id
@@ -82,8 +81,8 @@ def test_exact_pin_needs_no_registry(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(spec_models, "resolve_package_version", boom)
     spec = make_spec(make_dataset(tmp_path), pi_version=PINNED)
     resolved = resolve_run_spec(spec, pairs_of(spec))
-    assert resolved.resolved_agent_versions["pi"] == PINNED
-    assert resolved.requested_agent_versions["pi"] == PINNED
+    assert resolved.resolved_pi_versions["pi"] == PINNED
+    assert resolved.requested_pi_versions["pi"] == PINNED
 
 
 def _controller(tmp_path: Path, spec: ExperimentSpec, run_id: str) -> ExperimentController:
@@ -103,15 +102,15 @@ def test_prepare_persists_frozen_identity(tmp_path: Path, monkeypatch):
     controller = _controller(tmp_path, spec, resolved.run_id)
     controller.prepare(resolved=resolved)
     assert controller.state == "READY"
-    assert controller.version_for("pi") == "0.99.1"
+    assert controller.resolved_pi_version() == "0.99.1"
     persisted = json.loads((tmp_path / "run" / "resolved.json").read_text())
-    assert persisted["resolved_agent_versions"]["pi"] == "0.99.1"
-    assert persisted["requested_agent_versions"]["pi"] == "latest"
+    assert persisted["resolved_pi_versions"]["pi"] == "0.99.1"
+    assert persisted["requested_pi_versions"]["pi"] == "latest"
     assert persisted["run_id"] == resolved.run_id
     manifest = json.loads((tmp_path / "run" / "manifest.json").read_text())
     assert manifest["pi_version"] == "0.99.1"
     assert manifest["requested_pi_version"] == "latest"
-    assert manifest["resolved_agent_versions"]["pi"] == "0.99.1"
+    assert manifest["resolved_pi_versions"]["pi"] == "0.99.1"
     controller.store.close()
 
 
@@ -133,7 +132,7 @@ def test_resume_uses_frozen_versions_without_registry(tmp_path: Path, monkeypatc
     resumed = _controller(tmp_path, spec, resolved.run_id)
     resumed.prepare()
     assert resumed.state == "READY"
-    assert resumed.version_for("pi") == "0.99.1"
+    assert resumed.resolved_pi_version() == "0.99.1"
     resumed.store.close()
 
 
@@ -152,7 +151,7 @@ def test_plan_bindings_freeze_versions(tmp_path: Path, monkeypatch):
     dataset = make_dataset(tmp_path)
     spec_path = tmp_path / "exp.toml"
     spec_path.write_text(
-        'schema_version = 2\nname = "freeze"\npi_version = "latest"\n'
+        'schema_version = 3\nname = "freeze"\npi_version = "latest"\n'
         f"[tasks]\npath = {str(dataset)!r}\n[[variants]]\nid = \"a\"\n"
     )
     spec = load_experiment(spec_path)
@@ -161,7 +160,7 @@ def test_plan_bindings_freeze_versions(tmp_path: Path, monkeypatch):
     first = plan_bindings(spec, tasks)
     freeze(monkeypatch, "0.99.2")
     second = plan_bindings(spec, tasks)
-    assert first["resolved"]["resolved_agent_versions"]["pi"] == "0.99.1"
+    assert first["resolved"]["resolved_pi_versions"]["pi"] == "0.99.1"
     assert first["versions"]["resolved_pi_version"] == "0.99.1"
     assert second["resolved"]["run_id"] != first["resolved"]["run_id"]
     assert second != first

@@ -12,7 +12,6 @@ from pathlib import Path
 
 from roast_my_harness.errors import HomeBuildError
 from roast_my_harness.homes.manifest import (
-    ManifestContextFile,
     ManifestExtension,
     ManifestSkill,
     VariantManifest,
@@ -25,7 +24,6 @@ from roast_my_harness.homes.sources import (
 )
 from roast_my_harness.spec.hashes import variant_hash
 from roast_my_harness.spec.models import (
-    ContextFileSpec,
     ExperimentSpec,
     SkillSpec,
     VariantSpec,
@@ -57,11 +55,6 @@ def _skill_name(skill: SkillSpec) -> str:
     return _checked_component(name, "skill name")
 
 
-def _context_file_name(ctx: ContextFileSpec) -> str:
-    name = ctx.name or _source_name(ctx.path, "context-file")
-    return _checked_component(name, "context file name")
-
-
 def _checked_component(value: str, what: str) -> str:
     try:
         return _safe_relative_component(value, what)
@@ -78,9 +71,6 @@ def compute_source_hashes(variant: VariantSpec) -> dict[str, str]:
     for skill in variant.skills:
         name = _skill_name(skill)
         hashes[f"skill:{name}"] = source_tree_hash(skill.path)
-    for ctx in variant.context_files:
-        name = _context_file_name(ctx)
-        hashes[f"ctx:{name}"] = source_file_hash(ctx.path)
     if variant.agents_md is not None:
         hashes["agents_md"] = source_file_hash(variant.agents_md)
     if variant.settings is not None:
@@ -88,29 +78,25 @@ def compute_source_hashes(variant: VariantSpec) -> dict[str, str]:
     return hashes
 
 
-def compute_variant_hash(variant, pi_version, *, agent="pi", agent_version=None) -> str:
+def compute_variant_hash(variant, pi_version, *, resolved_pi_version=None) -> str:
     return variant_hash(variant, pi_version, compute_source_hashes(variant),
-                        agent=agent, agent_version=agent_version)
+                        resolved_pi_version=resolved_pi_version)
 
 
-def resolve_arm_agent(spec, variant, *, agent_version=None):
-    pin = variant.pi_version or spec.pi_version if variant.id != "control" else spec.pi_version
-    if agent_version is not None:
-        return "pi", agent_version
-    return "pi", spec.resolved_pi_version_for(variant if variant.id != "control" else None)
+def resolve_arm_pi_version(spec, variant, *, pi_version=None):
+    if pi_version is not None:
+        return pi_version
+    return spec.resolved_pi_version_for(variant if variant.id != "control" else None)
 
 
-def build_home(variant, spec, homes_root, *, agent_version=None, runtime_agent_install=False) -> HomeBuild:
-    agent_id, resolved_version = resolve_arm_agent(spec, variant, agent_version=agent_version)
-    for ctx in variant.context_files:
-        if not ctx.path.is_file():
-            raise HomeBuildError(f"context file {_context_file_name(ctx)!r} missing at {ctx.path}")
+def build_home(variant, spec, homes_root, *, pi_version=None, runtime_agent_install=False) -> HomeBuild:
+    resolved_version = resolve_arm_pi_version(spec, variant, pi_version=pi_version)
     if variant.agents_md is not None and not variant.agents_md.is_file():
         raise HomeBuildError(f"agents_md missing at {variant.agents_md}")
     if variant.settings is not None and not variant.settings.is_file():
         raise HomeBuildError(f"settings file missing at {variant.settings}")
     effective_pin = spec.pi_version_for(variant if variant.id != "control" else None)
-    v_hash = compute_variant_hash(variant, effective_pin, agent=agent_id, agent_version=resolved_version)
+    v_hash = compute_variant_hash(variant, effective_pin, resolved_pi_version=resolved_version)
     home = homes_root / v_hash[:16]
     manifest_path = home / "build-manifest.json"
     if home.is_dir() and (home / "variant.json").is_file() and manifest_path.is_file():
@@ -151,21 +137,10 @@ def build_home(variant, spec, homes_root, *, agent_version=None, runtime_agent_i
             dst.mkdir(parents=True, exist_ok=True)
             copy_source_tree(skill.path, dst)
             skills.append(ManifestSkill(name=name, path=f"skills/{name}"))
-        context_files: list[ManifestContextFile] = []
-        agents_src = None
-        if variant.agents_md is not None:
-            agents_src = variant.agents_md
-        elif variant.context_files:
-            agents_src = variant.context_files[0].path
-        if agents_src is not None:
-            (tmp / "AGENTS.md").write_bytes(Path(agents_src).read_bytes())
-            context_files.append(ManifestContextFile(name="AGENTS.md", path="AGENTS.md", kind="agents"))
-            for ctx in variant.context_files[1:]:
-                name = _context_file_name(ctx)
-                dst = tmp / "context-files" / name
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_bytes(ctx.path.read_bytes())
-                context_files.append(ManifestContextFile(name=name, path=f"context-files/{name}", kind=ctx.kind))
+        has_agents_md = variant.agents_md is not None
+        if has_agents_md:
+            assert variant.agents_md is not None
+            (tmp / "AGENTS.md").write_bytes(Path(variant.agents_md).read_bytes())
         (tmp / "settings.json").write_text(json.dumps(_settings_payload(variant, entries), indent=2) + "\n")
         npm_packages = [ext.package for ext in variant.extensions if ext.kind == "npm"]
         manifest = VariantManifest(
@@ -177,11 +152,10 @@ def build_home(variant, spec, homes_root, *, agent_version=None, runtime_agent_i
             model_id=spec.model.full_id(),
             extensions=manifest_exts,
             skills=skills,
-            context_files=context_files,
+            has_agents_md=has_agents_md,
             npm_packages=npm_packages,
             env={},
             env_from_host=list(variant.env_from_host),
-            setup=[],
             egress_urls=list(variant.egress_urls),
             pi_flags=list(variant.pi_flags),
             runtime_agent_install=runtime_agent_install,
@@ -225,7 +199,6 @@ def _settings_payload(variant, entries: list[str]) -> dict:
 def _validate_sources(variant) -> None:
     paths: list[Path] = [e.path for e in variant.extensions if e.kind == "local"]
     paths += [s.path for s in variant.skills]
-    paths += [c.path.parent for c in variant.context_files]
     if variant.agents_md is not None:
         paths.append(variant.agents_md.parent)
     if variant.settings is not None:
@@ -237,10 +210,8 @@ def _validate_sources(variant) -> None:
 
 def _assert_no_instruction_leaks(home: Path) -> None:
     allowed = {home / "AGENTS.md"}
-    staged = home / "context-files"
     leaked = [str(p.relative_to(home)) for p in home.rglob("*")
-              if p.is_file() and p.name in INSTRUCTION_FILES
-              and p not in allowed and staged not in p.parents]
+              if p.is_file() and p.name in INSTRUCTION_FILES and p not in allowed]
     if leaked:
         raise HomeBuildError(f"instruction files leaked into home: {leaked}")
 

@@ -67,7 +67,7 @@ def test_golden_pier_argv() -> None:
     argv = pier_mod.build_run_args(
         task_root=Path("/tasks"), jobs_dir=Path("/jobs"), job_name="golden-pi",
         manifest_path=Path("/staging/variant.json"), model_id="openai-codex/gpt-5.6-luna",
-        thinking="high", pi_version="0.84.3", n_concurrent=2, agent="pi",
+        thinking="high", pi_version="0.84.3", n_concurrent=2,
     )
     argv[0] = "<pier>"
     _load_or_update("pi.argv.txt", "\n".join(argv) + "\n")

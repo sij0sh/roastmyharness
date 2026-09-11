@@ -24,7 +24,7 @@ def test_run_command_shape():
     assert "pi --mode json" in command
     assert "--model openai-codex/gpt-5.6-luna" in command
     assert "--thinking high" in command
-    assert "--no-skills --no-prompt-templates --no-themes -nc" in command
+    assert "--no-skills --no-prompt-templates --no-themes" in command
     assert "--skill /opt/pi-home/skills/s" in command
     assert "--flag-a" in command
     assert "'fix the bug; now'" in command
@@ -79,6 +79,6 @@ def test_bash_only_flags_follow_fairness():
     command = build_run_command(
         **_base_kwargs(extra_flags=["--no-builtin-tools", "--tools=bash"])
     )
-    fairness_at = command.index("--no-skills --no-prompt-templates --no-themes -nc")
+    fairness_at = command.index("--no-skills --no-prompt-templates --no-themes")
     assert command.index("--no-builtin-tools") > fairness_at
     assert command.index("--tools=bash") > fairness_at

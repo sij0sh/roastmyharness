@@ -25,9 +25,6 @@ provider = "openai-codex"
 [tasks]
 path = "{tasks}"
 
-[control]
-enabled = true
-
 [[variants]]
 id = "bare"
 """

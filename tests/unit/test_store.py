@@ -8,7 +8,7 @@ import pytest
 
 from roast_my_harness.errors import RunBusyError
 from roast_my_harness.store.database import connect
-from roast_my_harness.store.locking import ExperimentLock
+from roast_my_harness.host_lock import ExperimentLock
 from roast_my_harness.store.migrations import MIGRATIONS, apply_migrations
 from roast_my_harness.store.repository import Repository
 
@@ -25,20 +25,6 @@ def test_migrations_idempotent(tmp_path: Path):
         for row in conn.execute("PRAGMA table_info(control_observations)").fetchall()
     }
     assert {"eligible", "source"} <= columns
-
-
-def test_control_pool_excludes_current_experiment(tmp_path: Path):
-    repo = Repository(tmp_path / "t.db")
-    for trial_id, source in (("old", "experiment:old"), ("own", "experiment:current")):
-        repo.record_control_observation(
-            "cohort", "task", trial_id, True, 1.0,
-            "2026-08-01T00:00:00+00:00", source=source,
-        )
-    rows = repo.control_pool(
-        "cohort", "task", exclude_experiment_id="current"
-    )
-    assert [row["trial_id"] for row in rows] == ["old"]
-    repo.close()
 
 
 def test_experiment_lifecycle(tmp_path: Path):

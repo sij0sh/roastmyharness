@@ -169,12 +169,12 @@ def test_preset_errors(tmp_path: Path):
         load_experiment(write_spec(tmp_path, root, 'preset = "nope"\n'))
     bare = tmp_path / "bare"
     bare.mkdir()
-    with pytest.raises(SpecError, match="needs a benchmark catalog"):
+    with pytest.raises(SpecError, match="needs catalog"):
         load_experiment(write_spec(tmp_path, bare, 'preset = "quick"\n'))
     (root / "t3" / "task.toml").unlink()
     (root / "t3" / "instruction.md").unlink()
     (root / "t3").rmdir()
-    with pytest.raises(SpecError, match="missing under"):
+    with pytest.raises(SpecError, match="missing tasks"):
         load_experiment(write_spec(tmp_path, root, 'preset = "full"\n'))
 
 

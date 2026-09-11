@@ -11,7 +11,7 @@ from roast_my_harness.spec.hashes import is_default_evaluation_dump, resolved_ex
 from roast_my_harness.spec.models import ExperimentSpec
 from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
 
-RESOLVED_SCHEMA_VERSION = 1
+RESOLVED_SCHEMA_VERSION = 2
 
 
 class ResolvedRunSpec(BaseModel):
@@ -19,8 +19,8 @@ class ResolvedRunSpec(BaseModel):
     resolved_schema_version: int = RESOLVED_SCHEMA_VERSION
     experiment_name: str
     requested_spec: dict[str, Any]
-    requested_agent_versions: dict[str, str]
-    resolved_agent_versions: dict[str, str]
+    requested_pi_versions: dict[str, str]
+    resolved_pi_versions: dict[str, str]
     tasks: list[tuple[str, str]]
     catalog_revision: str | None = None
     catalog_hash: str | None = None
@@ -52,22 +52,20 @@ def resolve_run_spec(
     catalog_hash: str | None = None,
     eval: EvalFrozen | None = None,
 ) -> ResolvedRunSpec:
-    pins = {spec.pi_version_for(v): v.id for v in spec.arms()}
     requested = {"pi": spec.pi_version}
     for variant in spec.arms():
         pin = spec.pi_version_for(variant if variant.id != "control" else None)
         requested[f"pi:{variant.id}"] = pin
-    resolved_versions = dict(requested)
-    from roast_my_harness.adapter.registry import PI_AGENT
-    from roast_my_harness.adapter.versions import LATEST, resolve_package_version
-    for key, pin in list(resolved_versions.items()):
-        if pin == LATEST:
-            resolved_versions[key] = resolve_package_version(PI_AGENT.npm_package, pin)
+    resolved_versions = {}
+    for key in requested:
+        variant_id = key.split(":", 1)[1] if ":" in key else None
+        variant = next((v for v in spec.arms() if v.id == variant_id), None)
+        resolved_versions[key] = spec.resolved_pi_version_for(variant)
     resolved = ResolvedRunSpec(
         experiment_name=spec.name,
         requested_spec=spec.model_dump(mode="json", exclude={"tasks": {"path"}}),
-        requested_agent_versions=requested,
-        resolved_agent_versions=resolved_versions,
+        requested_pi_versions=requested,
+        resolved_pi_versions=resolved_versions,
         tasks=list(task_pairs),
         catalog_revision=catalog_revision,
         catalog_hash=catalog_hash,

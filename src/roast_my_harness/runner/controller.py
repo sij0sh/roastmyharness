@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from roast_my_harness import ADAPTER_PROTOCOL_VERSION, __version__
-from roast_my_harness.adapter.registry import PI_AGENT
+from roast_my_harness.adapter.registry import PI_IMPORT_PATH
 from roast_my_harness.auth import staging
 from roast_my_harness.errors import PierError
 from roast_my_harness.evals.registry import resolve_eval
@@ -32,7 +32,7 @@ from roast_my_harness.report import markdown as report_markdown
 from roast_my_harness.report.collect import pending_replicates
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import probe as probe_mod
-from roast_my_harness.runner import process as process_mod
+from roast_my_harness import host_process as process_mod
 from roast_my_harness.runner.patch_guard import (
     INFRA_ARTIFACT_COPY,
     INVALID_EMPTY_PATCH,
@@ -130,25 +130,22 @@ class ExperimentController:
 
     RESOLVED_NAME = "resolved.json"
 
-    def version_for(self, agent_id: str = "pi") -> str:
-        if self.resolved is not None:
-            for key in (agent_id, "pi", f"pi:control"):
-                if key in self.resolved.resolved_agent_versions:
-                    return self.resolved.resolved_agent_versions[key]
-        return self.spec.resolved_version_for("pi")
+    def resolved_pi_version(self) -> str:
+        if self.resolved is not None and "pi" in self.resolved.resolved_pi_versions:
+            return self.resolved.resolved_pi_versions["pi"]
+        return self.spec.resolved_pi_version_for(None)
 
     def pi_version_for_variant(self, variant_id: str) -> str:
         if self.resolved is not None:
             key = f"pi:{variant_id}"
-            if key in self.resolved.resolved_agent_versions:
-                return self.resolved.resolved_agent_versions[key]
+            if key in self.resolved.resolved_pi_versions:
+                return self.resolved.resolved_pi_versions[key]
         return self.spec.pi_version
 
-    def _frozen_versions(self) -> dict[str, str] | None:
-        """Frozen agent versions for callees taking a versions map."""
+    def _frozen_pi_versions(self) -> dict[str, str] | None:
         if self.resolved is None:
             return None
-        return dict(self.resolved.resolved_agent_versions)
+        return dict(self.resolved.resolved_pi_versions)
 
     def _resolved_path(self) -> Path:
         return self.run_dir / self.RESOLVED_NAME
@@ -277,7 +274,7 @@ class ExperimentController:
                 variant,
                 self.spec,
                 homes_root,
-                agent_version=self.pi_version_for_variant(variant.id),
+                pi_version=self.pi_version_for_variant(variant.id),
                 runtime_agent_install=force_runtime,
             )
             staged = staging.stage_home(
@@ -317,7 +314,7 @@ class ExperimentController:
                     jobs=self.jobs,
                     run_dir=self.run_dir,
                     env=self._pier_env(),
-                    resolved_versions=self._frozen_versions(),
+                    resolved_versions=self._frozen_pi_versions(),
                     catalog=load_catalog(self.spec.tasks.path),
                 )
             except probe_mod.ProbeTimeoutError as e:
@@ -441,7 +438,7 @@ class ExperimentController:
         return [task.task_id for task in tasks]
 
     def _write_manifest(self, tasks) -> None:
-        frozen = self._frozen_versions() or {}
+        frozen = self._frozen_pi_versions() or {}
         manifest = {
             "experiment_id": self.experiment_id,
             "spec_hash": compute_spec_hash(self.spec),
@@ -449,9 +446,7 @@ class ExperimentController:
             "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
             # pi_version is the exact version that ran (frozen at
             # prepare); requested_pi_version is the pin as written.
-            "pi_version": self.version_for("pi")
-            if "pi" in set(agents.values())
-            else self.spec.pi_version,
+            "pi_version": self.resolved_pi_version(),
             "requested_pi_version": self.spec.pi_version,
             "preset": self.spec.tasks.preset,
             "catalog_revision": self.resolved.catalog_revision
@@ -466,10 +461,10 @@ class ExperimentController:
             }
             if self.resolved is not None
             else None,
-            "requested_agent_versions": dict(self.resolved.requested_agent_versions)
+            "requested_pi_versions": dict(self.resolved.requested_pi_versions)
             if self.resolved is not None
             else {},
-            "resolved_agent_versions": frozen,
+            "resolved_pi_versions": frozen,
             "pier_version": self.spec.pier_version,
             "model": self.spec.model.model_dump(mode="json"),
             "thinking": self.spec.thinking,
@@ -477,11 +472,9 @@ class ExperimentController:
             "created_at": datetime.now(UTC).isoformat(),
             "tasks_path": str(self.spec.tasks.path),
             "tasks": {t.task_id: compute_task_hash(t.path) for t in tasks},
-            "agents": {
-                "pi": {
-                    "import_path": PI_AGENT.import_path,
-                    "agent_version": self.version_for("pi"),
-                }
+            "pi": {
+                "import_path": PI_IMPORT_PATH,
+                "pi_version": self.resolved_pi_version(),
             },
             "variants": {
                 v.variant_id: {
@@ -703,9 +696,7 @@ class ExperimentController:
         ):
             self._progress("rerun filter matched no runnable cells")
         n_concurrent = self.spec.concurrency.effective_per_variant(len(missing_by_launch))
-        arm_by_id = {arm.id: arm for arm in self.spec.arms()}
         for job in self.jobs.values():
-            agent_id = "pi"
             for replicate in range(1, repetitions + 1):
                 missing = missing_by_launch.get((job.variant_id, replicate))
                 if not missing:
@@ -724,7 +715,6 @@ class ExperimentController:
                     pi_version=self.pi_version_for_variant(job.variant_id),
                     n_concurrent=n_concurrent,
                     include_tasks=missing,
-                    agent=agent_id,
                 )
                 log_name = (
                     f"{job.variant_id}-r{replicate}.log" if multi else f"{job.variant_id}.log"
@@ -987,16 +977,11 @@ class ExperimentController:
         manifest["finished_at"] = datetime.now(UTC).isoformat()
         manifest["secret_scan_scope"] = "all regular run artifacts after staging cleanup"
         manifest["secret_scan_hits"] = secret_hits
-        manifest["control_reuse"] = {"mode": "fresh"}
-        manifest["reused_control_observations"] = 0
         atomic_write_text(
             self.run_dir / "manifest.json",
             json.dumps(manifest, indent=2) + "\n",
         )
         return manifest
-
-    def reuse_summary(self) -> dict[str, Any]:
-        return {"mode": "fresh", "total_reused": 0}
 
     def fail_setup(self, error: Exception) -> None:
         """Record a preparation failure and remove partial staged homes."""

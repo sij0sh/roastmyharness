@@ -60,8 +60,7 @@ def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
         exts = [e.model_copy(update={"path": absolute(e.path, base_dir)}) if e.kind == "local" else e
                 for e in variant.extensions]
         skills = [s.model_copy(update={"path": absolute(s.path, base_dir)}) for s in variant.skills]
-        ctx = [c.model_copy(update={"path": absolute(c.path, base_dir)}) for c in variant.context_files]
-        v = variant.model_copy(update={"extensions": exts, "skills": skills, "context_files": ctx})
+        v = variant.model_copy(update={"extensions": exts, "skills": skills})
         if v.agents_md is not None:
             v = v.model_copy(update={"agents_md": absolute(v.agents_md, base_dir)})
         if v.settings is not None:

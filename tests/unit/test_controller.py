@@ -16,8 +16,6 @@ schema_version = 3
 name = "ctrl-test"
 [tasks]
 path = "./dataset"
-[control]
-enabled = true
 [[variants]]
 id = "a"
 [variants.env]
@@ -85,19 +83,7 @@ def test_prepare_and_snapshot(tmp_path: Path):
     (extra / "task.toml").write_text('schema_version = "1.3"\n')
     (extra / "instruction.md").write_text("task t3\n")
     assert observer.snapshot()["tasks"] == ["t1", "t2"]
-    manifest_path = tmp_path / "run" / "manifest.json"
-    manifest = _json.loads(manifest_path.read_text())
-    manifest["control_reuse"] = {
-        "accepted": True,
-        "reused_tasks": ["t2"],
-    }
-    manifest_path.write_text(_json.dumps(manifest))
-    historic_observer = ExperimentController(
-        spec, exp_id, tmp_path / "run", repo, None
-    )
-    historic_observer.load_for_observation()
-    assert historic_observer.snapshot()["matrix"]["control"]["t2"] == "H"
-
+    assert observer.snapshot()["matrix"]["control"] == {"t1": ".", "t2": "."}
 
     (extra / "task.toml").unlink()
     (extra / "instruction.md").unlink()

@@ -32,8 +32,7 @@ class ExperimentSummary(_Response):
     repetitions: int = 1
     evaluation: str = "bundled/deepswe"
     hypothesis: str = ""
-    control: str = "excluded"
-    control_reuse: Literal["fresh", "historic"] | None = None
+    control: str = "fresh"
     task_ids: list[str] = []
     tasks_path: str | None = None
     arm_ids: list[str] = []

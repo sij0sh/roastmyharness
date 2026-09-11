@@ -164,23 +164,6 @@ class SkillSpec(BaseModel):
         return _safe_relative_component(value, "skill name") if value else value
 
 
-class ContextFileSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    kind: Literal["agents"] = "agents"
-    path: Path
-    name: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _from_string(cls, value: Any) -> Any:
-        return {"path": value} if isinstance(value, str) else value
-
-    @field_validator("name")
-    @classmethod
-    def _safe_name(cls, value: str | None) -> str | None:
-        return _safe_relative_component(value, "context file name") if value else value
-
-
 class VariantSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -190,7 +173,6 @@ class VariantSpec(BaseModel):
     skills: list[SkillSpec] = Field(default_factory=list)
     agents_md: Path | None = None
     settings: Path | None = None
-    context_files: list[ContextFileSpec] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     env_from_host: list[str] = Field(default_factory=list)
     egress_urls: list[str] = Field(default_factory=list)
@@ -254,13 +236,6 @@ class VariantSpec(BaseModel):
             if name not in ALLOWED_PI_FLAGS:
                 raise ValueError(f"pi_flags entry {flag!r} not allowlisted: {sorted(ALLOWED_PI_FLAGS)}")
         return value
-
-    @model_validator(mode="after")
-    def _agents_md_exclusive(self) -> VariantSpec:
-        if self.agents_md is not None and self.context_files:
-            raise ValueError("set agents_md or context_files, not both")
-        return self
-
 
 class TaskSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -374,38 +349,20 @@ class ExperimentSpec(BaseModel):
             raise ValueError(f"at most {MAX_VARIANTS} variants, got {len(value)}")
         return value
 
-    def resolved_agents(self) -> dict[str, str]:
-        return {"control": "pi", **{v.id: "pi" for v in self.variants}}
-
-    def agent_version_for(self, agent_id: str = "pi") -> str:
-        if agent_id != "pi":
-            raise ValueError(f"unknown agent {agent_id!r}; RoastMyHarness is Pi-only")
-        return self.pi_version
-
     def pi_version_for(self, variant: VariantSpec | None = None) -> str:
         if variant is not None and variant.pi_version is not None:
             return variant.pi_version
         return self.pi_version
 
-    def resolved_version_for(self, agent_id: str = "pi") -> str:
-        from roast_my_harness.adapter.registry import get_agent
-        pin = self.agent_version_for(agent_id)
-        if pin == LATEST:
-            return resolve_package_version(get_agent(agent_id).npm_package, pin)
-        return pin
-
     def resolved_pi_version_for(self, variant: VariantSpec | None = None) -> str:
-        from roast_my_harness.adapter.registry import PI_AGENT
+        from roast_my_harness.adapter.registry import PI_NPM_PACKAGE
         pin = self.pi_version_for(variant)
         if pin == LATEST:
-            return resolve_package_version(PI_AGENT.npm_package, pin)
+            return resolve_package_version(PI_NPM_PACKAGE, pin)
         return pin
 
     def arms(self) -> list[VariantSpec]:
         return [VariantSpec(id="control", name="Bare control"), *self.variants]
-
-    def model_for(self, variant: VariantSpec | None = None) -> ModelSpec:
-        return self.model
 
     def peak_concurrency(self) -> int:
         return self.concurrency.peak_parallel(len(self.arms()) * max(self.execution.repetitions, 1))

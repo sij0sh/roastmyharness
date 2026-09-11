@@ -35,32 +35,6 @@ def skill_flags(skills: list[str]) -> str:
     )
 
 
-def context_file_block(name: str, content: str) -> str:
-    """One explicit context file as a delimited instruction prefix."""
-    return (
-        f'<roastmyharness-context-file name="{name}">\n'
-        f"{content.strip()}\n"
-        "</roastmyharness-context-file>"
-    )
-
-
-def with_context_files(
-    instruction: str, files: list[tuple[str, str]]
-) -> str:
-    """Prepend explicit context files to the trial instruction.
-
-    Pi offers no per-file context flag, so declared files ride in-context
-    while the fairness flags keep implicit discovery disabled. Empty input
-    returns the instruction unchanged.
-    """
-    if not files:
-        return instruction
-    blocks = "\n\n".join(
-        context_file_block(name, content) for name, content in files
-    )
-    return f"{blocks}\n\n{instruction}"
-
-
 def build_run_command(
     *,
     model: str,
@@ -74,11 +48,9 @@ def build_run_command(
 ) -> str:
     """The in-container agent invocation, streamed through the event stamper.
 
-    binary and fairness_flags let pi-family forks (omp) reuse the command
-    shape while pinning their own fairness contract. resume appends
-    --continue so a staged follow-up step rejoins the same pi session
-    instead of starting a fresh conversation (context accumulates across
-    steps; the worktree is already shared).
+    resume appends --continue so a staged follow-up step rejoins the same
+    pi session instead of starting a fresh conversation (context
+    accumulates across steps; the worktree is already shared).
     """
     parts = [
         f"export PI_CODING_AGENT_DIR={shlex.quote(REMOTE_HOME)};",

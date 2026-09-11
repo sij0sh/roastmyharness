@@ -86,21 +86,6 @@ def test_host_provider_full_id():
     assert m.full_id() == "z-ai-openai/glm-5.3"
 
 
-def test_custom_provider_still_works(tmp_path: Path):
-    m = ModelSpec(
-        id="my-model",
-        provider="custom",
-        provider_id="my-prov",
-        models_json=tmp_path / "m.json",
-    )
-    assert m.full_id() == "my-prov/my-model"
-
-
-def test_custom_still_requires_fields():
-    with pytest.raises(ValueError):
-        ModelSpec(provider="custom")
-
-
 # ------------------------------------------------------------- service --
 
 
@@ -179,7 +164,7 @@ id = "a"
     cached = tmp_path / "cached"
     (cached / "extensions").mkdir(parents=True)
     (cached / "variant.json").write_text("{}")
-    with pytest.raises(AuthError, match="changed since the spec was loaded"):
+    with pytest.raises(AuthError, match="changed since load"):
         staging.stage_home(cached, tmp_path / "staged", spec)
 
 

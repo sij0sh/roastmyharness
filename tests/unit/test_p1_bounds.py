@@ -83,7 +83,6 @@ def test_peak_concurrency_in_preview(tmp_path: Path):
     spec = ExperimentSpec(
         name="t",
         tasks=TaskSelection(path=tmp_path),
-        control=None,
         concurrency=ConcurrencySpec(per_variant=4, max_parallel=6),
         variants=[VariantSpec(id="a"), VariantSpec(id="b")],
     )
@@ -162,10 +161,7 @@ def test_no_allow_unsafe_source_flag_anywhere():
     from roast_my_harness import cli
     from roast_my_harness.homes import builder
 
-    validate_sig = inspect.signature(cli.validate)
-    assert "allow_unsafe_source" not in validate_sig.parameters
-    run_sig = inspect.signature(cli.run)
-    assert "allow_unsafe_source" not in run_sig.parameters
+    assert "allow_unsafe_source" not in str(cli.app)
     build_sig = inspect.signature(builder.build_home)
     assert "allow_unsafe_source" not in build_sig.parameters
 

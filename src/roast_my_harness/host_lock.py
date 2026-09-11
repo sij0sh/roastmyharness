@@ -74,3 +74,42 @@ class ExperimentLock:
                     pass
         finally:
             handle.close()
+
+
+def lock_is_free(run_dir: Path) -> bool:
+    """True when no process holds the experiment lock for run_dir.
+
+    Never creates or mutates lock files; opens the existing file read-only
+    and asks whether an exclusive lock would succeed. A missing lock file
+    counts as free. Errors degrade to False so callers treat the runner as
+    live rather than stopping the watch on a transient failure.
+    """
+    path = run_dir / ".experiment.lock"
+    if not path.is_file():
+        return True
+    try:
+        handle = path.open("r", encoding="utf-8")
+    except OSError:
+        return False
+    try:
+        if fcntl is not None:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (BlockingIOError, PermissionError, OSError):
+                return False
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return True
+        import msvcrt
+        try:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        try:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        return True
+    finally:
+        handle.close()

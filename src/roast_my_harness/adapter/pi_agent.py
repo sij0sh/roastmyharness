@@ -34,7 +34,7 @@ from pier.models.trajectories import FinalMetrics
 from pier.utils.trajectory_metrics import populate_context_from_final_metrics
 
 from roast_my_harness.adapter import command as cmd
-from roast_my_harness.adapter import setup_handlers
+from roast_my_harness.adapter import npm_install
 from roast_my_harness.adapter.atif import write_trajectory
 from roast_my_harness.adapter.versions import LATEST, validate_agent_pin
 from roast_my_harness.constants import (
@@ -286,7 +286,7 @@ class PiAgent(BaseInstalledAgent):
             urls.extend(_BUILTIN_PI_URLS)
         urls.extend(self._manifest.get("egress_urls") or [])
         return allowlist_from_urls(
-            urls, default_domains=setup_handlers.install_domains()
+            urls, default_domains=npm_install.install_domains()
         )
 
     # ------------------------------------------------------------ setup ---
@@ -296,9 +296,7 @@ class PiAgent(BaseInstalledAgent):
         await self._upload_home(environment)
         await self._ensure_git_identity(environment)
         for package in self._manifest.get("npm_packages") or []:
-            await setup_handlers.npm_pi_install(
-                self, environment, {"package": package}
-            )
+            await npm_install.npm_pi_install(self, environment, package)
 
     async def _upload_home(self, environment: BaseEnvironment) -> None:
         """Upload the staged home world-readable, auth.json agent-writable.
@@ -366,29 +364,6 @@ class PiAgent(BaseInstalledAgent):
             resume=resume,
         )
         await self.exec_as_agent(environment, command=command, env=run_env)
-
-    def _staged_context_files(self) -> list[tuple[str, str]]:
-        """(name, content) of declared context files from the staged home.
-
-        Loud on a missing staged file: silent non-delivery would
-        invalidate the arm without a trace.
-        """
-        files: list[tuple[str, str]] = []
-        for entry in self._manifest.get("context_files") or []:
-            rel = entry.get("path", "")
-            name = entry.get("name", "") or rel
-            if not rel:
-                continue
-            staged = self._home_dir / rel
-            try:
-                content = staged.read_text(encoding="utf-8")
-            except OSError as error:
-                raise RuntimeError(
-                    f"context file {name!r} missing from staged home: "
-                    f"{staged} ({error})"
-                ) from error
-            files.append((name, content))
-        return files
 
     async def _prior_session_exists(self, environment: BaseEnvironment) -> bool:
         """True when a pi session from an earlier step awaits resume.

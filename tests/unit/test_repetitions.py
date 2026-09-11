@@ -21,8 +21,6 @@ name = "reps"
 path = "./dataset"
 [execution]
 repetitions = 2
-[control]
-enabled = true
 [[variants]]
 id = "a"
 """

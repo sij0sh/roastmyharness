@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import os
-import signal
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from roast_my_harness.runner import pier as pier_mod
-from roast_my_harness.runner import process as process_mod
+from roast_my_harness import host_process as process_mod
 from roast_my_harness.tasks.discover import discover_tasks
 
 SMOKE_MIN_TRIALS = 20
@@ -54,30 +53,30 @@ def probe_argv(
     jobs: dict[str, Any],
     task_id: str,
     variant_id: str,
+    pi_version: str | None = None,
     agent_version: str | None = None,
 ) -> list[str]:
     """Pier argv for a one-task, one-concurrent probe run.
 
-    agent_version pins the install (the prepare-time frozen value); when
+    pi_version pins the install (the prepare-time frozen value); when
     None the pin resolves live, which callers must only use outside a
-    frozen run.
+    frozen run. agent_version stays as a deprecated alias of pi_version.
     """
     job = jobs[variant_id]
-    agent_id = spec.resolved_agents()[variant_id]
-    if agent_version is None:
-        agent_version = spec.resolved_version_for(agent_id)
     arm = next(a for a in spec.arms() if a.id == variant_id)
+    pin = pi_version if pi_version is not None else agent_version
+    if pin is None:
+        pin = spec.resolved_pi_version_for(arm if arm.id != "control" else None)
     return pier_mod.build_run_args(
         task_root=spec.tasks.path,
         jobs_dir=job.staged.parent / "probe-jobs",
         job_name=f"smoke-{variant_id}",
         manifest_path=job.manifest_path,
-        model_id=spec.model_for(arm).full_id(),
+        model_id=spec.model.full_id(),
         thinking=spec.thinking,
-        pi_version=agent_version,
+        pi_version=pin,
         n_concurrent=1,
         include_tasks=[task_id],
-        agent=agent_id,
     )
 
 
@@ -136,14 +135,13 @@ async def run_probe(
     tasks = discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
     task_id = select_probe_task(tasks, catalog)
     variant_id = select_variant(spec, jobs)
-    agent_id = spec.resolved_agents()[variant_id]
-    frozen = (resolved_versions or {}).get(agent_id)
+    frozen = (resolved_versions or {}).get(f"pi:{variant_id}", (resolved_versions or {}).get("pi"))
     argv = probe_argv(
         spec=spec,
         jobs=jobs,
         task_id=task_id,
         variant_id=variant_id,
-        agent_version=frozen,
+        pi_version=frozen,
     )
     log_path = run_dir / "logs" / f"smoke-{variant_id}.log"
     proc = process_mod.VariantProcess(f"smoke-{variant_id}", argv, log_path)
@@ -173,20 +171,7 @@ async def run_probe(
 
 
 async def _kill_probe(proc: process_mod.VariantProcess) -> None:
-    if proc.proc is None or proc.proc.returncode is not None:
-        return
-    try:
-        os.killpg(os.getpgid(proc.proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        return
-    try:
-        await asyncio.wait_for(proc.proc.wait(), timeout=PROBE_KILL_GRACE_SEC)
-    except TimeoutError:
-        try:
-            os.killpg(os.getpgid(proc.proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-        await proc.proc.wait()
+    await process_mod.kill_after_grace(proc, PROBE_KILL_GRACE_SEC)
 
 
 def run_probe_sync(**kwargs: Any) -> ProbeResult:

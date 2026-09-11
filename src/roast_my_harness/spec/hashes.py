@@ -41,10 +41,9 @@ def variant_hash(
     pi_version: str,
     source_hashes: dict[str, str] | None = None,
     *,
-    agent: str = "pi",
-    agent_version: str | None = None,
+    resolved_pi_version: str | None = None,
 ) -> str:
-    variant_data = variant.model_dump(mode="json")
+    variant_data = variant.model_dump(mode="json", exclude={"env": True})
     return sha256_canonical(
         {
             "variant": variant_data,
@@ -52,8 +51,7 @@ def variant_hash(
             "env_from_host": sorted(variant.env_from_host),
             "sources": source_hashes or {},
             "pi_version": pi_version,
-            "agent": agent,
-            "agent_version": agent_version,
+            "resolved_pi_version": resolved_pi_version,
             "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
         }
     )

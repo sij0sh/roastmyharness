@@ -87,7 +87,7 @@ def variant_type(variant_id: str, variants: list[dict]) -> str:
         kinds.append("extension")
     if spec.get("skills"):
         kinds.append("skill")
-    if spec.get("context_files"):
+    if spec.get("agents_md"):
         kinds.append("context_file")
     if not kinds:
         return "bare" if spec else "unknown"

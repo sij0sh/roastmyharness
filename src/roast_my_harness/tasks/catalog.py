@@ -1,8 +1,8 @@
 """Benchmark catalog: task metadata outside task directories.
 
 Task content hashes walk every file under each task dir, so duration or
-difficulty labels stored inside a task dir would invalidate
-historic-control compatibility on every label edit. Labels live here, in
+difficulty labels stored inside a task dir would invalidate run identity
+on every label edit. Labels live here, in
 one catalog file per benchmark root, with their own catalog_hash in run
 provenance. Unknown tasks read as unlabeled; labels without a recorded
 basis are rejected.

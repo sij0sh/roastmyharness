@@ -1,7 +1,7 @@
-"""Agent orchestration service: prepare/start/status/cancel/report.
+"""Experiment orchestration service: prepare/start/status/cancel/report.
 
-One typed surface shared by the Typer CLI, the Pi extension, and the MCP
-server. Plans are persisted under data_dir()/plans and bound to the exact
+One typed surface shared by the private bridge CLI and the Pi extension.
+Plans are persisted under data_dir()/plans and bound to the exact
 bytes that were approved; start rechecks those bindings, is idempotent per
 plan_id, and launches the run in a detached worker process.
 """
@@ -48,7 +48,7 @@ from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.spec.models import ExperimentSpec
 from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
 from roast_my_harness.spec.resolved import identity_payload, resolve_run_spec
-from roast_my_harness.store.locking import ExperimentLock
+from roast_my_harness.host_lock import ExperimentLock
 from roast_my_harness.store.repository import Repository
 from roast_my_harness.tasks.catalog import catalog_info
 from roast_my_harness.tasks.discover import discover_tasks
@@ -96,11 +96,6 @@ def _source_hashes(spec: ExperimentSpec) -> dict[str, str]:
                 hashes[f"{variant.id}/ext/{item.name or item.path.name}"] = source_tree_hash(item.path)
         for item in variant.skills:
             hashes[f"{variant.id}/skill/{item.name or item.path.name}"] = source_tree_hash(item.path)
-        for item in variant.context_files:
-            try:
-                hashes[f"{variant.id}/ctx/{item.name or item.path.name}"] = source_file_hash(item.path)
-            except OSError as error:
-                raise SpecError(f"variant {variant.id!r} context file unreadable: {item.path} ({error})") from error
         if variant.agents_md is not None:
             try:
                 hashes[f"{variant.id}/agents_md"] = source_file_hash(variant.agents_md)
@@ -117,7 +112,7 @@ def _source_hashes(spec: ExperimentSpec) -> dict[str, str]:
 def plan_bindings(spec: ExperimentSpec, tasks: list[Any]) -> dict[str, Any]:
     """Everything a plan_id binds: config, task content, sources, versions.
 
-    Agent versions resolve once here; the frozen ResolvedRunSpec travels
+    Pi versions resolve once here; the frozen ResolvedRunSpec travels
     in the bindings so start() rejects a plan whose `latest` moved since
     approval, and the run id derives from resolved content.
     """
@@ -148,10 +143,10 @@ def plan_bindings(spec: ExperimentSpec, tasks: list[Any]) -> dict[str, Any]:
         ),
         "versions": {
             "pi_version": spec.pi_version,
-            "resolved_pi_version": resolved.resolved_agent_versions.get(
+            "resolved_pi_version": resolved.resolved_pi_versions.get(
                 "pi", spec.pi_version
             ),
-            "resolved_agent_versions": resolved.resolved_agent_versions,
+            "resolved_pi_versions": resolved.resolved_pi_versions,
             "pier_version_constraint": spec.pier_version,
             "pier_version": pier_mod.pier_version(),
             "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
@@ -310,7 +305,6 @@ class AgentService:
                 evaluation=eval_label(spec),
                 hypothesis=spec.hypothesis,
                 control="fresh",
-                control_reuse="fresh",
                 task_ids=[task.task_id for task in tasks],
                 tasks_path=str(spec.tasks.path),
                 arm_ids=[arm.id for arm in arms],
@@ -759,7 +753,7 @@ class AgentService:
         )
 
     def _spawn_worker(self, spec_path: Path, experiment_id: str, skip_docker: bool) -> int:
-        """Detached worker so the caller (extension/MCP) can poll and exit."""
+        """Detached worker so the caller (extension/bridge) can poll and exit."""
         argv = [sys.executable, "-m", "roast_my_harness", "_worker", str(spec_path)]
         if skip_docker:
             argv.append("--skip-docker")

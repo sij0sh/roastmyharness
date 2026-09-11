@@ -27,9 +27,6 @@ provider = "openai-codex"
 [tasks]
 path = "{tasks}"
 
-[control]
-enabled = true
-
 [[variants]]
 id = "bare"
 """
@@ -84,7 +81,6 @@ def test_prepare_ready_for_confirmation(tmp_path, green_preflight):
     assert result.experiment.repetitions == 1
     assert result.experiment.thinking == "high"
     assert result.experiment.control == "fresh"
-    assert result.experiment.control_reuse == "fresh"
     assert result.experiment.task_ids == ["t1"]
     assert result.experiment.tasks_path == str((tmp_path / "dataset").resolve())
     assert result.experiment.arm_ids == ["control", "bare"]
@@ -367,10 +363,11 @@ def test_start_spawn_failure_rolls_back_marker(
         raise OSError("worker log mkdir failed")
 
     monkeypatch.setattr(service, "_spawn_worker", broken_spawn)
-    fds_before = len(os.listdir("/proc/self/fd"))
+    fds_before = len(os.listdir("/proc/self/fd")) if os.path.exists("/proc/self/fd") else None
     with pytest.raises(OSError):
         service.start(prepared.plan_id)
-    assert len(os.listdir("/proc/self/fd")) == fds_before
+    if fds_before is not None:
+        assert len(os.listdir("/proc/self/fd")) == fds_before
     assert not (tmp_path / "plans" / f"{prepared.plan_id}.started").exists()
 
     monkeypatch.setattr(service, "_spawn_worker", lambda *a, **k: 4242)
@@ -446,7 +443,7 @@ def test_cancel_still_signals_worker_holding_lock(
     tmp_path, green_preflight, monkeypatch
 ):
     """A genuine live worker (lock held) is still asked to cancel."""
-    from roast_my_harness.store.locking import ExperimentLock
+    from roast_my_harness.host_lock import ExperimentLock
 
     spec_path = make_spec(tmp_path)
     service = svc.AgentService(

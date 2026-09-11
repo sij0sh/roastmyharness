@@ -8,20 +8,14 @@ from types import SimpleNamespace
 from roast_my_harness.runner import preflight
 
 
-def _spec(
-    *,
-    extensions=(),
-    setup=(),
-    agent_id="pi",
-    agent_version="0.84.3",
-):
-    variant = SimpleNamespace(extensions=list(extensions), setup=list(setup))
-    agents = {"control": agent_id}
+def _spec(*, extensions=(), pi_version="0.84.3"):
+    variant = SimpleNamespace(id="a", extensions=list(extensions), pi_version=None)
+    control = SimpleNamespace(id="control", extensions=[], pi_version=None)
     return SimpleNamespace(
-        arms=lambda: [variant],
-        resolved_agents=lambda: agents,
-        agent_version_for=lambda _agent_id: agent_version,
-        resolved_version_for=lambda _agent_id: agent_version,
+        pi_version=pi_version,
+        arms=lambda: [control, variant],
+        pi_version_for=lambda v=None: (v.pi_version if v is not None and v.pi_version else pi_version),
+        resolved_pi_version_for=lambda v=None: (v.pi_version if v is not None and v.pi_version else pi_version),
     )
 
 
@@ -48,8 +42,8 @@ def test_npm_packages_trusts_exact_pins_without_registry(monkeypatch):
 
 
 def test_npm_packages_rejects_unavailable_latest(monkeypatch):
-    spec = _spec(agent_version="latest")
-    spec.resolved_version_for = lambda _agent_id: "0.85.1"
+    spec = _spec(pi_version="latest")
+    spec.resolved_pi_version_for = lambda v=None: "0.85.1"
     monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/npm")
 
     def run(argv, **kwargs):
@@ -63,12 +57,9 @@ def test_npm_packages_rejects_unavailable_latest(monkeypatch):
     assert "not available" in failed.detail
 
 
-def test_npm_packages_checks_extensions_and_setup_once(monkeypatch):
+def test_npm_packages_checks_extensions_once(monkeypatch):
     package = "available@1.2.3"
-    spec = _spec(
-        extensions=[SimpleNamespace(kind="npm", package=package)],
-        setup=[SimpleNamespace(handler="npm_pi_install", package=package)],
-    )
+    spec = _spec(extensions=[SimpleNamespace(kind="npm", package=package)])
     monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/npm")
     calls = []
 
@@ -97,8 +88,8 @@ def test_npm_packages_exact_pins_work_offline(monkeypatch):
 
 
 def test_npm_packages_requires_host_npm_for_latest(monkeypatch):
-    spec = _spec(agent_version="latest")
-    spec.resolved_version_for = lambda _agent_id: "0.85.1"
+    spec = _spec(pi_version="latest")
+    spec.resolved_pi_version_for = lambda v=None: "0.85.1"
     monkeypatch.setattr(preflight.shutil, "which", lambda name: None)
 
     results = preflight._npm_packages(spec)
@@ -108,8 +99,8 @@ def test_npm_packages_requires_host_npm_for_latest(monkeypatch):
 
 
 def test_npm_packages_uses_resolved_latest(monkeypatch):
-    spec = _spec(agent_version="latest")
-    spec.resolved_version_for = lambda _agent_id: "0.85.1"
+    spec = _spec(pi_version="latest")
+    spec.resolved_pi_version_for = lambda v=None: "0.85.1"
     monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/npm")
     calls = []
 
@@ -127,12 +118,12 @@ def test_npm_packages_uses_resolved_latest(monkeypatch):
 
 
 def test_npm_packages_reports_unresolvable_latest(monkeypatch):
-    spec = _spec(agent_version="latest")
+    spec = _spec(pi_version="latest")
 
-    def boom(_agent_id):
+    def boom(_agent_id="pi"):
         raise RuntimeError("cannot resolve latest: npm not on PATH")
 
-    spec.resolved_version_for = boom
+    spec.resolved_pi_version_for = lambda v=None: boom()
     monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/npm")
 
     results = preflight._npm_packages(spec)

@@ -182,9 +182,8 @@ def enforce_retention(
     """Delete oldest run dirs until the runs tree fits max_bytes.
 
     Never deletes names in exclude (the run about to start). When db_path
-    is given, rows for pruned experiments are removed so `list` never
-    points at a deleted dir; historic control observations survive
-    because they carry no foreign key to experiments.
+    is given, rows for pruned experiments are removed so records never
+    point at a deleted dir.
     """
     excluded = set(exclude or set())
     result = RetentionResult(total_before=0, total_after=0, max_bytes=max_bytes)

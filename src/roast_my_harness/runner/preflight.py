@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from roast_my_harness import __version__
-from roast_my_harness.adapter.registry import PI_AGENT
+from roast_my_harness.adapter.registry import PI_NPM_PACKAGE
 from roast_my_harness.auth import service as auth_service
 from roast_my_harness.errors import SpecError
 from roast_my_harness.evals.descriptor import load_descriptor
@@ -157,10 +157,10 @@ def _agent_package_specs(spec):
     trusted = []
     needs_check = []
     failures = []
-    package = PI_AGENT.npm_package
+    package = PI_NPM_PACKAGE
     pin = spec.pi_version
     try:
-        version = spec.resolved_version_for("pi")
+        version = spec.resolved_pi_version_for(None)
     except RuntimeError as error:
         failures.append(_fail("npm package " + package, str(error)))
         return trusted, needs_check, failures

@@ -85,6 +85,17 @@ async def _wait(process: VariantProcess) -> None:
         await process.proc.wait()
 
 
+async def kill_after_grace(proc: VariantProcess, grace_sec: float) -> None:
+    if proc.proc is None or proc.proc.returncode is not None:
+        return
+    await _terminate(proc)
+    try:
+        await asyncio.wait_for(proc.proc.wait(), timeout=grace_sec)
+    except TimeoutError:
+        await _kill(proc)
+        await _wait(proc)
+
+
 def require_all_started(processes: list[VariantProcess]) -> None:
     failed = [p.variant_id for p in processes if p.proc is None]
     if failed:
