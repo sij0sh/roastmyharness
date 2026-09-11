@@ -1,304 +1,826 @@
 # RoastMyHarness
 
-Standalone terminal tool that compares Pi extensions and skills on identical
-Pier tasks. Successor to the DSE-tests script harness.
+> **Your coding model is not the whole system. Benchmark the rest of it.**
 
-## What it does
+RoastMyHarness is an experimental benchmarking harness for testing whether the things you add around a coding agent actually make it better.
 
-- One declarative TOML file defines control + variants (no Python edits).
-- Runs one Pier job per variant with the same model, thinking level, and
-  a per-agent fairness contract (pi:
-  `-nc --no-skills --no-prompt-templates --no-themes`).
-- Headless progress: `status <id>` prints the live matrix and totals;
-  `watch <id>` streams a live ASCII matrix until the run finishes.
-- Ctrl-C or SIGTERM leaves completed trials resumable; `resume` runs only
-  missing cells.
-- Run, resume, and report take an exclusive per-experiment lock. `status` is
-  read-only and can observe a running experiment.
-- Writes structured redacted diagnostics to `<run>/logs/run.jsonl`.
-- Writes `summary.csv` (DSE-tests-compatible schema), `summary.json`, and
-  `report.md` automatically on completion.
-- Reuses Pi's Codex OAuth from `~/.pi/agent/auth.json` (staged per job,
-  mode 0600; cached homes stay secret-free).
+Extensions. Skills. Extra tools. Context management. Retrieval. Alternate harnesses. Bigger system prompts.
 
-## Install
+They all sound useful.
 
-    uv tool install .
+They also change the system the model has to operate inside.
 
-Python 3.12+, Pier 0.3.x (`uv tool install datacurve-pier`), docker or a
-docker-compatible shim, node/npm inside task containers (installed by the
-adapter).
+**Before you give your agent another tool, make it earn its tokens.**
 
-## Uninstall
+RoastMyHarness runs the same coding tasks with the same model and thinking level against a stripped-down **Pi control** and one or more harness variants, then compares what actually happened:
 
-    uv tool uninstall roastmyharness
-    rm -rf ~/.roastmyharness   # database + runs + plans + cache
+* Did it solve more tasks?
+* Which tasks did it rescue?
+* Which tasks did it break?
+* Did it use more tokens to get there?
+* Did it take longer?
+* Did it make more tool calls or turns?
+* Did extra context actually reduce context pressure?
+* Was the improvement large enough to justify the added machinery?
 
-All run data lives under `~/.roastmyharness` (`%USERPROFILE%\.roastmyharness`
-on Windows) unless overridden. Layout: `runs/` (one dir per experiment),
-`roastmyharness.db`, `plans/`, `cache/homes/`, `config.toml`.
+The goal is not to find the harness with the most features.
 
-| Variable | Purpose | Default |
-|---|---|---|
-| `ROAST_MY_HARNESS_DATA_DIR` | Home for database, runs, plans, cache | `~/.roastmyharness` |
-| `ROAST_MY_HARNESS_RUNS_DIR` | Run outputs only | `<data-dir>/runs` |
-| `ROAST_MY_HARNESS_CACHE_DIR` | Cached agent homes only | `<data-dir>/cache` |
-| `ROAST_MY_HARNESS_RETENTION` | Size-cap pruning toggle (`true`/`false`) | `true` |
-| `ROAST_MY_HARNESS_RETENTION_MAX_SIZE` | Cap like `500MB`, `2GB` | `5GB` |
+The goal is to use data to build harnesses that help.
 
-`~/.roastmyharness/config.toml` holds the same policy without env vars:
+> **MVP / WIP:** RoastMyHarness is under active development. The current focus is Pi as the control, Pi and Pi-family harness variants, and the DeepSWE benchmark. Broader agent and benchmark support is planned.
 
-```toml
-[retention]
-enabled = true
-max_size = "500MB"
+---
+
+## The uncomfortable result so far
+
+Base Pi is annoyingly hard to beat.
+
+In the experiments run with RoastMyHarness so far, relatively few additions clearly outperform the stripped Pi control. Adding tools, skills, context, or harness behavior often produces one of two outcomes:
+
+1. the benchmark score does not improve, but the run gets longer and uses more tokens, or
+2. the added machinery actively lowers the benchmark score.
+
+That is not a claim that tools, skills, or context engineering are useless. It is exactly why this project exists.
+
+A feature can be excellent on the task it was designed for and still be a net regression across a broader workload. A tool can rescue five tasks while breaking seven others. A context system can reduce one kind of token use while causing the agent to take more turns. A skill can provide valuable instructions while also distracting the model on tasks where those instructions do not apply.
+
+Without a control, all of those can *feel* like improvements.
+
+RoastMyHarness is intended to make them measurable.
+
+---
+
+## Why benchmark the harness?
+
+Most model benchmarks hold the surrounding system relatively constant and ask:
+
+> Which model performs better?
+
+When building coding agents, there is another question that matters just as much:
+
+> **Did the system I built around the model make it better or worse?**
+
+A modern coding harness can affect nearly every part of a run:
+
+| Change                    | What you hope happens     | What might actually happen             |
+| ------------------------- | ------------------------- | -------------------------------------- |
+| Add a skill               | Better domain behavior    | More irrelevant instructions           |
+| Add a tool                | New capability            | More tool-selection overhead           |
+| Add retrieval             | Better information        | Larger prompts and distraction         |
+| Add context management    | Longer effective sessions | Extra calls, rewrites, or lost context |
+| Add repository metadata   | Better navigation         | More tokens before useful work starts  |
+| Add orchestration         | Better decisions          | More turns and latency                 |
+| Add another harness layer | Smarter workflow          | More opportunities to go wrong         |
+
+The only reliable answer is to run the same work both ways.
+
+That is the experiment RoastMyHarness is built around.
+
+---
+
+## How it works
+
+A RoastMyHarness experiment contains:
+
+```text
+                    same task
+                    same model
+                 same thinking level
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+         CONTROL                VARIANT
+         base Pi              your changes
+              │                     │
+              └──────────┬──────────┘
+                         │
+                 compare outcomes
 ```
 
-On every `run`/`resume` the tool totals `runs/`, deletes the oldest
-experiment dirs first until under the cap, and drops their database rows
-(the active run is never deleted). Historic control observations survive
-pruning. Set `enabled = false` to keep everything forever.
-Pre-0.2 installs used `~/.local/share/roastmyharness` +
-`~/.cache/roastmyharness`; move those trees into `~/.roastmyharness/runs/`
-and `~/.roastmyharness/cache/homes/` to migrate.
-Set `ROAST_MY_HARNESS_DEBUG=1` to re-raise an unexpected CLI
-exception with its traceback. The tool stores no credentials of its own; it reuses
-`~/.pi/agent/auth.json`, which belongs to Pi and is not removed here.
+For Pi, the control deliberately removes implicit harness features:
 
-## Quick start
+```text
+-nc --no-skills --no-prompt-templates --no-themes
+```
 
-    roastmyharness init my-experiment.toml   # commented starter spec
-    $EDITOR my-experiment.toml
-    roastmyharness validate my-experiment.toml
-    roastmyharness run my-experiment.toml
+Variants can then introduce the thing you actually want to measure:
 
-Other commands: `resume <id>`, `status <id>`, `report <id>`, `list`,
-`auth status`, `setup [--agent pi|claude
---scope user|project]`, `doctor`, plus `--json` on validate/status/list.
+* local Pi extensions
+* pinned npm extensions
+* skills
+* environment changes
+* typed setup steps
+* alternate supported agents or Pi-family harnesses
+* combinations of the above
 
-## Pi slash command and integrations
+Every arm runs against the same selected tasks, model, and thinking level.
 
-The Pi extension provides `/roastmyharness [text]`.
-The command opens the wizard directly with no model call; freeform text
-prefills step 1 (and still hints the task root). The command follows
-a fixed wizard:
+RoastMyHarness collects benchmark outcomes alongside telemetry such as input/output/cache tokens, cost when available, peak context, Pi compactions, turns, tool calls, wall time, and other run-level behavior.
 
-1. Describe which variants to run and how many.
-2. Choose a fresh control, require matching historic controls, or exclude the control.
-3. Select an available Pi model.
-4. Select a supported thinking level.
-5. Select a curated test suite: GPT-5.6 Luna High or GLM-5.3-Flash Max.
-6. Select one random task, the curated 30 (signal screen), the curated 60
-   (signal + confirmation), the full task set, or a custom random count.
+The point is not merely to produce a leaderboard.
 
-After the selections, one ephemeral Pi child context with read-only filesystem
-tools authors the spec. It streams its source checks, tool activity, and spec
-draft into the author card (`roast_harness author`) or, when the command runs
-the wizard, into a live card above the editor (footer status shows the phase
-and attempt). It writes the TOML under `.pi-files/roastmyharness/` and
-validates it. Invalid generated specs get up to two focused repair attempts.
-Author-child failures surface their error message in the card and the
-failure notification. This author child is the only model call in the
-command flow.
+It is to answer **what changed, where it changed, and what it cost.**
 
-Schema, source, auth, and pinned npm availability checks gate launch. The
-validated plan appears in a wizard screen with three choices: "Confirm and
-launch" (the default; starts the experiment immediately with no further
-model call), "Regenerate with feedback" (sends freeform feedback to the
-author child for a revised spec), and "Cancel" (keeps the plan on disk).
-The model-facing `roast_harness` tool keeps its own flow: the agent presents
-the plan and must receive explicit approval before it calls
-`roast_harness start`.
+---
 
-The `start` and `watch` actions render a second live session card. The
-command instead launches through the same shared start path and returns
-immediately, so the prompt box stays live: progress streams into a widget
-above the editor. When authoring finishes, the command posts a persistent
-Spec author transcript card (plan summary, model, attempts, token usage,
-elapsed time); when the run ends, it posts a persistent Benchmark transcript
-card (completion counts, token totals, rate, aggregates, report paths) plus
-a final notification. Both cards render exactly like the `roast_harness`
-tool cards and support Pi's configured tool-expand key for the full matrix
-and spec preview. While the run is tracked,
-the `roast_harness` tool stays visible so you can ask the session for updates
-or to cancel the run, and re-running `/roastmyharness` offers Watch live,
-Show status, Cancel run, or Start a new run instead of the wizard. Aborting
-the card detaches the watcher but does not stop the experiment; use `cancel`
-to stop it.
+## Why DeepSWE?
 
-There is no integration skill to invoke implicitly. Install the Pi command or
-the Claude MCP server idempotently:
+RoastMyHarness currently bundles DeepSWE as its primary benchmark.
 
-    roastmyharness setup --agent pi --scope user
-    roastmyharness setup --agent claude --scope project
-    roastmyharness doctor
+That choice is deliberate.
 
-## Bundled DeepSWE benchmark
+Short coding tasks can badly underrepresent the effects of a harness. Many harness features are specifically intended to help with repository exploration, extended reasoning, context pressure, repeated tool use, or longer implementation work. If the benchmark finishes in a handful of turns, you may mostly be measuring startup overhead.
 
-The DeepSWE task corpus lives in this repo under `tasks/deepswe/` (115 runnable
-tasks with `task.toml`, `instruction.md`, `environment/`, `tests/`, and
-`solution/`; see `tasks/deepswe/README.md` and `PROVENANCE.md`). The Pi
-extension resolves the benchmark relative to its own installed symlink, so the
-wizard defaults to these local tasks with no external checkout or network
-access. Preset membership lives in `tasks/deepswe/tasks/catalog.toml`: per
-model (Luna High, GLM-5.3-Flash Max), a 30-task signal screen of frontier tasks
-plus a 30-task confirmation extension. Passing `/roastmyharness <path>` still
-overrides the bundled root, and other task roots are discovered from the
-working directory and recent runs.
+DeepSWE uses substantially longer software-engineering tasks, which gives harness behavior more room to matter.
 
-Release bundling decision: the wheel ships the corpus and the Pi extension
-inside the package (`roast_my_harness/bundled/`, ~4.6 MB compressed for
-33 MB on disk), so `setup` and discovery work from a bare `pip install`
-with no checkout. `setup` prefers a repo checkout when one is present
-(`ROAST_MY_HARNESS_REPO` overrides); `profiles` and `tool catalog` fall
-back to the bundled corpus only when the default `./tasks/deepswe/tasks`
-is absent, so an explicit path typo still errors instead of retargeting.
+It is still only an approximation.
 
-## Custom evaluations
+### What DeepSWE improves
 
-DeepSWE is one evaluation, not the unit of the harness. An experiment
-selects an eval via `[evaluation]`: `type = "bundled"` (today only
-`id = "deepswe"`, the default when the block is absent),
-`type = "generated"` (a frozen custom eval described by `eval.toml`
-beside the task root), or `type = "external"` (a plain local Pier task
-set with an optional `eval.toml`). Eval identity (type, id, revision,
-contract hash) enters run identity, the run manifest, and
-historic-control cohort keys, so different evals never share cells or
-history.
+Longer tasks provide more opportunity to observe:
 
-A custom eval is a frozen contract, not a folder of tasks:
+* repository exploration
+* repeated reads and edits
+* tool-selection behavior
+* token accumulation
+* longer reasoning trajectories
+* context-management effects
+* whether extra capabilities eventually pay for their overhead
 
-- `eval.toml` states the scoring bar (`[scoring] pass_threshold`) and
-  pins the judge (`[judge]` model, rubric, samples) when the eval uses
-  one. Verifiers fold dimensions into the scalar `reward` per this
-  contract; reports render deterministic and judge scores separately.
-- `validation/self-test.json` ships synthetic verifier outputs with
-  expected outcomes. `validate`/`run` refuse to launch unless every
-  fixture resolves as expected and the set discriminates (at least one
-  expected pass and one failure). An undeclared judge score, or a judge
-  score without `judge_model`, fails the gate.
-- Authoring order matters: map capabilities first, design tests from
-  the map alone (never from the skill source), freeze validators, add
-  fixtures, run a critic pass over the checklist in
-  `examples/evals/structured-output/tasks/validation/critic.json`, then
-  calibrate on bare control only. Once any variant-under-test has run,
-  the eval is immutable.
+### What DeepSWE still does not reproduce
 
-See the hand-built example (`examples/evals/structured-output/` with
-`examples/structured-output-eval.toml`): three deterministic tasks, a
-worked capability map and rationale, and verifiers whose checks stay
-host-testable via `APP_DIR`/`LOGS_DIR` overrides.
+A DeepSWE run is **not** the same thing as a real long-running coding relationship with an agent.
 
-Start a new eval with `roastmyharness eval init <dir> --id <eval-id>`
-and check it with `roastmyharness eval validate <dir>`: the validator
-covers the descriptor, capability map, rationale, tasks, critic
-verdict, and fixture self-tests, and fails until every step is
-complete. The Pi wizard offers Recommended (bundled DeepSWE) /
-Custom (frozen generated eval) / Existing (external task set) modes
-and freezes the choice into `[evaluation]`, so benchmark content can
-never change after a run begins.
+In particular:
 
-## Experiment spec
+* there is no user answering questions mid-task
+* there is no back-and-forth clarification over multiple sessions
+* there is no developer redirecting the agent after seeing partial work
+* there is no persistent relationship spanning hours or days
+* runs rarely reach a Pi native context-compaction phase
 
-The loader accepts TOML only. `roastmyharness init` still writes a
-commented TOML starter. See `examples/` for more TOML examples. Key sections
-are `[model]`, `[tasks]`, `[evaluation]`,
-`[concurrency]`, `[control]`, and one `[[variants]]` block per arm. Controls
-run fresh by default (`mode = "fresh"`). `mode = "historic"` reuses eligible
-history: `history_scope = "hybrid"` runs fresh controls for tasks without
-history, `"intersection"` runs only the history-backed test intersection.
-`minimum_runs_per_task`, `maximum_age_days`, and `sentinel_tasks` bound the
-pool; sentinels sample from history-backed tasks only and gate a
-drift verdict (`accepted` / `rejected_drift` / `inconclusive`), with
-`on_drift` / `on_inconclusive` selecting a fresh fallback or abort. There is
-no stored interactive mode. Accepted history appears as `H`; reports disclose
-its age, counts, drift verdict, and a per-task historical baseline next to
-fresh extension rates.
-Variant blocks support local extensions (`kind = "local"`), pinned npm packages (`kind = "npm"`),
-skills, env pins, and typed setup handlers. `[execution]` sets
-`repetitions` (independent scored rollouts per task, default 1) and
-`max_retries` (relaunches per errored trial, default 1).
-`[tasks] preset` selects a named list from the benchmark catalog
-(`tasks/deepswe/tasks/catalog.toml`, e.g. `preset = "luna-signal"`);
-include/exclude globs filter the preset further. Task metadata
-(duration/difficulty/smoke) lives in the catalog, never inside task
-directories, and runs record its `catalog_hash` next to the task hashes.
+That last point matters.
 
-`[model] provider` accepts any provider defined in the host pi
-`~/.pi/agent/models.json` (model ids are validated against it), the
-default `openai-codex` (auth via `pi /login codex`), or `custom` with
-`provider_id` + `models_json`. Host providers stage automatically: the
-provider block is sliced per job, referenced env vars must be set, and
-`!command` apiKeys are rejected.
+Many harness ideas are designed specifically for very long contexts. DeepSWE gets closer to that regime than short benchmarks, but it generally does not push the agent through the same lifecycle as a genuinely long interactive coding session.
 
-## Agents
+So the benchmark should be interpreted for what it is:
 
-Experiments can compare coding agents, not just extensions. Every arm
-resolves to `(agent, agent_version, model)`; the registry
-(`src/roast_my_harness/adapter/registry.py`) names the supported set.
+> **A controlled signal about coding-task performance, not a complete simulation of how a human and agent work together.**
 
-| agent | family | package | binary | version pin (spec key) | default |
-|---|---|---|---|---|---|
-| `pi` | `pi` | `@earendil-works/pi-coding-agent` | `pi` | `pi_version` (global) | `latest` |
-| `omp` | `pi` | `@oh-my-pi/pi-coding-agent` | `omp` | `agent_version` when `agent = "omp"` is the spec default | 18.0.9 |
+Closing that gap is part of the broader direction for the project.
 
-Rules that keep arms comparable:
+---
 
-- All arms run the same global `[model]` and thinking level; reports
-  render comparisons at equal (task, model).
-- Each agent's fairness contract is registry-owned, never spec-owned:
-  pi runs `--no-skills --no-prompt-templates --no-themes -nc`; omp runs
-  `--no-skills` plus a staged `config.yml` that disables implicit
-  provider configs (AGENTS.md/claude/codex/... auto-loading); the
-  container installs Bun (pinned) because omp needs it.
-- Cached homes never mix agents: `(agent, agent_version)` is part of the
-  variant hash.
-- `pi_version = "latest"` (the default) resolves to the newest npm release
-  once at prepare time; the frozen version defines the run id and is what
-  lands in the staged home, the run manifest, and reports. A moved `latest`
-  starts a new run instead of reusing old cells. Pin `pi_version = "x.y.z"`
-  for a reproducible version instead.
-- `pi`-only features (extensions, skills, `pi_flags`, `npm_pi_install`
-  setup) are rejected on other families with a naming error.
+## Why Luna High?
 
-Credential staging per agent:
+GPT-5.6 Luna at High thinking is frequently used as the reference configuration for RoastMyHarness experiments because its roughly **44% benchmark score** sits in a useful measurement range.
 
-- `pi`: host provider block sliced into the staged home as `models.json`
-  with `$VAR` refs (values resolved at run time), plus `auth.json`
-  entries (Codex OAuth via `pi /login codex`) staged 0600 per job.
-- `omp`: same providers, staged as `models.yml` with bare env names plus
-  a `model-env.json` name list; the adapter resolves names into the run
-  environment. Values never land in cached homes.
+That is important.
 
-Example specs: `examples/omp-variant.toml` (pi control vs omp arm) and
-`examples/cross-agent.toml` (omp-default spec with a pi control). Adding
-an agent means one registry entry plus an adapter subclassing pier's
-agent class; codex/gemini/opencode would follow that pattern.
+If the control solves 95% of the benchmark, there is almost no room for a new harness to demonstrate improvement.
 
-## Status (build phases)
+If the control solves 5%, there are very few successful behaviors for a harness to preserve, and failures from both configurations tend to collapse together.
 
-- Phase 0-3: done (spec, homes, adapter, headless runner, telemetry,
-  reports, resume, cancellation).
-- Phase 4 (TUI): removed - CLI-first pivot. The Textual TUI is archived,
-  untracked, under `.pi-files/tui-archive/`; the `textual` dependency is
-  gone and bare `roastmyharness` prints help.
-- Phase 5 (auth): Phase A done (reuse pi Codex OAuth, status, staging).
-  Integrated OAuth bridge is a follow-up; use `pi /login codex`.
-- Phase 6 (historic controls): done, then redesigned for v2. Deterministic
-  `fresh` / `historic` modes use age-bounded observation pools and a fresh
-  sentinel drift gate over history-backed tasks only; `hybrid` and
-  `intersection` scopes decide what runs without history. The default
-  `fresh` mode preserves fresh control behavior.
+Around 44%, there is useful room in both directions:
 
-summary.csv carries a tool-owned schema; columns may change between
-releases. Tool failure metrics (`tool_results`, `tool_failures`,
-`tool_failure_rate`, `tool_missing_results`) derive from the normalized
-ATIF trajectory every adapter writes, so they work for any agent; Pi-only
-enrichment (context-manager counters and friends) lives under each trial's
-`custom_metrics` object in summary.json, never in the CSV. The legacy
-DSE-parity golden tests were removed.
+```text
+0%                 ~44%                            100%
+│───────────────────●────────────────────────────────│
+        room to regress         room to improve
+```
 
-Deferred by design (plan section 2): remote fan-out, non-Pier benchmarks,
-agents beyond the registry (codex, gemini, opencode - the registry/adapter
-pattern is in place for them), web dashboards, cloud storage, automatic
-stopping.
+A harness can rescue tasks the control fails **and** break tasks the control succeeds on.
+
+Both signals matter.
+
+### The curated Luna High suites
+
+Running the full benchmark every time is expensive, so RoastMyHarness includes model-specific curated task sets.
+
+For Luna High, the first **30 tasks** are intended as a signal screen. They emphasize frontier tasks with historical rollout outcomes between roughly 25% and 75%, where changes in harness behavior have a reasonable chance of becoming visible.
+
+The **60-task suite** adds another 30 tasks for confirmation, including regression and floor anchors.
+
+Think of them as:
+
+```text
+1 task       smoke test
+30 tasks     signal screen
+60 tasks     signal + confirmation
+full suite   broader benchmark
+```
+
+The curated suite does not magically make 30 runs statistically definitive. Small samples still require careful interpretation.
+
+It is designed to spend benchmark compute where differences are more likely to be informative.
+
+A curated GLM-5.3-Flash Max suite is also included.
+
+---
+
+## Read the flips, not just the score
+
+Suppose a variant scores 47% and the control scores 43%.
+
+Good result?
+
+Maybe.
+
+The aggregate score hides the most useful question:
+
+> **Were they failing on the same tasks?**
+
+RoastMyHarness reports paired outcomes so you can see tasks where the variant changed the result.
+
+For example:
+
+```text
+Control fail → Variant pass    RESCUED
+Control pass → Variant fail    BROKEN
+Control pass → Variant pass    BOTH PASS
+Control fail → Variant fail    BOTH FAIL
+```
+
+If a variant rescues eight tasks and breaks one, that is interesting.
+
+If it rescues five and breaks five, a four-point aggregate difference may not mean what you think it means.
+
+At small task counts, **paired flips are usually more useful than staring at the topline percentage.**
+
+---
+
+## Quality is only half the result
+
+A harness change does not need to use fewer tokens to be worthwhile.
+
+It does need to earn the tokens it adds.
+
+A variant that improves solve rate substantially while using 15% more compute may be an excellent trade.
+
+A variant that adds 40% more tokens, takes longer, makes more tool calls, and solves fewer tasks probably needs another trip to the drawing board.
+
+RoastMyHarness reports both sides of that tradeoff.
+
+Typical measurements include:
+
+* benchmark reward / resolved result
+* input tokens
+* output tokens
+* cache-read tokens
+* reasoning tokens
+* peak context
+* Pi native compactions
+* LLM calls
+* agent turns
+* tool calls
+* file-read behavior
+* wall-clock time
+* reported model cost
+
+Do not optimize any one number blindly.
+
+The useful question is usually:
+
+> **What quality did I gain or lose for the additional complexity and compute?**
+
+---
+
+# Quick start
+
+## Requirements
+
+RoastMyHarness currently expects:
+
+* Python 3.12+
+* [`uv`](https://docs.astral.sh/uv/)
+* Pier 0.3.x
+* Docker or a Docker-compatible runtime
+* Pi authentication for the model/provider you intend to use
+
+Install Pier:
+
+```bash
+uv tool install "datacurve-pier>=0.3,<0.4"
+```
+
+Install RoastMyHarness from the repository:
+
+```bash
+uv tool install .
+```
+
+Verify the CLI:
+
+```bash
+roastmyharness --help
+```
+
+---
+
+## Authentication
+
+For the default `openai-codex` provider, RoastMyHarness reuses Pi's existing Codex OAuth credentials.
+
+Authenticate through Pi:
+
+```text
+pi
+/login codex
+```
+
+Then verify:
+
+```bash
+roastmyharness auth status
+```
+
+RoastMyHarness does not maintain a separate credential store. Credentials are staged for individual jobs rather than stored in cached benchmark homes.
+
+---
+
+## Install the Pi integration
+
+Install the `/roastmyharness` command:
+
+```bash
+roastmyharness setup --agent pi --scope user
+```
+
+Then check the environment:
+
+```bash
+roastmyharness doctor
+```
+
+`doctor` checks Pi, Pier, Docker, authentication, models, and integration health.
+
+---
+
+# The easiest way to run an experiment
+
+From Pi:
+
+```text
+/roastmyharness
+```
+
+The wizard walks through:
+
+1. what harness variants you want to compare
+2. whether to run a fresh Pi control or use eligible historic controls
+3. the model
+4. the thinking level
+5. the curated benchmark suite
+6. how many tasks to run
+
+You can also start by describing what you want:
+
+```text
+/roastmyharness compare my local context extension against base Pi
+```
+
+The integration authors a TOML experiment spec, validates the sources and environment, shows the resulting plan, and lets you confirm before launch.
+
+During the run you get live progress, per-variant results, trial telemetry, and the final report locations without tying up the main Pi prompt.
+
+---
+
+# CLI workflow
+
+You can run everything without the Pi integration.
+
+Create a starter experiment:
+
+```bash
+roastmyharness init my-experiment.toml
+```
+
+Edit it:
+
+```bash
+$EDITOR my-experiment.toml
+```
+
+Validate the experiment and environment:
+
+```bash
+roastmyharness validate my-experiment.toml
+```
+
+Run it:
+
+```bash
+roastmyharness run my-experiment.toml
+```
+
+List experiments:
+
+```bash
+roastmyharness list
+```
+
+Inspect one:
+
+```bash
+roastmyharness status <experiment-id>
+```
+
+Watch it live:
+
+```bash
+roastmyharness watch <experiment-id>
+```
+
+Regenerate the reports:
+
+```bash
+roastmyharness report <experiment-id>
+```
+
+Interrupted experiments are resumable:
+
+```bash
+roastmyharness resume <experiment-id>
+```
+
+By default, resume runs only missing cells. You can also target individual tasks or variants and retry infrastructure errors:
+
+```bash
+roastmyharness resume <experiment-id> \
+  --task some-task \
+  --variant my-extension \
+  --retry-errors
+```
+
+---
+
+# Experiment specs
+
+Experiments are declarative TOML.
+
+A minimal extension comparison looks like this:
+
+```toml
+schema_version = 1
+name = "my-extension-test"
+
+# Use "latest" while iterating, or pin a version for reproducible comparisons.
+pi_version = "latest"
+thinking = "high"
+
+[model]
+id = "gpt-5.6-luna"
+provider = "openai-codex"
+
+[tasks]
+path = "/path/to/task-dataset"
+include = ["*"]
+exclude = []
+
+[concurrency]
+per_variant = 2
+
+[control]
+enabled = true
+reuse = "never"
+
+[[variants]]
+id = "my-ext"
+name = "My extension"
+
+[[variants.extensions]]
+kind = "local"
+path = "~/my-extensions/my-extension"
+entry = "src/index.ts"
+```
+
+The experiment above asks a simple question:
+
+```text
+base Pi
+   vs
+base Pi + ~/my-extensions/my-extension
+```
+
+Same tasks. Same model. Same thinking level.
+
+That is the comparison.
+
+See the included examples for more configurations:
+
+* [`examples/local-extension.toml`](examples/local-extension.toml)
+* [`examples/npm-contextmode.toml`](examples/npm-contextmode.toml)
+* [`examples/omp-variant.toml`](examples/omp-variant.toml)
+* [`examples/cross-agent.toml`](examples/cross-agent.toml)
+
+---
+
+# What can a variant change?
+
+Variants currently support things such as:
+
+### Local extensions
+
+```toml
+[[variants.extensions]]
+kind = "local"
+path = "~/my-extensions/my-extension"
+entry = "src/index.ts"
+```
+
+### Pinned npm extensions
+
+```toml
+[[variants.extensions]]
+kind = "npm"
+package = "some-extension@1.2.3"
+```
+
+Exact pins are preferred because a benchmark comparison is not very useful if the thing being benchmarked changes underneath it.
+
+### Skills
+
+```toml
+[[variants.skills]]
+kind = "local"
+path = "~/my-skills/my-skill"
+```
+
+The skill directory must contain `SKILL.md`.
+
+Variants can also define environment values and supported setup handlers.
+
+---
+
+# Fresh vs historic controls
+
+Controls run fresh by default:
+
+```toml
+[control]
+enabled = true
+reuse = "never"
+```
+
+For repeated experimentation, rerunning the exact same control can become expensive.
+
+RoastMyHarness therefore supports opt-in historic control reuse:
+
+```toml
+[control]
+enabled = true
+reuse = "ask"       # never | ask | require
+
+minimum_runs_per_task = 10
+maximum_age_days = 30
+sentinel_tasks = 6
+```
+
+Historic results are only useful when the underlying experiment is still comparable. Reuse is tied to things such as the resolved agent version, model, thinking level, control configuration, and task.
+
+Fresh sentinel tasks are used to check for drift before accepting eligible historical observations.
+
+Reports disclose reused control counts, ages, and the sentinel verdict. Reused cells are also visibly distinguished from fresh results.
+
+Historic controls are **not** contemporaneous paired observations. Treat them accordingly.
+
+---
+
+# Reproducibility
+
+By default:
+
+```toml
+pi_version = "latest"
+```
+
+This is useful when the question is:
+
+> How does my harness compare with the Pi someone would install today?
+
+It is not ideal when the question is:
+
+> Did my extension improve between commit A and commit B?
+
+For controlled longitudinal experiments, pin Pi:
+
+```toml
+pi_version = "0.x.y"
+```
+
+RoastMyHarness records the resolved versions used by the experiment, and source/task identity is incorporated into experiment planning so changed inputs do not silently masquerade as the same experiment.
+
+The general rule is simple:
+
+> **Float versions when testing current reality. Pin versions when testing your own changes.**
+
+---
+
+# Reports
+
+Completed runs automatically produce:
+
+```text
+summary.csv
+summary.json
+report.md
+```
+
+`report.md` includes:
+
+* completion and error counts
+* resolve rates
+* bootstrap confidence intervals
+* average token use
+* average reported cost
+* average wall time
+* paired task flips
+* control-reuse provenance when applicable
+* interpretation notes
+
+`summary.csv` contains the lower-level per-trial data for your own analysis.
+
+The CSV schema is currently tool-owned and may change while RoastMyHarness is an MVP.
+
+---
+
+# What should I benchmark?
+
+Small, isolated changes are easiest to interpret.
+
+Good experiment:
+
+```text
+control
+vs
+control + one retrieval extension
+```
+
+Harder to interpret:
+
+```text
+control
+vs
+new harness + six skills + three MCP servers + custom prompt +
+context compression + different agent + different model
+```
+
+The second configuration may win, but you will have very little evidence about **why**.
+
+Treat harness work like performance engineering:
+
+1. form a hypothesis
+2. change one meaningful thing
+3. benchmark it
+4. inspect the rescued and broken tasks
+5. inspect the cost
+6. keep, revise, or remove the change
+
+Then repeat.
+
+RoastMyHarness exists to make that loop cheap enough to actually use.
+
+---
+
+# Current scope
+
+RoastMyHarness is intentionally narrow today.
+
+The center of gravity is:
+
+```text
+Pi control
+    ↓
+Pi extensions / skills / harness changes
+    ↓
+supported Pi-family alternatives
+    ↓
+DeepSWE
+```
+
+The current agent registry includes Pi and OMP / oh-my-pi.
+
+This is not yet intended to be a universal agent leaderboard or a definitive benchmark of every coding workflow.
+
+That narrower scope is useful during the MVP stage because it makes the control meaningful. The more dimensions that change simultaneously, the harder it becomes to attribute a result to the harness.
+
+---
+
+# Known limitations
+
+RoastMyHarness produces data. It does not make that data more universal than it is.
+
+Keep the following in mind:
+
+### DeepSWE is not a real developer session
+
+The tasks are longer than many coding benchmarks, but they still do not reproduce repeated human interaction, changing requirements, multiple sessions, or the full context lifecycle of long-running coding work.
+
+### Context-management systems may be under-tested
+
+DeepSWE runs rarely hit Pi's native compaction phase. A feature specifically designed for extremely long contexts may therefore provide value that this benchmark does not fully exercise.
+
+### Small suites are noisy
+
+The curated 30-task suite is a signal screen, not proof. Use paired flips and follow promising results with a larger run.
+
+### Token reductions are not automatically improvements
+
+Using fewer tokens while solving fewer problems is not efficiency.
+
+Likewise, using more tokens is not automatically bad if the additional compute buys a meaningful quality improvement.
+
+### Cost telemetry depends on the provider
+
+If a gateway does not report per-call cost, cost fields may be zero or unavailable. Token counts remain the more portable measurement.
+
+### Historic controls are not fresh pairs
+
+Control reuse saves compute, but reused observations were not generated at exactly the same time as the variant. RoastMyHarness exposes this provenance rather than pretending otherwise.
+
+### It is an MVP
+
+Interfaces, report schemas, supported agents, and benchmark behavior are still evolving.
+
+Expect some sharp edges.
+
+---
+
+# Where this is going
+
+The immediate goal is not more features for their own sake.
+
+It is better experimental coverage.
+
+Areas for expansion include:
+
+* additional coding-agent adapters beyond the current Pi-family focus
+* benchmarks beyond Pier / DeepSWE
+* workloads that better represent very long and multi-session coding
+* richer analysis of quality-versus-compute tradeoffs
+* remote execution and larger experiment fan-out
+* better visualization and experiment comparison
+
+The long-term question remains the same:
+
+> **Does this harness change make the agent meaningfully better?**
+
+If the answer is yes, RoastMyHarness should help show where and by how much.
+
+If the answer is no, finding that out before adding another thousand lines of orchestration is also a win.
+
+---
+
+# Project status
+
+RoastMyHarness is currently an **MVP / work in progress**.
+
+Core experiment execution, telemetry, reporting, resume behavior, DeepSWE integration, Pi integration, and historic-control reuse are functional.
+
+Expect active iteration around benchmark coverage, agent support, analysis, and ergonomics.
+
+Issues, benchmark findings, and especially reproducible examples of harness changes that unexpectedly help or hurt are useful input.
+
+---
+
+# Uninstall
+
+```bash
+uv tool uninstall roastmyharness
+```
+
+Run data and cached homes can be removed separately:
+
+```bash
+rm -rf ~/.local/share/roastmyharness
+rm -rf ~/.cache/roastmyharness
+```
+
+RoastMyHarness does not own Pi's authentication file and does not remove it.
+
+Run outputs live under the platform data directory unless `ROAST_MY_HARNESS_RUNS_DIR` is set.
+
+---
+
+# License
+
+MIT. See [`LICENSE`](LICENSE).
+
+---
+
+## Benchmark your clever idea before shipping it
+
+The easiest harness feature to justify is the one that obviously *should* help.
+
+Those are also the ones worth measuring.
+
+```text
+Build it.
+Run it against the control.
+Look at what it rescued.
+Look at what it broke.
+Look at what it cost.
+Then decide.
+```
+
+**Roast your harness before your harness roasts your code.**
