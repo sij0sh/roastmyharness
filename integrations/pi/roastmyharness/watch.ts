@@ -41,6 +41,8 @@ export async function streamBridgeRun(
 ): Promise<WatchDetails> {
 	const details: WatchDetails = { stream: true, experiment_id: initialExperimentId, state: "RUNNING", final: false, recent: [], summaries: [] };
 	const startedAt = Date.now();
+	let stderrTail = "";
+	let aborted = false;
 	return new Promise((resolve, reject) => {
 		const child = spawn(roastBinary(), argv, { signal });
 		const decoder = new StringDecoder("utf8");
@@ -75,22 +77,40 @@ export async function streamBridgeRun(
 				}
 			}
 		});
+		child.stderr?.on("data", (chunk: Buffer) => {
+			stderrTail += chunk.toString("utf8");
+			if (stderrTail.length > 2000) stderrTail = stderrTail.slice(-2000);
+		});
+		const wasAborted = () => aborted || signal?.aborted === true;
 		child.on("error", (error) => {
 			if (!settled) {
+				if (wasAborted() && (error as NodeJS.ErrnoException)?.code === "ABORT_ERR") return;
 				settled = true;
 				reject(error);
 			}
 		});
-		child.on("close", () => {
+		child.on("close", (code) => {
 			if (!settled) {
 				settled = true;
 				details.ended = true;
-				if (!details.final && !details.note) details.note = "bridge pipe closed before a final event";
+				if (!details.final && !details.note) {
+					if (aborted) {
+						details.note = "wait aborted before a final event (tool call ended); the run continues detached — call await again to re-attach";
+					} else if (code) {
+						const tail = stderrTail.trim().replace(/\s+/g, " ").slice(-300);
+						details.note = tail
+							? `bridge exited ${code} before a final event: ${tail}`
+							: `bridge exited ${code} before a final event`;
+					} else {
+						details.note = "bridge pipe closed before a final event";
+					}
+				}
 				resolve(details);
 			}
 		});
 		if (signal) {
 			signal.addEventListener("abort", () => {
+				aborted = true;
 				setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, ABORT_GRACE_MS);
 				try { child.kill("SIGTERM"); } catch {}
 			}, { once: true });
@@ -104,6 +124,12 @@ function applyEvent(details: WatchDetails, evt: Record<string, unknown>): void {
 	}
 	const event = evt.event as string | undefined;
 	if (event === "started") return;
+	if (evt.ok === false && !details.note) {
+		const error = evt.error as { code?: unknown; message?: unknown } | undefined;
+		const message = typeof error?.message === "string" ? error.message : "unknown bridge error";
+		details.note = `bridge error before a final event: ${message}`;
+		return;
+	}
 	if (event === "trial") {
 		details.recent.push({
 			variant: String(evt.variant ?? "?"),
