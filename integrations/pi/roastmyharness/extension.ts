@@ -83,11 +83,13 @@ function requestText(
 	return lines.join("\n");
 }
 
-const ANALYSIS_BODY = "per-variant resolve rate (resolved/n) from the aggregates and " +
-	"summary.csv; paired flips where control and variant disagree, from the report.md " +
-	"matrix; a verdict against the spec hypothesis; and cost/token totals per variant " +
-	"from the trial stats. Format: one table per variant (tasks, resolved, rate), " +
-	"a discordant-task list, and a one-paragraph verdict.";
+const ANALYSIS_BODY = "Read the report.md and summary.csv paths quoted above with read-only tools (derive the run dir as the report's parent dir). " +
+	"Report: (1) a resolve-rate table per variant (tasks n, resolved, rate) with pp and pct deltas vs control; " +
+	"(2) a cost/timing table per variant (sum and mean input tokens, output tokens, cache-read tokens, cost USD, wall sec) with pct deltas vs control; " +
+	"(3) a behavior table per variant (mean tool calls, read calls, rereads, distinct files, compactions, peak context tokens) from report.md and summary.csv; " +
+	"(4) a discordant-task list from the report.md Paired flips matrix (rescued vs broken, with task names and direction). " +
+	"Then inspect trial logs under <run>/jobs/<variant>/ to judge fidelity: check result.json rewards/partial scores, verifier/reward.json, trial.log tail, and agent/pi-events.jsonl for extension-load errors, tool failures, or empty patches. " +
+	"Close with two short paragraphs: results verdict (vs the spec hypothesis, with small-n caveat) and fidelity verdict (did the variant work as intended, and does any flip look caused by the variant vs task noise).";
 
 const ANALYSIS_GUIDE = `Analyze the run and report back: ${ANALYSIS_BODY}`;
 
