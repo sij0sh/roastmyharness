@@ -41,7 +41,7 @@ def test_control_is_implicit(tmp_path: Path):
 
 
 def test_control_block_rejected(tmp_path: Path):
-    with pytest.raises(SpecError, match="unknown field"):
+    with pytest.raises(SpecError, match="valid boolean"):
         load_experiment(write(tmp_path, MINIMAL + "\n[control]\nenabled = true\n"))
 
 

@@ -310,6 +310,7 @@ class ExperimentSpec(BaseModel):
     evaluation: EvalSpec | None = None
     variants: list[VariantSpec] = Field(default_factory=list)
     concurrency: ConcurrencySpec = Field(default_factory=ConcurrencySpec)
+    control: bool = True
 
     @field_validator("model", mode="before")
     @classmethod
@@ -333,7 +334,7 @@ class ExperimentSpec(BaseModel):
     @model_validator(mode="after")
     def _require_arms(self) -> ExperimentSpec:
         if not self.variants:
-            raise ValueError("experiment needs at least one variant; control is implicit")
+            raise ValueError("experiment needs at least one variant")
         ids = [v.id for v in self.variants]
         if len(ids) != len(set(ids)):
             raise ValueError(f"duplicate variant ids: {sorted(ids)}")
@@ -362,7 +363,8 @@ class ExperimentSpec(BaseModel):
         return pin
 
     def arms(self) -> list[VariantSpec]:
-        return [VariantSpec(id="control", name="Bare control"), *self.variants]
+        bare = [VariantSpec(id="control", name="Bare control")] if self.control else []
+        return [*bare, *self.variants]
 
     def peak_concurrency(self) -> int:
         return self.concurrency.peak_parallel(len(self.arms()) * max(self.execution.repetitions, 1))
