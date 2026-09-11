@@ -184,6 +184,40 @@ GPT-5.6 Luna at High thinking (~44% baseline) is a useful reference configuratio
 
 ---
 
+## Configuration
+
+All state lives under one home directory. Everything here is optional;
+defaults keep 3GB of variant runs plus 5GB of control data.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `ROAST_MY_HARNESS_DATA_DIR` | `~/.roastmyharness` | Home for database, runs, plans, and `config.toml` |
+| `ROAST_MY_HARNESS_RUNS_DIR` | `<home>/runs` | Where run outputs go |
+| `ROAST_MY_HARNESS_CACHE_DIR` | `<home>/cache` | Content-addressed home-image cache |
+| `ROAST_PROBE_TIMEOUT` | `1800` | Seconds before the pre-run smoke probe gives up |
+| `ROAST_MY_HARNESS_DEBUG` | unset | Verbose CLI error output when set |
+| `ROAST_MY_HARNESS_REPO` | unset | Repo checkout path used by `setup` |
+
+`config.toml` (in the home directory) fine-tunes storage and retention.
+Environment variables override every value below.
+
+```toml
+[storage]
+runs_dir = "~/benchmark-runs"   # else <home>/runs
+
+[retention]
+enabled = true                 # false keeps everything
+variant_max_size = "3GB"      # cap on non-control run data
+control_max_size = "5GB"      # cap on control-arm data
+control_keep = 4              # resolved control trials kept per task/model/thinking
+control_retention = false     # true lifts the control size cap, keeps the per-group prune
+```
+
+Legacy `max_size` still works and feeds the variant cap. Size values
+accept bytes or `MB`/`GB` suffixes. When `control_keep` is exceeded for
+a task/model/thinking combo, the oldest control trials are pruned first.
+Size enforcement deletes oldest whole runs first and never the active run.
+
 ## Uninstall
 
 ```bash
