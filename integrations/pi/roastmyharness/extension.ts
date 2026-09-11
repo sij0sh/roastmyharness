@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { readFile } from "node:fs/promises";
 import { Type } from "typebox";
 import {
+	AWAIT_TOOL,
 	SUBMIT_TOOL,
 	bridgeArgs,
 	runBridgeJson,
@@ -82,16 +83,50 @@ function requestText(
 	return lines.join("\n");
 }
 
+const ANALYSIS_BODY = "per-variant resolve rate (resolved/n) from the aggregates and " +
+	"summary.csv; paired flips where control and variant disagree, from the report.md " +
+	"matrix; a verdict against the spec hypothesis; and cost/token totals per variant " +
+	"from the trial stats. Format: one table per variant (tasks, resolved, rate), " +
+	"a discordant-task list, and a one-paragraph verdict.";
+
+const ANALYSIS_GUIDE = `Analyze the run and report back: ${ANALYSIS_BODY}`;
+
+function postRunText(watched: {
+	experiment_id: string;
+	state: string;
+	final: boolean;
+	note?: string;
+	aggregates?: unknown;
+	report?: { markdown: string; csv: string } | null;
+}): string {
+	const head = `experiment ${watched.experiment_id}: ${watched.state}`;
+	if (!watched.final) {
+		const note = watched.note ? ` (${watched.note})` : "";
+		return `${head} (not final${note}). The run is still going or detached. ` +
+			`Call ${AWAIT_TOOL} with { "experiment_id": "${watched.experiment_id}" } and wait for it to return; it blocks with live progress. ` +
+			`Do not poll status in a sleep loop. Then analyze the run: ${ANALYSIS_BODY}`;
+	}
+	const lines = [head];
+	if (watched.report) lines.push(`report: ${watched.report.markdown} and ${watched.report.csv}`);
+	if (watched.aggregates) lines.push(`aggregates: ${JSON.stringify(watched.aggregates)}`);
+	lines.push(ANALYSIS_GUIDE);
+	return lines.join("\n");
+}
+
 export default function (pi: ExtensionAPI) {
 	let wizardState: "idle" | "prompting" | "awaiting-submit" = "idle";
 
+	const wizardTools = [SUBMIT_TOOL, AWAIT_TOOL];
 	const hideSubmitTool = () => {
 		const active = pi.getActiveTools();
-		if (active.includes(SUBMIT_TOOL)) pi.setActiveTools(active.filter((name) => name !== SUBMIT_TOOL));
+		if (active.some((name) => wizardTools.includes(name))) {
+			pi.setActiveTools(active.filter((name) => !wizardTools.includes(name)));
+		}
 	};
 	const showSubmitTool = () => {
 		const active = pi.getActiveTools();
-		if (!active.includes(SUBMIT_TOOL)) pi.setActiveTools([...active, SUBMIT_TOOL]);
+		const missing = wizardTools.filter((name) => !active.includes(name));
+		if (missing.length) pi.setActiveTools([...active, ...missing]);
 	};
 
 	pi.on("session_start", () => {
@@ -143,17 +178,63 @@ export default function (pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: "launch cancelled: edit the TOML and call submit_roast_experiment again to redo" }], details: prepared };
 			}
 			ctx.ui.setStatus(WIDGET_ID, `running plan ${planId}`);
+			let launchedFinal = false;
 			try {
 				const watched = await streamBridgeRun(["_bridge", "run", planId], planId, signal, (text, details) => {
 					onUpdate?.({ content: [{ type: "text", text }], details });
 				});
 				postRunCard(pi, watched);
-				return { content: [{ type: "text", text: `experiment ${watched.experiment_id}: ${watched.state}` }], details: watched };
+				launchedFinal = watched.final;
+				return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
 			} finally {
 				ctx.ui.setStatus(WIDGET_ID, undefined);
+				if (launchedFinal) {
+					wizardState = "idle";
+					hideSubmitTool();
+				}
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: AWAIT_TOOL,
+		label: "Wait for roast experiment",
+		description: "Block until a roast experiment reaches a final state, with live progress. Use instead of polling status in a sleep loop.",
+		parameters: Type.Object({ experiment_id: Type.String({ description: "Experiment id from the submit step." }) }),
+		execute: async (_id, params, signal, onUpdate, ctx) => {
+			if (wizardState === "idle") {
+				throw new Error(`${AWAIT_TOOL} is only valid during the active /roastmyharness wizard`);
+			}
+			const target = (params as { experiment_id: string }).experiment_id;
+			onUpdate?.({ content: [{ type: "text", text: `waiting on ${target}` }], details: {} });
+			let watched;
+			try {
+				watched = await streamBridgeRun(["_bridge", "await", target], target, signal, (text, details) => {
+					onUpdate?.({ content: [{ type: "text", text }], details });
+				});
+			} catch (error) {
+				return { content: [{ type: "text", text: `wait failed: ${error instanceof Error ? error.message : String(error)}` }], details: {} };
+			}
+			postRunCard(pi, watched);
+			if (watched.final) {
 				wizardState = "idle";
 				hideSubmitTool();
+				return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
 			}
+			if (watched.note?.includes("worker not running")) {
+				wizardState = "idle";
+				hideSubmitTool();
+				return {
+					content: [{
+						type: "text",
+						text: `experiment ${watched.experiment_id}: ${watched.state} (${watched.note}). ` +
+							"The worker is gone and no new trials will complete. " +
+							`Check \`roastmyharness _bridge status ${watched.experiment_id}\` for partial results, then start a new run if needed.`,
+					}],
+					details: watched,
+				};
+			}
+			return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
 		},
 	});
 

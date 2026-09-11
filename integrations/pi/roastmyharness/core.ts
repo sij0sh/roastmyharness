@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const SUBMIT_TOOL = "submit_roast_experiment";
+export const AWAIT_TOOL = "await_roast_experiment";
 export const DEFAULT_RECENT_TRIALS = 20;
 export const WATCH_INTERVAL_SEC = 2;
 export const ABORT_GRACE_MS = 3_000;
