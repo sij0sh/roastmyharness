@@ -31,6 +31,7 @@ from pathlib import Path
 
 INVALID_EMPTY_PATCH = "INVALID_EMPTY_PATCH"
 INFRA_ARTIFACT_COPY = "INFRA_ARTIFACT_COPY"
+INFRA_LOG_SCAN_CAP = "INFRA_LOG_SCAN_CAP"
 
 # Artifact files the classifier reads beside model.patch.
 PATCH_FILENAME = "model.patch"
@@ -149,33 +150,43 @@ def worktree_dirty(trial_dir: Path) -> bool | None:
     return any(line.strip() for line in text.splitlines())
 
 
-def agent_mutation_evidence(trial_dir: Path) -> bool:
-    """True when the agent logs show an explicit file-mutation tool call."""
+def agent_mutation_evidence(trial_dir: Path) -> bool | None:
+    """Mutation evidence, or None when a log exceeds the scan cap."""
     candidates = [trial_dir / "agent"]
     candidates.extend(step / "agent" for step in step_dirs(trial_dir))
+    unscannable = False
     for agent_dir in candidates:
-        if _events_show_mutation(agent_dir / "pi-events.jsonl"):
+        events = _events_show_mutation(agent_dir / "pi-events.jsonl")
+        if events is True:
             return True
-        if _trajectory_shows_mutation(agent_dir / "trajectory.json"):
+        if events is None:
+            unscannable = True
+        traj = _trajectory_shows_mutation(agent_dir / "trajectory.json")
+        if traj is True:
             return True
-    return False
+        if traj is None:
+            unscannable = True
+    return None if unscannable else False
 
 
 def _is_mutation_tool(name: object) -> bool:
     return isinstance(name, str) and name.strip().lower() in MUTATION_TOOL_NAMES
 
 
-def _bounded_lines(path: Path) -> list[str]:
+def _bounded_lines(path: Path) -> list[str] | None:
     try:
         if path.stat().st_size > _MAX_SCAN_BYTES:
-            return []
+            return None
         return path.read_text().splitlines()
     except (OSError, UnicodeDecodeError):
         return []
 
 
-def _events_show_mutation(path: Path) -> bool:
-    for line in _bounded_lines(path):
+def _events_show_mutation(path: Path) -> bool | None:
+    lines = _bounded_lines(path)
+    if lines is None:
+        return None
+    for line in lines:
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
@@ -189,10 +200,10 @@ def _events_show_mutation(path: Path) -> bool:
     return False
 
 
-def _trajectory_shows_mutation(path: Path) -> bool:
+def _trajectory_shows_mutation(path: Path) -> bool | None:
     try:
         if path.stat().st_size > _MAX_SCAN_BYTES:
-            return False
+            return None
         trajectory = json.loads(path.read_text())
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return False
@@ -225,6 +236,9 @@ def classify_empty_patch(trial_dir: Path) -> str | None:
         return INFRA_ARTIFACT_COPY
     if worktree_dirty(trial_dir):
         return INVALID_EMPTY_PATCH
-    if agent_mutation_evidence(trial_dir):
+    evidence = agent_mutation_evidence(trial_dir)
+    if evidence is True:
         return INVALID_EMPTY_PATCH
+    if evidence is None:
+        return INFRA_LOG_SCAN_CAP
     return None
