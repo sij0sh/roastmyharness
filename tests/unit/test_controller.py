@@ -262,6 +262,12 @@ def test_retry_moves_recorded_trials_aside_but_keeps_budget(tmp_path: Path):
     run = tmp_path / "run"
     _seed_trial(run, "a", "t1", exception="ValueError")
     assert controller._attempts_used("a", "t1", 1) == 1
+    _seed_trial(run, "a", "deepswe_pwntools-tube-multiplexi", exception="ValueError")
+    long_id = "deepswe_pwntools-tube-multiplexing"
+    assert controller._attempts_used("a", long_id, 1) == 1
+    controller._clear_retry_trials("a", long_id, 1)
+    assert controller._attempts_used("a", long_id, 1) == 1
+    assert controller._attempts_used("a", "t1", 1) == 1
     controller._clear_retry_trials("a", "t1", 1)
     assert list((run / "jobs" / "a").rglob("result.json")) == []
     backup = run / "logs" / "retries" / "a" / "replicate-1" / "t1__X"

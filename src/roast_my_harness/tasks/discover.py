@@ -36,6 +36,17 @@ def uses_compose(task_path: Path) -> bool:
     ).is_file()
 
 
+def trial_dir_matches(task_id: str, dirname: str) -> bool:
+    """True when a pier trial dir belongs to a task.
+
+    Pier builds dir names as task[:32] plus a random suffix, so ids
+    over 32 chars never match a plain prefix test.
+    """
+    if dirname == task_id or dirname.startswith(task_id + "__"):
+        return True
+    return dirname.split("__", 1)[0] == task_id[:32].rstrip("_-")
+
+
 def discover_tasks(root: Path, include: list[str], exclude: list[str]) -> list[TaskInfo]:
     root = root.expanduser().resolve()
     if not root.is_dir():

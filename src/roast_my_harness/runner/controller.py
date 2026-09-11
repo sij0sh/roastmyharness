@@ -54,7 +54,7 @@ from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
 from roast_my_harness.spec.resolved import ResolvedRunSpec, resolve_run_spec
 from roast_my_harness.store.repository import Repository
 from roast_my_harness.tasks.catalog import catalog_info, load_catalog
-from roast_my_harness.tasks.discover import discover_tasks, uses_compose
+from roast_my_harness.tasks.discover import discover_tasks, trial_dir_matches, uses_compose
 from roast_my_harness.tasks.hashes import task_hash as compute_task_hash
 
 POLL_INTERVAL_SEC = 2.0
@@ -623,8 +623,7 @@ class ExperimentController:
     def _attempts_used(self, variant_id: str, task_id: str, replicate: int) -> int:
         """Terminal result files already recorded for one (task, replicate).
 
-        Same dir-name heuristic as the pending snapshot: a trial dir
-        counts when its name equals the task or starts with task + "__".
+        A trial dir counts when trial_dir_matches links it to the task.
         Retired attempts under logs/retries count too, so moving a trial
         aside for retry never resets the max_retries budget.
         """
@@ -640,14 +639,12 @@ class ExperimentController:
     def _count_attempts(scope: Path, task_id: str) -> int:
         if not scope.is_dir():
             return 0
-        prefix = task_id + "__"
         count = 0
         for result_path in scope.rglob("result.json"):
             trial_dir = result_path.parent
             if not ((trial_dir / "agent").is_dir() and (trial_dir / "verifier").is_dir()):
                 continue
-            name = trial_dir.name
-            if name == task_id or name.startswith(prefix):
+            if trial_dir_matches(task_id, trial_dir.name):
                 count += 1
         return count
 
@@ -670,14 +667,13 @@ class ExperimentController:
         scope = self._replicate_jobs_dir(variant_id, replicate)
         if not scope.is_dir():
             return
-        prefix = task_id + "__"
         moved = 0
         for result_path in sorted(scope.rglob("result.json")):
             trial_dir = result_path.parent
             if not ((trial_dir / "agent").is_dir() and (trial_dir / "verifier").is_dir()):
                 continue
             name = trial_dir.name
-            if not (name == task_id or name.startswith(prefix)):
+            if not trial_dir_matches(task_id, name):
                 continue
             dest = self._retry_backup_dir(variant_id, replicate) / name
             dest.parent.mkdir(parents=True, exist_ok=True)
