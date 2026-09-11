@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readFile } from "node:fs/promises";
 import { Type } from "typebox";
 import {
 	SUBMIT_TOOL,
@@ -119,11 +120,27 @@ export default function (pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: summarize(prepared) }], details: prepared };
 			}
 			const planId = prepared.plan_id;
+			let specText = "";
+			try {
+				specText = await readFile(target, "utf8");
+			} catch {
+				specText = "";
+			}
+			if (specText.length > 8000) specText = `${specText.slice(0, 8000)}\n# ... truncated`;
+			onUpdate?.({
+				content: [{
+					type: "text",
+					text: specText
+						? `Experiment TOML under review (\`${target}\`):\n\`\`\`toml\n${specText}\n\`\`\`\n${summarize(prepared)}`
+						: summarize(prepared),
+				}],
+				details: prepared,
+			});
 			const confirmed = ctx.hasUI
-				? await ctx.ui.confirm("RoastMyHarness", `Launch ${prepared.experiment?.trials ?? "?"} trials?`)
+				? await ctx.ui.confirm("RoastMyHarness", `Launch ${prepared.experiment?.trials ?? "?"} trials as written above? Decline to edit the TOML and resubmit.`)
 				: true;
 			if (!confirmed) {
-				return { content: [{ type: "text", text: "launch cancelled by user" }], details: prepared };
+				return { content: [{ type: "text", text: "launch cancelled: edit the TOML and call submit_roast_experiment again to redo" }], details: prepared };
 			}
 			ctx.ui.setStatus(WIDGET_ID, `running plan ${planId}`);
 			try {
