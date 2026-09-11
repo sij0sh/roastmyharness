@@ -97,11 +97,30 @@ RoastMyHarness is invisible until invoked: no prompt text and no model tools exi
 
 ### Install
 
+Pi owns the extension. Uv owns the engine. Install both.
+
 ```bash
-uv tool install .
-roastmyharness setup
+pi install git:github.com/sij0sh/roastmyharness@v0.1.0
+uv tool install --from git+https://github.com/sij0sh/roastmyharness roastmyharness
 roastmyharness doctor
 ```
+
+From a local checkout, `uv tool install .` plus `roastmyharness setup`
+copies the extension instead. When Pi already manages the extension,
+`setup` defers to Pi and changes nothing.
+
+### Updates
+
+```bash
+pi update --extensions   # extension reconcile; Pi notifies when due
+uv tool upgrade roastmyharness --from git+https://github.com/sij0sh/roastmyharness
+```
+
+Git tags use `vX.Y.Z` and match the engine version. To move to a new
+release, reinstall the Pi package at the new tag, then upgrade the uv
+tool. The extension checks the engine on every session start. A missing
+engine shows an error. A version skew shows a warning with the exact
+upgrade command. `/roastmyharness` stays blocked until they match.
 
 For the default `openai-codex` provider, authenticate through Pi (`/login codex`). RoastMyHarness reuses Pi's existing credentials and keeps no credential store of its own. `doctor` checks Pi, Pier, Docker, authentication, models, and extension health in one place.
 
