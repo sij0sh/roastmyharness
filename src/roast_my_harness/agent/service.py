@@ -27,7 +27,7 @@ from roast_my_harness import ADAPTER_PROTOCOL_VERSION, __version__
 from roast_my_harness.agent import models
 from roast_my_harness.constants import EXIT_CODES
 from roast_my_harness.errors import RoastMyHarnessError, SpecError
-from roast_my_harness.evals.registry import cohort_eval_id, eval_label, resolve_eval
+from roast_my_harness.evals.registry import eval_label, resolve_eval
 from roast_my_harness.files import atomic_write_text
 from roast_my_harness.homes.sources import source_file_hash, source_tree_hash
 from roast_my_harness.paths import database_path, run_dir
@@ -89,29 +89,28 @@ def _utc_now() -> str:
 
 
 def _source_hashes(spec: ExperimentSpec) -> dict[str, str]:
-    """Hash every local source the run would copy: extension/skill trees
-    plus explicit context files."""
     hashes: dict[str, str] = {}
     for variant in spec.arms():
         for item in variant.extensions:
             if item.kind == "local":
-                hashes[f"{variant.id}/ext/{item.name or item.path.name}"] = source_tree_hash(
-                    item.path
-                )
+                hashes[f"{variant.id}/ext/{item.name or item.path.name}"] = source_tree_hash(item.path)
         for item in variant.skills:
-            hashes[f"{variant.id}/skill/{item.name or item.path.name}"] = source_tree_hash(
-                item.path
-            )
+            hashes[f"{variant.id}/skill/{item.name or item.path.name}"] = source_tree_hash(item.path)
         for item in variant.context_files:
             try:
-                hashes[f"{variant.id}/ctx/{item.name or item.path.name}"] = (
-                    source_file_hash(item.path)
-                )
+                hashes[f"{variant.id}/ctx/{item.name or item.path.name}"] = source_file_hash(item.path)
             except OSError as error:
-                raise SpecError(
-                    f"variant {variant.id!r} context file is not readable: "
-                    f"{item.path} ({error})"
-                ) from error
+                raise SpecError(f"variant {variant.id!r} context file unreadable: {item.path} ({error})") from error
+        if variant.agents_md is not None:
+            try:
+                hashes[f"{variant.id}/agents_md"] = source_file_hash(variant.agents_md)
+            except OSError as error:
+                raise SpecError(f"variant {variant.id!r} agents_md unreadable: {error}") from error
+        if variant.settings is not None:
+            try:
+                hashes[f"{variant.id}/settings"] = source_file_hash(variant.settings)
+            except OSError as error:
+                raise SpecError(f"variant {variant.id!r} settings unreadable: {error}") from error
     return hashes
 
 
@@ -310,16 +309,8 @@ class AgentService:
                 repetitions=repetitions,
                 evaluation=eval_label(spec),
                 hypothesis=spec.hypothesis,
-                control=(
-                    "excluded"
-                    if spec.control is None or not spec.control.enabled
-                    else spec.control.mode
-                ),
-                control_reuse=(
-                    spec.control.mode
-                    if spec.control is not None and spec.control.enabled
-                    else None
-                ),
+                control="fresh",
+                control_reuse="fresh",
                 task_ids=[task.task_id for task in tasks],
                 tasks_path=str(spec.tasks.path),
                 arm_ids=[arm.id for arm in arms],
@@ -341,104 +332,6 @@ class AgentService:
             warnings=warnings,
             next_action="start",
         )
-
-    def historic_availability(self, spec_path: Path) -> dict[str, Any]:
-        """Historic-control availability for one spec, without preparing.
-
-        Computes, after model and tasks are known, which selected tasks
-        have exact-matching history: eligible/total counts, sample sizes,
-        age range, and the sentinel subset. The Pi wizard shows this
-        before the final review; the runner recomputes the same plan at
-        prepare. Raises SpecError for an unloadable spec.
-        """
-        from roast_my_harness.homes.builder import compute_variant_hash
-        from roast_my_harness.spec.hashes import control_cohort_key
-        from roast_my_harness.spec.hashes import spec_hash as _spec_hash
-        from roast_my_harness.store import controls as controls_mod
-
-        spec = load_experiment(spec_path.expanduser().resolve())
-        control = spec.control
-        if control is None or not control.enabled:
-            return {"available": False, "reason": "no control arm"}
-        try:
-            tasks = discover_tasks(
-                spec.tasks.path, spec.tasks.include, spec.tasks.exclude
-            )
-        except RoastMyHarnessError as error:
-            return {"available": False, "reason": str(error)}
-        agents = spec.resolved_agents()
-        control_agent = agents["control"]
-        try:
-            agent_version = spec.resolved_version_for(control_agent)
-        except RuntimeError as error:
-            return {"available": False, "reason": str(error)}
-        control_variant = next(v for v in spec.arms() if v.id == "control")
-        control_hash = compute_variant_hash(
-            control_variant,
-            spec.pi_version,
-            agent=control_agent,
-            agent_version=agent_version,
-        )
-        task_hashes = {t.task_id: compute_task_hash(t.path) for t in tasks}
-        eval_id = cohort_eval_id(spec)
-        cohort_keys = {
-            task_id: control_cohort_key(
-                control_hash,
-                spec.model,
-                spec.thinking,
-                task_hash,
-                agent=control_agent,
-                agent_version=agent_version,
-                eval_id=eval_id,
-            )
-            for task_id, task_hash in task_hashes.items()
-        }
-        repo = Repository(self.db_path)
-        try:
-            pools = repo.control_pools(cohort_keys, task_hashes)
-        finally:
-            repo.close()
-        seed = int(_spec_hash(spec)[:8], 16)
-        plan = controls_mod.plan_reuse(
-            mode=control.mode,
-            scope=control.history_scope,
-            selected=[t.task_id for t in tasks],
-            pools=pools,
-            minimum_runs=control.minimum_runs_per_task,
-            maximum_age_days=control.maximum_age_days,
-            sentinel_count=control.sentinel_tasks,
-            seed=seed,
-        )
-        eligible_counts = {
-            task_id: plan.pool_counts.get(task_id, 0)
-            for task_id in plan.eligible_tasks
-        }
-        dates = [
-            bound
-            for task_id in plan.eligible_tasks
-            for bound in plan.pool_date_ranges.get(task_id, ("", ""))
-            if bound
-        ]
-        return {
-            "available": True,
-            "mode": control.mode,
-            "history_scope": control.history_scope,
-            "status": plan.status,
-            "eligible": len(plan.eligible_tasks),
-            "total": len(tasks),
-            "eligible_tasks": sorted(plan.eligible_tasks),
-            "missing_tasks": sorted(
-                set(plan.reuse_by_task) - set(plan.eligible_tasks)
-            ),
-            "eligible_counts": eligible_counts,
-            "total_samples": sum(eligible_counts.values()),
-            "age_range": [min(dates), max(dates)] if dates else ["", ""],
-            "sentinel_tasks": sorted(plan.sentinel_tasks),
-            "model": spec.model.full_id(),
-            "thinking": spec.thinking,
-            "agent": control_agent,
-            "agent_version": agent_version,
-        }
 
     def start(self, plan_id: str, *, skip_docker: bool = False) -> models.StartResult:
         """Launch an approved plan. Idempotent per plan_id; rejects stale bytes."""

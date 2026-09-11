@@ -1,15 +1,7 @@
-"""Idempotent client integration: ``setup`` and ``doctor``.
-
-setup installs the Pi slash-command extension or the Claude MCP server
-configuration for one agent and one scope. Existing user configuration
-is preserved: only symlinks that point elsewhere are replaced, and real
-files or directories are never touched. doctor reports Pi, Pier, Docker,
-auth, model, and integration health in one place.
-"""
+"""Pi extension install and health. One job: install/update the Pi extension."""
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import sys
@@ -18,10 +10,10 @@ from pathlib import Path
 
 from roast_my_harness import __version__
 from roast_my_harness.auth import service as auth_service
+from roast_my_harness.extension_install import install_pi_extension
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import preflight
 
-MCP_SERVER_NAME = "roastmyharness"
 OBSOLETE_SKILL_NAME = "roastmyharness"
 
 
@@ -34,12 +26,6 @@ class ActionResult:
 
 
 def bundled_root() -> Path | None:
-    """Installed wheel payload: Pi extension source plus task corpus.
-
-    The wheel maps repo `integrations/` and `tasks/` under
-    `roast_my_harness/bundled/` so setup and discovery work with no
-    checkout on disk.
-    """
     base = Path(__file__).resolve().parent / "bundled"
     if (base / "integrations/pi/roastmyharness.ts").is_file():
         return base
@@ -47,7 +33,6 @@ def bundled_root() -> Path | None:
 
 
 def bundled_tasks_root() -> Path | None:
-    """DeepSWE task root inside the wheel payload, if installed."""
     base = bundled_root()
     if base is None:
         return None
@@ -56,7 +41,6 @@ def bundled_tasks_root() -> Path | None:
 
 
 def repo_root() -> Path | None:
-    """Locate a checkout that carries the Pi extension source."""
     env = os.environ.get("ROAST_MY_HARNESS_REPO")
     candidates = [Path(env).resolve()] if env else []
     here = Path(__file__).resolve()
@@ -67,223 +51,78 @@ def repo_root() -> Path | None:
     return bundled_root()
 
 
-def _link(source: Path, dest: Path) -> ActionResult:
-    """Point dest at source, replacing only a wrong symlink."""
-    label = f"link {dest}"
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.is_symlink():
-            if dest.resolve() == source.resolve():
-                return ActionResult(label, "already linked")
-            dest.unlink()
-        elif dest.exists():
-            return ActionResult(
-                label,
-                f"{dest} exists and is not a symlink; left untouched",
-                problem=True,
-            )
-        os.symlink(source, dest)
-    except OSError as e:
-        return ActionResult(label, str(e), problem=True)
-    return ActionResult(label, f"{source} -> {dest}", changed=True)
-
-
-def _remove_obsolete_skill(dest: Path) -> ActionResult:
-    """Remove the symlink created by older releases without touching real paths."""
-    label = f"remove obsolete skill {dest}"
-    try:
-        if dest.is_symlink():
-            dest.unlink()
-            return ActionResult(label, "removed", changed=True)
-        if dest.exists():
-            return ActionResult(
-                label,
-                f"{dest} exists and is not a symlink; remove it manually",
-                problem=True,
-            )
-    except OSError as error:
-        return ActionResult(label, str(error), problem=True)
-    return ActionResult(label, "already absent")
-
-
-def mcp_entry() -> dict[str, object]:
-    return {
-        "type": "stdio",
-        "command": sys.executable,
-        "args": ["-m", "roast_my_harness.mcp_server"],
-    }
-
-
-def _write_mcp_config(config_path: Path) -> ActionResult:
-    """Merge the MCP server entry, preserving every other key."""
-    label = f"mcp {config_path}"
-    entry = mcp_entry()
-    try:
-        data: dict = {}
-        if config_path.exists():
-            loaded = json.loads(config_path.read_text(encoding="utf-8"))
-            if not isinstance(loaded, dict):
-                return ActionResult(
-                    label,
-                    f"{config_path} is not a JSON object; left untouched",
-                    problem=True,
-                )
-            data = loaded
-        servers = data.setdefault("mcpServers", {})
-        if servers.get(MCP_SERVER_NAME) == entry:
-            return ActionResult(label, "already registered")
-        servers[MCP_SERVER_NAME] = entry
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    except (OSError, json.JSONDecodeError) as e:
-        return ActionResult(label, str(e), problem=True)
-    return ActionResult(label, "registered", changed=True)
-
-
 def _tool_visible() -> ActionResult:
     exe = shutil.which("roastmyharness")
     if exe:
         return ActionResult("tool", f"roastmyharness at {exe}")
     module = f"{Path(sys.executable).name} -m roast_my_harness"
-    return ActionResult("tool", f"not on PATH; use {module} (or `uv tool install .`)", problem=True)
+    return ActionResult("tool", f"not on PATH; use {module}", problem=True)
 
 
-def setup(
-    agent: str, scope: str, *, root: Path | None = None, home: Path | None = None
-) -> list[ActionResult]:
-    """Install integrations for one agent and scope. Idempotent."""
-    if agent not in ("pi", "claude"):
-        return [ActionResult("agent", f"unknown agent {agent!r}", problem=True)]
+def setup(agent: str = "pi", scope: str = "user", *, root: Path | None = None, home: Path | None = None) -> list[ActionResult]:
+    if agent != "pi":
+        return [ActionResult("agent", f"unknown agent {agent!r}; RoastMyHarness is Pi-only", problem=True)]
     if scope not in ("user", "project"):
         return [ActionResult("scope", f"unknown scope {scope!r}", problem=True)]
-
     root = root or repo_root()
     home = home or Path.home()
     if root is None:
-        return [
-            ActionResult(
-                "repo",
-                "repo checkout not found; set ROAST_MY_HARNESS_REPO to its root",
-                problem=True,
-            )
-        ]
-
-    results: list[ActionResult] = []
-    extension_source = root / "integrations/pi/roastmyharness.ts"
-    extension_modules = root / "integrations/pi/roastmyharness"
-
-    if agent == "pi":
-        base = home / ".pi/agent" if scope == "user" else root / ".pi"
-        results.append(_link(extension_source, base / "extensions/roastmyharness.ts"))
-        results.append(_link(extension_modules, base / "extensions/roastmyharness"))
-        results.append(_remove_obsolete_skill(base / "skills" / OBSOLETE_SKILL_NAME))
-    else:
-        base = home / ".claude" if scope == "user" else root / ".claude"
-        results.append(_remove_obsolete_skill(base / "skills" / OBSOLETE_SKILL_NAME))
-        config = home / ".claude.json" if scope == "user" else root / ".mcp.json"
-        results.append(_write_mcp_config(config))
-
+        return [ActionResult("repo", "repo checkout not found; set ROAST_MY_HARNESS_REPO", problem=True)]
+    base = home / ".pi/agent" if scope == "user" else root / ".pi"
+    results = install_pi_extension(
+        source_file=root / "integrations/pi/roastmyharness.ts",
+        source_dir=root / "integrations/pi/roastmyharness",
+        dest_dir=base / "extensions",
+    )
+    obsolete = base / "skills" / OBSOLETE_SKILL_NAME
+    try:
+        if obsolete.is_symlink() or obsolete.is_file():
+            obsolete.unlink()
+            results.append(ActionResult("remove obsolete skill", "removed", changed=True))
+    except OSError as error:
+        results.append(ActionResult("remove obsolete skill", str(error), problem=True))
     results.append(_tool_visible())
     return results
 
 
 def detect_agents() -> list[str]:
-    return [a for a in ("pi", "claude") if shutil.which(a)]
+    return ["pi"] if shutil.which("pi") else []
 
 
-def run_doctor(
-    *, root: Path | None = None, home: Path | None = None
-) -> list[preflight.CheckResult]:
-    """One health table: pi, pier, docker, auth, model, integrations."""
+def run_doctor(*, root: Path | None = None, home: Path | None = None) -> list[preflight.CheckResult]:
     results: list[preflight.CheckResult] = []
-    results.append(
-        preflight._ok("python", f"{sys.version.split()[0]} (roastmyharness {__version__})")
-    )
-
+    results.append(preflight._ok("python", f"{sys.version.split()[0]} (roastmyharness {__version__})"))
     pi = shutil.which("pi")
     results.append(preflight._ok("pi", pi) if pi else preflight._warn("pi", "pi not on PATH"))
-
     try:
         exe = pier_mod.pier_executable()
         version = pier_mod.pier_version()
         detail = f"{exe} {version}" if version else f"{exe} (version unreadable)"
-        results.append(
-            preflight._ok("pier", detail) if version else preflight._warn("pier", detail)
-        )
+        results.append(preflight._ok("pier", detail) if version else preflight._warn("pier", detail))
     except Exception as e:
         results.append(preflight._fail("pier", str(e)))
-
     results.extend(preflight._docker())
-
     cred = auth_service.codex_credential()
     if cred is None:
         results.append(preflight._fail("auth", "no codex credential; run pi /login codex"))
     elif auth_service.refresh_hint(cred):
-        results.append(
-            preflight._fail(
-                "auth",
-                f"codex OAuth expired{auth_service.credential_expiry(cred)}; run pi /login codex",
-            )
-        )
+        results.append(preflight._fail("auth", f"codex OAuth expired{auth_service.credential_expiry(cred)}"))
     else:
-        results.append(
-            preflight._ok("auth", f"codex OAuth present{auth_service.credential_expiry(cred)}")
-        )
-
+        results.append(preflight._ok("auth", f"codex OAuth present{auth_service.credential_expiry(cred)}"))
     try:
         models = auth_service.load_host_models()
         providers = ", ".join(sorted(models.get("providers", {}))[:8]) or "none"
         results.append(preflight._ok("model", f"host models.json providers: {providers}"))
     except Exception as e:
         results.append(preflight._warn("model", f"host models.json unusable: {e}"))
-
     root = root or repo_root()
     home = home or Path.home()
     if pi and root is not None:
         candidates = [
-            (
-                home / ".pi/agent/extensions/roastmyharness.ts",
-                home / ".pi/agent/extensions/roastmyharness",
-            ),
-            (
-                root / ".pi/extensions/roastmyharness.ts",
-                root / ".pi/extensions/roastmyharness",
-            ),
+            home / ".pi/agent/extensions/roastmyharness.ts",
+            root / ".pi/extensions/roastmyharness.ts",
         ]
-        installed = next(
-            (
-                entry
-                for entry, modules in candidates
-                if (entry.is_symlink() or entry.exists())
-                and (modules.is_symlink() or modules.exists())
-            ),
-            None,
-        )
-        results.append(
-            preflight._ok("extension", str(installed))
-            if installed
-            else preflight._warn(
-                "extension", "not installed or incomplete; run roastmyharness setup --agent pi"
-            )
-        )
-
-    claude = shutil.which("claude")
-    if claude and root is not None:
-        configs = [home / ".claude.json", root / ".mcp.json"]
-        registered = False
-        for config in configs:
-            if not config.is_file():
-                continue
-            try:
-                data = json.loads(config.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                continue
-            if isinstance(data, dict) and MCP_SERVER_NAME in data.get("mcpServers", {}):
-                registered = True
-                break
-        results.append(
-            preflight._ok("mcp", "roastmyharness server registered")
-            if registered
-            else preflight._warn("mcp", "not registered; run roastmyharness setup --agent claude")
-        )
+        installed = next((p for p in candidates if p.is_file()), None)
+        results.append(preflight._ok("extension", str(installed)) if installed
+                       else preflight._warn("extension", "not installed; run roastmyharness setup"))
     return results

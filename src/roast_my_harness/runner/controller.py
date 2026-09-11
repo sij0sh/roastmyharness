@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from roast_my_harness import ADAPTER_PROTOCOL_VERSION, __version__
-from roast_my_harness.adapter.registry import get_agent
+from roast_my_harness.adapter.registry import PI_AGENT
 from roast_my_harness.auth import staging
 from roast_my_harness.errors import PierError
 from roast_my_harness.evals.registry import resolve_eval
@@ -33,7 +33,6 @@ from roast_my_harness.report.collect import pending_replicates
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import probe as probe_mod
 from roast_my_harness.runner import process as process_mod
-from roast_my_harness.runner.control_reuse import ControlReuse
 from roast_my_harness.runner.patch_guard import (
     INFRA_ARTIFACT_COPY,
     INVALID_EMPTY_PATCH,
@@ -90,7 +89,6 @@ class ExperimentController:
         self.store = store
         self.resolved: ResolvedRunSpec | None = None
         self.progress = progress
-        self.control_reuse = ControlReuse(spec, experiment_id, store)
         self.state = "DRAFT"
         self.jobs: dict[str, VariantJob] = {}
         self.cells: dict[str, dict[tuple[str, int], Cell]] = {}
@@ -132,18 +130,19 @@ class ExperimentController:
 
     RESOLVED_NAME = "resolved.json"
 
-    def version_for(self, agent_id: str) -> str:
-        """Exact version one agent installs in this run.
-
-        Frozen at prepare; only a controller that never prepared (tests,
-        one-off observation) resolves live.
-        """
+    def version_for(self, agent_id: str = "pi") -> str:
         if self.resolved is not None:
-            try:
-                return self.resolved.resolved_agent_versions[agent_id]
-            except KeyError:
-                pass
-        return self.spec.resolved_version_for(agent_id)
+            for key in (agent_id, "pi", f"pi:control"):
+                if key in self.resolved.resolved_agent_versions:
+                    return self.resolved.resolved_agent_versions[key]
+        return self.spec.resolved_version_for("pi")
+
+    def pi_version_for_variant(self, variant_id: str) -> str:
+        if self.resolved is not None:
+            key = f"pi:{variant_id}"
+            if key in self.resolved.resolved_agent_versions:
+                return self.resolved.resolved_agent_versions[key]
+        return self.spec.pi_version
 
     def _frozen_versions(self) -> dict[str, str] | None:
         """Frozen agent versions for callees taking a versions map."""
@@ -274,22 +273,17 @@ class ExperimentController:
             self._progress("compose tasks: using runtime agent install")
         for variant in self.spec.arms():
             self._throw_if_cancelled()
-            if force_runtime and not variant.runtime_agent_install:
-                variant = variant.model_copy(
-                    update={"runtime_agent_install": True}
-                )
             build = build_home(
                 variant,
                 self.spec,
                 homes_root,
-                agent_version=self.version_for(variant.agent or self.spec.agent),
+                agent_version=self.pi_version_for_variant(variant.id),
+                runtime_agent_install=force_runtime,
             )
             staged = staging.stage_home(
                 build.path,
                 self.run_dir / "staging" / variant.id,
                 self.spec,
-                agent_id=build.manifest.agent,
-                model=self.spec.model_for(variant),
             )
             self._stage_env(staged, variant)
             manifest_path = staged / "variant.json"
@@ -309,12 +303,6 @@ class ExperimentController:
             )
 
         self._write_manifest(tasks)
-        if "control" in self.jobs:
-            self.control_reuse.plan_for(
-                tasks,
-                _hash_of(self, "control"),
-                resolved_versions=self._frozen_versions(),
-            )
         self._set_state("READY")
 
         if probe_mod.should_probe(self.spec):
@@ -429,7 +417,6 @@ class ExperimentController:
             task_map = manifest.get("tasks") or {}
             if isinstance(task_map, dict):
                 self._observed_task_ids = list(task_map)
-            self.control_reuse.load_manifest(manifest)
 
     def _sweep_stale_staging(self) -> None:
         """Scan crash-leftover staging creds, record the finding, then delete."""
@@ -454,7 +441,6 @@ class ExperimentController:
         return [task.task_id for task in tasks]
 
     def _write_manifest(self, tasks) -> None:
-        agents = self.spec.resolved_agents()
         frozen = self._frozen_versions() or {}
         manifest = {
             "experiment_id": self.experiment_id,
@@ -492,18 +478,16 @@ class ExperimentController:
             "tasks_path": str(self.spec.tasks.path),
             "tasks": {t.task_id: compute_task_hash(t.path) for t in tasks},
             "agents": {
-                agent_id: {
-                    "family": get_agent(agent_id).family,
-                    "import_path": get_agent(agent_id).import_path,
-                    "agent_version": self.version_for(agent_id),
+                "pi": {
+                    "import_path": PI_AGENT.import_path,
+                    "agent_version": self.version_for("pi"),
                 }
-                for agent_id in sorted(set(agents.values()))
             },
             "variants": {
                 v.variant_id: {
                     "variant_hash": _hash_of(self, v.variant_id),
                     "manifest": str(v.manifest_path),
-                    "agent": agents[v.variant_id],
+                    "agent": "pi",
                 }
                 for v in self.jobs.values()
             },
@@ -530,18 +514,6 @@ class ExperimentController:
         self._set_state("RUNNING")
         try:
             await self._watch()
-            if self.control_reuse.held_pending():
-                self.control_reuse.evaluate(self.cells)
-                if self.control_reuse.abort:
-                    self._fail(
-                        PierError(
-                            f"historic control {self.control_reuse.status}; "
-                            "aborting per control policy"
-                        )
-                    )
-                if self.control_reuse.accepted is not True:
-                    self._launch()
-                    await self._watch()
         except asyncio.CancelledError:
             await self._cancel("CANCELLED")
             raise
@@ -556,16 +528,7 @@ class ExperimentController:
         return self.state
 
     def enforce_reuse_policy(self) -> None:
-        if "control" in self.jobs:
-            tasks = discover_tasks(
-                self.spec.tasks.path, self.spec.tasks.include, self.spec.tasks.exclude
-            )
-            self.control_reuse.plan_for(
-                tasks,
-                _hash_of(self, "control"),
-                resolved_versions=self._frozen_versions(),
-            )
-        self.control_reuse.enforce(progress=self._progress)
+        return
 
     def set_rerun_filter(
         self,
@@ -701,12 +664,6 @@ class ExperimentController:
         all_ids = [t.task_id for t in tasks]
         repetitions = self._repetitions()
         self._refresh_cells()
-        agents = self.spec.resolved_agents()
-        held = self.control_reuse.held_tasks() if self.control_reuse.held_pending() else set()
-        # Intersection-scope tasks outside the history-backed set never
-        # run as controls, in either wave; pending-held tasks wait out
-        # the sentinel verdict.
-        held = held | self.control_reuse.out_of_scope_tasks()
         scope_tasks = self._rerun_tasks
         scope_variants = self._rerun_variants
         if scope_tasks is not None or scope_variants is not None or self._retry_errors:
@@ -734,8 +691,6 @@ class ExperimentController:
                         missing.append((task_id, replicate))
             if self._rerun_tasks is not None:
                 missing = [(t, r) for (t, r) in missing if t in self._rerun_tasks]
-            if job.variant_id == "control":
-                missing = [(t, r) for (t, r) in missing if t not in held]
             by_rep: dict[int, list[str]] = {}
             for task_id, replicate in missing:
                 by_rep.setdefault(replicate, []).append(task_id)
@@ -750,7 +705,7 @@ class ExperimentController:
         n_concurrent = self.spec.concurrency.effective_per_variant(len(missing_by_launch))
         arm_by_id = {arm.id: arm for arm in self.spec.arms()}
         for job in self.jobs.values():
-            agent_id = agents[job.variant_id]
+            agent_id = "pi"
             for replicate in range(1, repetitions + 1):
                 missing = missing_by_launch.get((job.variant_id, replicate))
                 if not missing:
@@ -764,9 +719,9 @@ class ExperimentController:
                         + (f"-r{replicate}" if multi else "")
                     ),
                     manifest_path=job.manifest_path,
-                    model_id=self.spec.model_for(arm_by_id[job.variant_id]).full_id(),
+                    model_id=self.spec.model.full_id(),
                     thinking=self.spec.thinking,
-                    pi_version=self.version_for(agent_id),
+                    pi_version=self.pi_version_for_variant(job.variant_id),
                     n_concurrent=n_concurrent,
                     include_tasks=missing,
                     agent=agent_id,
@@ -868,7 +823,6 @@ class ExperimentController:
                     metrics=None,
                     finished_at=cell.finished_at,
                 )
-                self.control_reuse.record(variant_id, task_id, cell, trial_id)
                 self._logger.emit(
                     "trial",
                     variant=variant_id,
@@ -1021,7 +975,6 @@ class ExperimentController:
                     metrics=None,
                     finished_at=cell.finished_at,
                 )
-                self.control_reuse.record(variant_id, task_id, cell, trial_id)
 
     def _provenance(self, secret_hits: list[str]) -> dict[str, Any]:
         manifest: dict[str, Any] = {}
@@ -1034,8 +987,8 @@ class ExperimentController:
         manifest["finished_at"] = datetime.now(UTC).isoformat()
         manifest["secret_scan_scope"] = "all regular run artifacts after staging cleanup"
         manifest["secret_scan_hits"] = secret_hits
-        manifest["control_reuse"] = self.reuse_summary()
-        manifest["reused_control_observations"] = manifest["control_reuse"].get("total_reused", 0)
+        manifest["control_reuse"] = {"mode": "fresh"}
+        manifest["reused_control_observations"] = 0
         atomic_write_text(
             self.run_dir / "manifest.json",
             json.dumps(manifest, indent=2) + "\n",
@@ -1043,7 +996,7 @@ class ExperimentController:
         return manifest
 
     def reuse_summary(self) -> dict[str, Any]:
-        return self.control_reuse.summary()
+        return {"mode": "fresh", "total_reused": 0}
 
     def fail_setup(self, error: Exception) -> None:
         """Record a preparation failure and remove partial staged homes."""
@@ -1097,9 +1050,6 @@ class ExperimentController:
         repetitions = self._repetitions()
         matrix: dict[str, dict[str, str]] = {}
         matrix_rewards: dict[str, dict[str, float]] = {}
-        held = self.control_reuse.held_tasks() if self.control_reuse.held_pending() else set()
-        held = held | self.control_reuse.out_of_scope_tasks()
-        reused = self.control_reuse.reused_tasks()
         for variant_id in self.jobs:
             cells = self.cells.get(variant_id, {})
             row: dict[str, str] = {}
@@ -1119,10 +1069,6 @@ class ExperimentController:
                 if rep_rewards:
                     row[task_id] = self._aggregate_trial_states(chars)
                     rewards[task_id] = sum(rep_rewards) / len(rep_rewards)
-                elif variant_id == "control" and task_id in reused:
-                    row[task_id] = "H"
-                elif variant_id == "control" and task_id in held:
-                    row[task_id] = "."
                 else:
                     row[task_id] = self._aggregate_trial_states(chars)
             matrix[variant_id] = row

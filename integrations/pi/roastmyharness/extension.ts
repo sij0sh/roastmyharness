@@ -1,276 +1,155 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
-	AUTHOR_CHILD_ENV,
-	DEFAULT_RECENT_TRIALS,
-	ROAST_ACTIONS,
-	TOOL_NAME,
-	WATCH_INTERVAL_SEC,
-	buildArgs,
-	getActiveRun,
+	SUBMIT_TOOL,
+	bridgeArgs,
 	roastBinary,
-	runRoastJson,
+	runBridgeJson,
 	summarize,
-	type AuthorDetails,
-	type RoastDetails,
-	type ServiceAction,
-	type WatchDetails,
+	type RoastResponse,
 } from "./core.ts";
-import {
-	WIDGET_ID,
-	authorExperiment,
-	renderAuthorCard,
-	renderAuthorResult,
-	runActiveMenu,
-	runCommandFlow,
-} from "./author-flow.ts";
-import {
-	renderRunCard,
-	renderWatchResult,
-	startExperiment,
-	streamStartedExperiment,
-	streamWatch,
-	type WatchParams,
-} from "./watch.ts";
-import { AUTHOR_CARD_TYPE, RUN_CARD_TYPE } from "./cards.ts";
+import { RUN_CARD_TYPE, postRunCard } from "./cards.ts";
+import { renderRunCard, streamBridgeRun } from "./watch.ts";
+
+const WIDGET_ID = "roastmyharness-widget";
+
+const SPEC_TEMPLATE = (facts: WizardFacts) => `schema_version = 3
+name = "${facts.name}"
+
+model = "${facts.model}"
+thinking = "${facts.thinking}"
+pi_version = "${facts.piVersion}"
+
+[tasks]
+path = "${facts.taskRoot}"
+include = ["*"]
+
+[[variants]]
+id = "${facts.variantId}"
+
+[[variants.extensions]]
+path = "${facts.extensionPath}"
+entry = "${facts.extensionEntry}"
+`;
+
+interface WizardFacts {
+	name: string;
+	model: string;
+	thinking: string;
+	piVersion: string;
+	taskRoot: string;
+	variantId: string;
+	extensionPath: string;
+	extensionEntry: string;
+}
+
+async function collectFacts(ctx: ExtensionContext): Promise<WizardFacts | undefined> {
+	const ask = async (prompt: string, initial = ""): Promise<string | undefined> => {
+		try {
+			return await ctx.ui.input(prompt, { initial });
+		} catch {
+			return undefined;
+		}
+	};
+	const name = (await ask("Experiment name?", "test-my-extension"))?.trim();
+	if (!name) return undefined;
+	const taskRoot = (await ask("Benchmark task root?", "tasks/deepswe/tasks"))?.trim();
+	if (!taskRoot) return undefined;
+	const extensionPath = (await ask("Extension path under test?", "../my-extension"))?.trim();
+	if (!extensionPath) return undefined;
+	const extensionEntry = (await ask("Extension entry?", "src/index.ts"))?.trim() || "src/index.ts";
+	const variantId = (await ask("Variant id?", "my-ext"))?.trim() || "my-ext";
+	const model = (await ask("Model (provider/model from pi models.json)?", "openai-codex/gpt-5.6-luna"))?.trim() || "openai-codex/gpt-5.6-luna";
+	const thinking = (await ask("Thinking level?", "high"))?.trim() || "high";
+	const piVersion = (await ask("Pi version (latest or x.y.z)?", "latest"))?.trim() || "latest";
+	return { name, model, thinking, piVersion, taskRoot, variantId, extensionPath, extensionEntry };
+}
 
 export default function (pi: ExtensionAPI) {
-	if (process.env[AUTHOR_CHILD_ENV] === "1") return;
 	let wizardRunning = false;
-	let toolUsedThisTurn = false;
 
-	const showTool = () => {
-		const active = pi.getActiveTools();
-		if (!active.includes(TOOL_NAME)) pi.setActiveTools([...active, TOOL_NAME]);
-	};
-	const hideTool = () => {
-		const active = pi.getActiveTools();
-		if (active.includes(TOOL_NAME)) {
-			pi.setActiveTools(active.filter((name) => name !== TOOL_NAME));
-		}
-	};
-
-	pi.on("session_start", () => hideTool());
-	pi.on("agent_settled", () => {
-		if (toolUsedThisTurn) {
-			toolUsedThisTurn = false;
-			return;
-		}
-		// A command-launched run keeps the tool visible so the session can
-		// answer update/cancel questions about it while the prompt box is live.
-		if (getActiveRun()) return;
-		hideTool();
-	});
-
-	const launchWizard = async (args: string, ctx: ExtensionContext) => {
-		if (!ctx.hasUI) {
-			ctx.ui.notify("/roastmyharness requires an interactive Pi session.", "error");
-			return;
-		}
-		if (!ctx.isIdle()) {
-			ctx.ui.notify("Wait for the current agent turn to finish.", "warning");
-			return;
-		}
-		if (wizardRunning) {
-			ctx.ui.notify("The RoastMyHarness wizard is already open.", "warning");
-			return;
-		}
-		wizardRunning = true;
-		showTool();
-		try {
-			const active = getActiveRun();
-			const startNew = active ? await runActiveMenu(pi, ctx, active) : true;
-			if (startNew) await runCommandFlow(pi, args, ctx);
-		} catch (error) {
-			ctx.ui.setStatus(WIDGET_ID, undefined);
-			ctx.ui.setWidget(WIDGET_ID, undefined);
-			ctx.ui.notify(
-				`RoastMyHarness failed: ${error instanceof Error ? error.message : String(error)}`,
-				"error",
-			);
-		} finally {
-			wizardRunning = false;
-		}
-	};
-	const command = {
-		description: "Configure, validate, and launch a harness comparison",
-		handler: launchWizard,
-	};
-	pi.registerCommand("roastmyharness", command);
-
-	// Persistent transcript cards for command-finished author sessions and
-	// benchmark runs. Same rendering as the roast_harness tool cards; the
-	// live widget covers streaming, these cards are the durable record.
-	pi.registerMessageRenderer(AUTHOR_CARD_TYPE, (message, options, theme) =>
-		renderAuthorCard(message.details, options.expanded, theme));
-	pi.registerMessageRenderer(RUN_CARD_TYPE, (message, options, theme) =>
-		renderRunCard(message.details, options.expanded, theme));
-
-	pi.registerTool({
-		name: "roast_harness",
-		label: "RoastMyHarness",
-		description:
-			"Configure and run harness-comparison experiments. author opens the wizard, uses an isolated " +
-			"Pi context to create the spec, and validates it; prepare validates an existing TOML file; " +
-			"start launches an approved plan_id and streams live progress until completion " +
-			"(watch=false returns after launch); watch attaches to a running experiment; status polls once; " +
-			"cancel requests graceful cancellation; report regenerates artifacts.",
-		promptSnippet:
-			"Author, validate, launch, monitor, and report harness-comparison experiments",
-		promptGuidelines: [
-			"The /roastmyharness command runs its own wizard with no model call; roast_harness author is only for model-initiated authoring.",
-			"After roast_harness author or prepare returns ready_for_confirmation, present the plan and wait for explicit user approval before calling start.",
-			"roast_harness start streams live progress until the experiment finishes; aborting only detaches the watch. Use cancel to stop a run.",
-			"Read roast_harness results as JSON. When validation returns needs_input, resolve listed questions instead of guessing.",
-		],
-		parameters: Type.Object({
-			action: StringEnum(ROAST_ACTIONS, {
-				description: "Orchestration action to perform.",
-			}),
-			task_root: Type.Optional(
-				Type.String({ description: "Task dataset path (author wizard hint; --tasks root for catalog)." }),
-			),
-			spec_path: Type.Optional(
-				Type.String({ description: "Experiment TOML path (required for prepare)." }),
-			),
-			plan_id: Type.Optional(
-				Type.String({ description: "Plan id from prepare (required for start)." }),
-			),
-			experiment_id: Type.Optional(
-				Type.String({
-					description: "Experiment id (required for status, watch, cancel, report).",
-				}),
-			),
-			watch: Type.Optional(
-				Type.Boolean({
-					description:
-						"After start: stream live progress until final. Default true; set false to return immediately after launch.",
-				}),
-			),
-			interval_sec: Type.Optional(
-				Type.Number({
-					description: `Watch poll interval in seconds (default ${WATCH_INTERVAL_SEC}).`,
-				}),
-			),
-			recent: Type.Optional(
-				Type.Number({
-					description: `Trial events kept for display (default ${DEFAULT_RECENT_TRIALS}).`,
-				}),
-			),
-			skip_docker: Type.Optional(
-				Type.Boolean({ description: "Skip docker preflight checks." }),
-			),
-		}),
-		executionMode: "sequential",
-		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			void toolCallId;
-			toolUsedThisTurn = true;
-
-			if (params.action === "author") {
-				if (wizardRunning) throw new Error("The RoastMyHarness wizard is already open");
-				wizardRunning = true;
-				try {
-					return await authorExperiment(
-						pi, params.task_root ?? "", ctx, signal, onUpdate, params.skip_docker ?? false,
-					);
-				} finally {
-					wizardRunning = false;
+	pi.registerCommand("roastmyharness", {
+		description: "Configure, validate, and launch a Pi harness comparison",
+		handler: async (_args: string, ctx: ExtensionContext) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("/roastmyharness requires an interactive Pi session.", "error");
+				return;
+			}
+			if (!ctx.isIdle()) {
+				ctx.ui.notify("Wait for the current agent turn to finish.", "warning");
+				return;
+			}
+			if (wizardRunning) {
+				ctx.ui.notify("The RoastMyHarness wizard is already open.", "warning");
+				return;
+			}
+			wizardRunning = true;
+			try {
+				const facts = await collectFacts(ctx);
+				if (!facts) {
+					ctx.ui.notify("RoastMyHarness wizard cancelled.", "info");
+					return;
 				}
-			}
-			if (params.action === "prepare" && !params.spec_path) {
-				throw new Error("spec_path is required for prepare");
-			}
-			if (params.action === "start" && !params.plan_id) {
-				throw new Error("plan_id is required for start");
-			}
-			if (["status", "watch", "cancel", "report"].includes(params.action) && !params.experiment_id) {
-				throw new Error(`experiment_id is required for ${params.action}`);
-			}
-
-			if (params.action === "start" && ctx.hasUI) {
-				const ok = await ctx.ui.confirm(
-					"RoastMyHarness",
-					`Launch experiment plan ${params.plan_id}?`,
-				);
-				if (!ok) {
-					return {
-						content: [{ type: "text", text: "launch cancelled by user" }],
-						details: {},
-					};
-				}
-			}
-
-			if (params.interval_sec !== undefined &&
-				(!Number.isFinite(params.interval_sec) || params.interval_sec < 0.2)) {
-				throw new Error("interval_sec must be a finite number at least 0.2");
-			}
-			if (params.recent !== undefined &&
-				(!Number.isFinite(params.recent) || params.recent < 1)) {
-				throw new Error("recent must be a finite number at least 1");
-			}
-			const wantsWatch =
-				params.action === "watch" ||
-				(params.action === "start" && params.watch !== false);
-			const watchParams: WatchParams = {
-				interval_sec: params.interval_sec,
-				recent: params.recent,
-			};
-
-			if (params.action === "watch") {
-				return await streamWatch(params.experiment_id as string, watchParams, signal, onUpdate);
-			}
-
-			if (params.action === "start") {
-				const started = await startExperiment(pi, params.plan_id as string, {
-					skip_docker: params.skip_docker,
-					signal,
+				const specPath = `${ctx.cwd}/.pi-files/roastmyharness/${facts.name}.toml`;
+				const request =
+					`RoastMyHarness experiment request (from /roastmyharness wizard):\n` +
+					`- name: ${facts.name}\n- model: ${facts.model}\n- thinking: ${facts.thinking}\n` +
+					`- pi_version: ${facts.piVersion}\n- tasks: ${facts.taskRoot}\n` +
+					`- variant ${facts.variantId}: extension ${facts.extensionPath} entry ${facts.extensionEntry}\n\n` +
+					`Write this experiment as schema_version = 3 TOML to ${specPath} ` +
+					`(draft below), fix any validation problems, then call ` +
+					`${SUBMIT_TOOL} with { "spec_path": "${specPath}" }.\n\n` +
+					"```toml\n" + SPEC_TEMPLATE(facts) + "```\n";
+				pi.registerTool({
+					name: SUBMIT_TOOL,
+					label: "Submit roast experiment",
+					description: "Validate a wizard-authored experiment TOML and launch it with live progress. Temporary; only valid during the active /roastmyharness wizard.",
+					parameters: Type.Object({ spec_path: Type.String({ description: "Experiment TOML path the session wrote." }) }),
+					execute: async (_id, params, signal, onUpdate) => {
+						const target = (params as { spec_path: string }).spec_path;
+						onUpdate?.({ content: [{ type: "text", text: `validating ${target}` }], details: {} });
+						let prepared: RoastResponse;
+						try {
+							prepared = await runBridgeJson(pi, bridgeArgs("validate", target), { signal });
+						} catch (error) {
+							return { content: [{ type: "text", text: `validation failed: ${error instanceof Error ? error.message : String(error)}` }], details: {} };
+						}
+						if (!prepared.ok || !prepared.plan_id) {
+							return { content: [{ type: "text", text: summarize(prepared) }], details: prepared };
+						}
+						const ok = ctx.hasUI ? await ctx.ui.confirm("RoastMyHarness", `Launch ${prepared.experiment?.trials ?? "?"} trials?`) : true;
+						if (!ok) return { content: [{ type: "text", text: "launch cancelled by user" }], details: prepared };
+						ctx.ui.setStatus(WIDGET_ID, `running ${prepared.experiment_id ?? prepared.plan_id}`);
+						try {
+							const watched = await streamBridgeRun(prepared.experiment_id ?? prepared.plan_id ?? "", {}, signal, (text, details) => {
+								onUpdate?.({ content: [{ type: "text", text }], details });
+							});
+							postRunCard(pi, watched);
+							return { content: [{ type: "text", text: `experiment ${watched.experiment_id}: ${watched.state}` }], details: watched };
+						} finally {
+							ctx.ui.setStatus(WIDGET_ID, undefined);
+						}
+					},
 				});
-				if (wantsWatch && started.experiment_id) {
-					return await streamStartedExperiment(started.experiment_id, watchParams, signal, onUpdate);
+				try {
+					ctx.ui.notify("Wizard facts collected. Write the TOML, then submit it.", "info");
+					await ctx.ui.input("Press enter after reading the request.", {});
+					pi.sendMessage({ content: request, display: true, details: {} });
+				} finally {
+					const active = pi.getActiveTools();
+					if (active.includes(SUBMIT_TOOL)) pi.setActiveTools(active.filter((n) => n !== SUBMIT_TOOL));
 				}
-				return {
-					content: [{ type: "text", text: summarize(started) }],
-					details: started,
-				};
+			} finally {
+				ctx.ui.setStatus(WIDGET_ID, undefined);
+				wizardRunning = false;
 			}
-
-			const argv = buildArgs({ ...params, action: params.action as ServiceAction });
-			onUpdate?.({
-				content: [{ type: "text", text: `running: ${roastBinary()} ${argv.join(" ")}` }],
-				details: {},
-			});
-			const parsed = await runRoastJson(pi, argv, { signal });
-			return {
-				content: [{ type: "text", text: summarize(parsed) }],
-				details: parsed,
-			};
-		},
-
-		renderCall(args, theme, _context) {
-			let text = theme.fg("toolTitle", theme.bold("roast_harness ")) +
-				theme.fg("accent", args.action ?? "?");
-			if (args.task_root) text += theme.fg("dim", ` ${args.task_root}`);
-			if (args.spec_path) text += theme.fg("dim", ` ${args.spec_path}`);
-			if (args.plan_id) text += theme.fg("dim", ` ${args.plan_id}`);
-			if (args.experiment_id) text += theme.fg("dim", ` ${args.experiment_id}`);
-			if (args.action === "start" && args.watch === false) {
-				text += theme.fg("muted", " (no watch)");
-			}
-			return new Text(text, 0, 0);
-		},
-
-		renderResult(result, { expanded, isPartial }, theme, _context) {
-			const details = result.details as RoastDetails | undefined;
-			if (details && (details as AuthorDetails).kind === "author") {
-				return renderAuthorResult(details as AuthorDetails, { expanded, isPartial }, theme);
-			}
-			if (details && "stream" in details && details.stream === true) {
-				return renderWatchResult(details as WatchDetails, { expanded }, theme);
-			}
-			const part = result.content.find((c) => c.type === "text");
-			return new Text(part && "text" in part ? part.text : "(no output)", 0, 0);
 		},
 	});
+
+	pi.registerMessageRenderer(RUN_CARD_TYPE, (message, options, theme) =>
+		renderRunCard(message.details as never, options.expanded, theme as never));
+
+	void roastBinary;
+	void Text;
 }

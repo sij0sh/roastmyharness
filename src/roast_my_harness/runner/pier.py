@@ -79,16 +79,9 @@ def build_run_args(
 ) -> list[str]:
     """Build the `pier run` argv for one variant job.
 
-    pi_version is the arm's pinned agent version; agent selects the
-    adapter, which also decides the version kwarg name (pi stays
-    ``pi_version=``).
+    pi_version is the arm's pinned Pi version.
     """
     agent_def = get_agent(agent)
-    if agent_def.family == "claude-code":
-        # pier's ClaudeCode maps --model onto ANTHROPIC_MODEL verbatim;
-        # gateways expect the bare model id, so strip the provider prefix.
-        # The manifest keeps the full provider/model id for provenance.
-        model_id = model_id.rsplit("/", 1)[-1]
     args = [
         pier_executable(),
         "run",

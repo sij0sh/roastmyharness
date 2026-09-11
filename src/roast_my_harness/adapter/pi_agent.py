@@ -299,8 +299,6 @@ class PiAgent(BaseInstalledAgent):
             await setup_handlers.npm_pi_install(
                 self, environment, {"package": package}
             )
-        for step in self._manifest.get("setup") or []:
-            await setup_handlers.run_setup_step(self, environment, step)
 
     async def _upload_home(self, environment: BaseEnvironment) -> None:
         """Upload the staged home world-readable, auth.json agent-writable.
@@ -355,14 +353,8 @@ class PiAgent(BaseInstalledAgent):
         resume = await self._prior_session_exists(environment)
         if resume:
             self.logger.info("Resuming prior pi session for staged follow-up step")
-        if not resume:
-            # Explicit context files ride in-context; the fairness flags
-            # still strip every implicit copy. Resume steps rejoin the
-            # session that already holds them, so prepending again would
-            # duplicate content.
-            instruction = cmd.with_context_files(
-                instruction, self._staged_context_files()
-            )
+        # Native Pi semantics: the staged home carries AGENTS.md at its root
+        # and Pi discovers it itself. Never inject context into the prompt.
         command = cmd.build_run_command(
             model=self.model_name or "",
             instruction=instruction,

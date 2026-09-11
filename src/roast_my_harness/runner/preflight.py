@@ -9,12 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from roast_my_harness import __version__
-from roast_my_harness.adapter.registry import get_agent
+from roast_my_harness.adapter.registry import PI_AGENT
 from roast_my_harness.auth import service as auth_service
 from roast_my_harness.errors import SpecError
 from roast_my_harness.evals.descriptor import load_descriptor
 from roast_my_harness.evals.registry import resolve_eval
-from roast_my_harness.evals.selftest import run_selftests
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.spec.models import ExperimentSpec
 from roast_my_harness.tasks.discover import discover_tasks
@@ -114,12 +113,6 @@ def _tasks(spec: ExperimentSpec) -> list[CheckResult]:
 
 
 def _eval(spec: ExperimentSpec) -> CheckResult:
-    """Custom-eval contract gate: descriptor validity plus fixture self-tests.
-
-    Legacy-default runs without an eval.toml beside the task root skip
-    with a pass. Anything else must carry a valid frozen contract whose
-    fixtures discriminate, or launch is refused before spending compute.
-    """
     try:
         frozen = resolve_eval(spec, spec.tasks.path)
     except SpecError as error:
@@ -131,15 +124,7 @@ def _eval(spec: ExperimentSpec) -> CheckResult:
     if descriptor is None:
         label = f"{frozen.type} eval {frozen.id}" if frozen is not None else "legacy default"
         return _ok("eval", f"no eval descriptor; {label}")
-    try:
-        result = run_selftests(spec.tasks.path, descriptor)
-    except SpecError as error:
-        return _fail("eval", str(error))
-    if not result.passed:
-        first = result.failures[0]
-        extra = f" (+{len(result.failures) - 1} more)" if len(result.failures) > 1 else ""
-        return _fail("eval", f"self-test {first.fixture}: {first.message}{extra}")
-    return _ok("eval", f"{descriptor.id} contract self-tests green ({result.evaluated} fixtures)")
+    return _ok("eval", f"{descriptor.id} descriptor valid")
 
 
 def _sources(spec: ExperimentSpec) -> list[CheckResult]:
@@ -169,28 +154,36 @@ def _sources(spec: ExperimentSpec) -> list[CheckResult]:
 
 
 def _agent_package_specs(spec):
-    # Resolved agent pins; an unresolvable 'latest' becomes a failure.
-    # Returns (trusted_exact, needs_check, failures): exact pins skip registry.
     trusted = []
     needs_check = []
     failures = []
-    for agent_id in spec.resolved_agents().values():
-        package = get_agent(agent_id).npm_package
+    package = PI_AGENT.npm_package
+    pin = spec.pi_version
+    try:
+        version = spec.resolved_version_for("pi")
+    except RuntimeError as error:
+        failures.append(_fail("npm package " + package, str(error)))
+        return trusted, needs_check, failures
+    full = package + "@" + version
+    from roast_my_harness.adapter.versions import is_latest as _is_latest
+    if _is_latest(pin):
+        needs_check.append(full)
+    else:
+        trusted.append(full)
+    for variant in spec.arms():
+        if variant.id == "control":
+            continue
+        pin = spec.pi_version_for(variant)
         try:
-            pin = spec.agent_version_for(agent_id)
-        except Exception:
-            pin = "latest"
-        try:
-            version = spec.resolved_version_for(agent_id)
+            version = spec.resolved_pi_version_for(variant)
         except RuntimeError as error:
             failures.append(_fail("npm package " + package, str(error)))
             continue
         full = package + "@" + version
-        from roast_my_harness.adapter.versions import is_latest as _is_latest
-
         if _is_latest(pin):
-            needs_check.append(full)
-        else:
+            if full not in needs_check:
+                needs_check.append(full)
+        elif full not in trusted:
             trusted.append(full)
     return trusted, needs_check, failures
 
@@ -226,12 +219,6 @@ def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
             for variant in spec.arms()
             for extension in variant.extensions
             if extension.kind == "npm"
-        }
-        | {
-            step.package
-            for variant in spec.arms()
-            for step in variant.setup
-            if step.handler == "npm_pi_install"
         }
         | set(trusted_exact)
     )
@@ -272,17 +259,7 @@ def _npm_packages(spec: ExperimentSpec) -> list[CheckResult]:
 
 
 def _auth(spec: ExperimentSpec) -> list[CheckResult]:
-    """Credential checks for the global model plus every distinct arm model."""
-    results = _model_auth(spec.model, "auth")
-    default = spec.model.full_id()
-    for arm in spec.arms():
-        model = spec.model_for(arm)
-        if model.full_id() == default and model.models_json is None:
-            continue
-        if any(r.name == f"auth[{arm.id}]" for r in results):
-            continue
-        results.extend(_model_auth(model, f"auth[{arm.id}]"))
-    return results
+    return _model_auth(spec.model, "auth")
 
 
 def _model_auth(model, label: str) -> list[CheckResult]:
@@ -304,19 +281,6 @@ def _model_auth(model, label: str) -> list[CheckResult]:
         else:
             expires = auth_service.credential_expiry(cred)
             results.append(_ok(label, f"codex OAuth present{expires}"))
-        return results
-    if model.provider == "custom":
-        if model.models_json is None:
-            results.append(_fail(label, "custom provider requires models_json"))
-            return results
-        if not model.models_json.is_file():
-            results.append(_fail(label, f"models.json missing: {model.models_json}"))
-            return results
-        missing = auth_service.missing_env_vars(model.models_json)
-        if missing:
-            results.append(_fail(label, f"unset env vars: {', '.join(missing)}"))
-        else:
-            results.append(_ok(label, "models.json env vars all set"))
         return results
     # Host-configured provider: block must exist, ids must match, no
     # host-only !command keys, env vars must resolve.
