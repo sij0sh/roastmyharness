@@ -1,10 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	SUBMIT_TOOL,
 	bridgeArgs,
-	roastBinary,
 	runBridgeJson,
 	summarize,
 	type RoastResponse,
@@ -47,7 +45,7 @@ interface WizardFacts {
 async function collectFacts(ctx: ExtensionContext): Promise<WizardFacts | undefined> {
 	const ask = async (prompt: string, initial = ""): Promise<string | undefined> => {
 		try {
-			return await ctx.ui.input(prompt, { initial });
+			return await ctx.ui.input(prompt, initial);
 		} catch {
 			return undefined;
 		}
@@ -69,6 +67,57 @@ async function collectFacts(ctx: ExtensionContext): Promise<WizardFacts | undefi
 export default function (pi: ExtensionAPI) {
 	let wizardRunning = false;
 
+	const hideSubmitTool = () => {
+		const active = pi.getActiveTools();
+		if (active.includes(SUBMIT_TOOL)) pi.setActiveTools(active.filter((name) => name !== SUBMIT_TOOL));
+	};
+	const showSubmitTool = () => {
+		const active = pi.getActiveTools();
+		if (!active.includes(SUBMIT_TOOL)) pi.setActiveTools([...active, SUBMIT_TOOL]);
+	};
+
+	pi.on("session_start", () => hideSubmitTool());
+
+	pi.registerTool({
+		name: SUBMIT_TOOL,
+		label: "Submit roast experiment",
+		description: "Validate a wizard-authored experiment TOML and launch it with live progress. Only valid during the active /roastmyharness wizard.",
+		parameters: Type.Object({ spec_path: Type.String({ description: "Experiment TOML path the session wrote." }) }),
+		execute: async (_id, params, signal, onUpdate, ctx) => {
+			if (!wizardRunning) {
+				throw new Error(`${SUBMIT_TOOL} is only valid during the active /roastmyharness wizard`);
+			}
+			const target = (params as { spec_path: string }).spec_path;
+			onUpdate?.({ content: [{ type: "text", text: `validating ${target}` }], details: {} });
+			let prepared: RoastResponse;
+			try {
+				prepared = await runBridgeJson(pi, bridgeArgs("validate", target), { signal });
+			} catch (error) {
+				return { content: [{ type: "text", text: `validation failed: ${error instanceof Error ? error.message : String(error)}` }], details: {} };
+			}
+			if (!prepared.ok || !prepared.plan_id) {
+				return { content: [{ type: "text", text: summarize(prepared) }], details: prepared };
+			}
+			const planId = prepared.plan_id;
+			const confirmed = ctx.hasUI
+				? await ctx.ui.confirm("RoastMyHarness", `Launch ${prepared.experiment?.trials ?? "?"} trials?`)
+				: true;
+			if (!confirmed) {
+				return { content: [{ type: "text", text: "launch cancelled by user" }], details: prepared };
+			}
+			ctx.ui.setStatus(WIDGET_ID, `running plan ${planId}`);
+			try {
+				const watched = await streamBridgeRun(["_bridge", "run", planId], planId, signal, (text, details) => {
+					onUpdate?.({ content: [{ type: "text", text }], details });
+				});
+				postRunCard(pi, watched);
+				return { content: [{ type: "text", text: `experiment ${watched.experiment_id}: ${watched.state}` }], details: watched };
+			} finally {
+				ctx.ui.setStatus(WIDGET_ID, undefined);
+			}
+		},
+	});
+
 	pi.registerCommand("roastmyharness", {
 		description: "Configure, validate, and launch a Pi harness comparison",
 		handler: async (_args: string, ctx: ExtensionContext) => {
@@ -85,6 +134,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			wizardRunning = true;
+			showSubmitTool();
 			try {
 				const facts = await collectFacts(ctx);
 				if (!facts) {
@@ -101,47 +151,11 @@ export default function (pi: ExtensionAPI) {
 					`(draft below), fix any validation problems, then call ` +
 					`${SUBMIT_TOOL} with { "spec_path": "${specPath}" }.\n\n` +
 					"```toml\n" + SPEC_TEMPLATE(facts) + "```\n";
-				pi.registerTool({
-					name: SUBMIT_TOOL,
-					label: "Submit roast experiment",
-					description: "Validate a wizard-authored experiment TOML and launch it with live progress. Temporary; only valid during the active /roastmyharness wizard.",
-					parameters: Type.Object({ spec_path: Type.String({ description: "Experiment TOML path the session wrote." }) }),
-					execute: async (_id, params, signal, onUpdate) => {
-						const target = (params as { spec_path: string }).spec_path;
-						onUpdate?.({ content: [{ type: "text", text: `validating ${target}` }], details: {} });
-						let prepared: RoastResponse;
-						try {
-							prepared = await runBridgeJson(pi, bridgeArgs("validate", target), { signal });
-						} catch (error) {
-							return { content: [{ type: "text", text: `validation failed: ${error instanceof Error ? error.message : String(error)}` }], details: {} };
-						}
-						if (!prepared.ok || !prepared.plan_id) {
-							return { content: [{ type: "text", text: summarize(prepared) }], details: prepared };
-						}
-						const ok = ctx.hasUI ? await ctx.ui.confirm("RoastMyHarness", `Launch ${prepared.experiment?.trials ?? "?"} trials?`) : true;
-						if (!ok) return { content: [{ type: "text", text: "launch cancelled by user" }], details: prepared };
-						ctx.ui.setStatus(WIDGET_ID, `running ${prepared.experiment_id ?? prepared.plan_id}`);
-						try {
-							const watched = await streamBridgeRun(prepared.experiment_id ?? prepared.plan_id ?? "", {}, signal, (text, details) => {
-								onUpdate?.({ content: [{ type: "text", text }], details });
-							});
-							postRunCard(pi, watched);
-							return { content: [{ type: "text", text: `experiment ${watched.experiment_id}: ${watched.state}` }], details: watched };
-						} finally {
-							ctx.ui.setStatus(WIDGET_ID, undefined);
-						}
-					},
-				});
-				try {
-					ctx.ui.notify("Wizard facts collected. Write the TOML, then submit it.", "info");
-					await ctx.ui.input("Press enter after reading the request.", {});
-					pi.sendMessage({ content: request, display: true, details: {} });
-				} finally {
-					const active = pi.getActiveTools();
-					if (active.includes(SUBMIT_TOOL)) pi.setActiveTools(active.filter((n) => n !== SUBMIT_TOOL));
-				}
+				ctx.ui.notify("Wizard facts collected. Write the TOML, then submit it.", "info");
+				pi.sendMessage({ content: request, display: true, details: {} });
 			} finally {
 				ctx.ui.setStatus(WIDGET_ID, undefined);
+				hideSubmitTool();
 				wizardRunning = false;
 			}
 		},
@@ -149,7 +163,4 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerMessageRenderer(RUN_CARD_TYPE, (message, options, theme) =>
 		renderRunCard(message.details as never, options.expanded, theme as never));
-
-	void roastBinary;
-	void Text;
 }

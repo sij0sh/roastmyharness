@@ -11,7 +11,6 @@ import {
 	renderMatrix,
 	roastBinary,
 	type ThemeLike,
-	type TrialEvent,
 	type WatchDetails,
 } from "./core.ts";
 
@@ -29,21 +28,35 @@ function parseNdjson(line: string): Record<string, unknown> | null {
 	}
 }
 
+/**
+ * Spawn a bridge command that streams NDJSON progress (`_bridge run`)
+ * and fold its events into live WatchDetails. Resolves on the final
+ * event; a closed pipe without a final event resolves as ended.
+ */
 export async function streamBridgeRun(
-	experimentId: string,
-	params: WatchParams,
+	argv: string[],
+	initialExperimentId: string,
 	signal: AbortSignal | undefined,
 	onUpdate?: (text: string, details: WatchDetails) => void,
 ): Promise<WatchDetails> {
-	const details: WatchDetails = { stream: true, experiment_id: experimentId, state: "RUNNING", final: false, recent: [], summaries: [] };
+	const details: WatchDetails = { stream: true, experiment_id: initialExperimentId, state: "RUNNING", final: false, recent: [], summaries: [] };
 	const startedAt = Date.now();
 	return new Promise((resolve, reject) => {
-		const child = spawn(roastBinary(), ["_bridge", "status", experimentId], { signal });
+		const child = spawn(roastBinary(), argv, { signal });
 		const decoder = new StringDecoder("utf8");
 		let buffer = "";
+		let settled = false;
 		const emit = () => {
 			details.elapsed_sec = (Date.now() - startedAt) / 1000;
 			onUpdate?.(oneLineStatus(details), { ...details, recent: [...details.recent], summaries: [...details.summaries] });
+		};
+		const finish = (finalDetails: WatchDetails) => {
+			if (settled) return;
+			settled = true;
+			try {
+				child.kill();
+			} catch {}
+			resolve(finalDetails);
 		};
 		child.stdout.on("data", (chunk: Buffer) => {
 			buffer += decoder.write(chunk);
@@ -57,14 +70,25 @@ export async function streamBridgeRun(
 				applyEvent(details, evt);
 				emit();
 				if (details.final) {
-					child.kill();
-					resolve(details);
+					finish(details);
 					return;
 				}
 			}
 		});
-		child.on("error", reject);
-		child.on("close", () => resolve(details));
+		child.on("error", (error) => {
+			if (!settled) {
+				settled = true;
+				reject(error);
+			}
+		});
+		child.on("close", () => {
+			if (!settled) {
+				settled = true;
+				details.ended = true;
+				if (!details.final && !details.note) details.note = "bridge pipe closed before a final event";
+				resolve(details);
+			}
+		});
 		if (signal) {
 			signal.addEventListener("abort", () => {
 				setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, ABORT_GRACE_MS);
@@ -75,7 +99,11 @@ export async function streamBridgeRun(
 }
 
 function applyEvent(details: WatchDetails, evt: Record<string, unknown>): void {
+	if (typeof evt.experiment_id === "string" && evt.experiment_id) {
+		details.experiment_id = evt.experiment_id;
+	}
 	const event = evt.event as string | undefined;
+	if (event === "started") return;
 	if (event === "trial") {
 		details.recent.push({
 			variant: String(evt.variant ?? "?"),
@@ -85,9 +113,23 @@ function applyEvent(details: WatchDetails, evt: Record<string, unknown>): void {
 		});
 		const cap = DEFAULT_RECENT_TRIALS;
 		if (details.recent.length > cap) details.recent.splice(0, details.recent.length - cap);
+		return;
+	}
+	if (event === "final") {
+		if (typeof evt.state === "string") details.state = evt.state;
+		if (evt.matrix && typeof evt.matrix === "object") details.matrix = evt.matrix as WatchDetails["matrix"];
+		if (evt.totals && typeof evt.totals === "object") details.totals = evt.totals as WatchDetails["totals"];
+		if (evt.aggregates && typeof evt.aggregates === "object") details.aggregates = evt.aggregates as WatchDetails["aggregates"];
+		if (evt.report && typeof evt.report === "object") details.report = evt.report as WatchDetails["report"];
+		if (typeof evt.note === "string") details.note = evt.note;
+		details.final = evt.final === true;
+		return;
 	}
 	if ((evt as { matrix?: unknown }).matrix && typeof evt.matrix === "object") {
 		details.matrix = evt.matrix as WatchDetails["matrix"];
+	}
+	if ((evt as { totals?: unknown }).totals && typeof evt.totals === "object") {
+		details.totals = evt.totals as WatchDetails["totals"];
 	}
 	if (typeof evt.state === "string") details.state = evt.state;
 	if (evt.final === true) details.final = true;
