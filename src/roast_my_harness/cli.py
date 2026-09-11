@@ -81,6 +81,11 @@ entry = "src/index.ts"
 [variants.env]
 MY_EXTENSION_SETTING = "2"
 
+# Tool-restriction example (bash-only arm vs full-tool control):
+# [[variants]]
+# id = "bash-only"
+# pi_flags = ["--no-builtin-tools", "--tools=bash"]
+
 # Local skill example:
 # [[variants]]
 # id = "my-skill"

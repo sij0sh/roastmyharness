@@ -73,3 +73,12 @@ def test_run_command_session_dir_is_container_local():
     command = build_run_command(**_base_kwargs())
     assert "--session-dir /tmp/pi-sessions" in command
     assert "/logs/agent/pi-sessions" not in command
+
+
+def test_bash_only_flags_follow_fairness():
+    command = build_run_command(
+        **_base_kwargs(extra_flags=["--no-builtin-tools", "--tools=bash"])
+    )
+    fairness_at = command.index("--no-skills --no-prompt-templates --no-themes -nc")
+    assert command.index("--no-builtin-tools") > fairness_at
+    assert command.index("--tools=bash") > fairness_at
