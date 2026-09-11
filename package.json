@@ -1,0 +1,15 @@
+{
+  "name": "roastmyharness",
+  "version": "0.1.0",
+  "description": "Pi-native harness comparison extension for RoastMyHarness",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "type": "module",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./integrations/pi/roastmyharness.ts"]
+  }
+}
