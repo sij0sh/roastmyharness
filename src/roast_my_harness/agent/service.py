@@ -173,11 +173,11 @@ WATCH_TRIAL_STAT_KEYS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _path_mtime(path: Path) -> float:
+def _path_mtime_ns(path: Path) -> int:
     try:
-        return path.stat().st_mtime
+        return path.stat().st_mtime_ns
     except OSError:
-        return 0.0
+        return 0
 
 
 def _trial_stats(
@@ -209,7 +209,14 @@ def _trial_stats(
         )
         if not reps:
             return {}
-        result_path = max(reps, key=lambda item: _path_mtime(item[1]))[1]
+        from roast_my_harness.runner.reconcile import _attempt_seq, is_newer
+        best: tuple[int, int, str, Path] | None = None
+        for _trial, path in reps:
+            seq = _attempt_seq(path.parent)
+            cur = (best[0], best[1], best[2]) if best is not None else None
+            if is_newer(_path_mtime_ns(path), seq, str(path), cur):
+                best = (_path_mtime_ns(path), seq, str(path), path)
+        result_path = best[3] if best is not None else None
     else:
         result_path = latest_result_path(rd / "jobs", variant, task)
     if not result_path:

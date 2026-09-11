@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from roast_my_harness.runner.reconcile import replicate_of
+from roast_my_harness.runner.reconcile import _attempt_seq, is_newer, replicate_of
 from roast_my_harness.telemetry.result import is_trial_dir, trial_row
 
 
@@ -120,19 +120,22 @@ def newest_result_paths(
 
     One walk plus one parse per result.json serves all C lookups: Theta(F + C)
     instead of Theta(C x F). Selection mirrors latest_result_path exactly:
-    newest mtime wins, ties keep the first path in sorted order.
+    newest mtime wins, ties fall back to smallest attempt-sequence then path.
     """
     wanted = set(tasks)
-    best: dict[tuple[str, int], tuple[int, Path]] = {}
+    best: dict[tuple[str, int], tuple[int, int, str, Path]] = {}
     _, entries = scan_variant(variant_dir, parse_results=True)
     for path, task, stamp, replicate, _data in entries:
         if task not in wanted:
             continue
         trial = (task, replicate)
+        seq = _attempt_seq(path.parent)
+        path_str = str(path)
         prev = best.get(trial)
-        if prev is None or stamp > prev[0]:
-            best[trial] = (stamp, path)
-    return {trial: path for trial, (_, path) in best.items()}
+        cur = (prev[0], prev[1], prev[2]) if prev is not None else None
+        if is_newer(int(stamp), seq, path_str, cur):
+            best[trial] = (int(stamp), seq, path_str, path)
+    return {trial: path for trial, (_, _, _, path) in best.items()}
 
 
 def latest_result_path(jobs_root: Path, variant: str, task: str) -> Path | None:
@@ -141,16 +144,19 @@ def latest_result_path(jobs_root: Path, variant: str, task: str) -> Path | None:
     Mirrors the collect_rows selection (trial-dir check, task_name from
     result.json with the trial dir name as fallback, newest mtime wins
     across replicates) without parsing any trial's agent logs. Newest
-    mtime wins; ties keep the first path in sorted order.
+    mtime wins; ties fall back to smallest attempt-sequence then path.
     """
-    best: tuple[int, Path] | None = None
+    best: tuple[int, int, str, Path] | None = None
     _, entries = scan_variant(jobs_root / variant, parse_results=True)
     for path, name, stamp, _replicate, _data in entries:
         if name != task:
             continue
-        if best is None or stamp > best[0]:
-            best = (stamp, path)
-    return best[1] if best is not None else None
+        seq = _attempt_seq(path.parent)
+        path_str = str(path)
+        cur = (best[0], best[1], best[2]) if best is not None else None
+        if is_newer(int(stamp), seq, path_str, cur):
+            best = (int(stamp), seq, path_str, path)
+    return best[3] if best is not None else None
 
 
 def collect_rows(jobs_root: Path) -> list[dict[str, Any]]:
@@ -158,7 +164,7 @@ def collect_rows(jobs_root: Path) -> list[dict[str, Any]]:
 
     jobs_root is `<run>/jobs` for a roastmyharness run.
     """
-    selected: dict[tuple[str, str, int], tuple[int, dict[str, Any]]] = {}
+    selected: dict[tuple[str, str, int], tuple[int, int, str, dict[str, Any]]] = {}
     jobs = jobs_root
     if not jobs.is_dir():
         return []
@@ -172,13 +178,17 @@ def collect_rows(jobs_root: Path) -> list[dict[str, Any]]:
                 continue
             task_id = str(row.get("task") or result_path.parent.name)
             key = (variant_dir.name, task_id, replicate)
-            if key not in selected or stamp >= selected[key][0]:
-                selected[key] = (stamp, row)
+            seq = _attempt_seq(result_path.parent)
+            path_str = str(result_path)
+            prev = selected.get(key)
+            cur = (prev[0], prev[1], prev[2]) if prev is not None else None
+            if is_newer(int(stamp), seq, path_str, cur):
+                selected[key] = (int(stamp), seq, path_str, row)
     return [
         row
-        for _, row in sorted(
+        for _, _, _, row in sorted(
             selected.values(),
-            key=lambda item: (item[1]["variant"], item[1]["task"], item[1]["replicate"]),
+            key=lambda item: (item[3]["variant"], item[3]["task"], item[3]["replicate"]),
         )
     ]
 
@@ -269,7 +279,7 @@ def collect_rows_incremental(
         return [], known, 0, 0
     seen: set[str] = set()
     per_path: dict[str, dict[str, Any]] = {}
-    selected: dict[tuple[str, str, int], tuple[int, dict]] = {}
+    selected: dict[tuple[str, str, int], tuple[int, int, str, dict]] = {}
     for variant_dir in sorted(jobs_root.iterdir()):
         if not variant_dir.is_dir():
             continue
@@ -292,18 +302,21 @@ def collect_rows_incremental(
                 continue
             task_id = str(row.get("task") or result_path.parent.name)
             vtask = (variant_dir.name, task_id, replicate)
-            stamp = updated["result_stamp"]
-            if vtask not in selected or stamp >= selected[vtask][0]:
-                selected[vtask] = (stamp, row)
+            seq = _attempt_seq(result_path.parent)
+            path_str = str(result_path)
+            prev = selected.get(vtask)
+            cur = (prev[0], prev[1], prev[2]) if prev is not None else None
+            if is_newer(int(_stamp), seq, path_str, cur):
+                selected[vtask] = (int(_stamp), seq, path_str, row)
     for stale in [k for k in known if k not in seen]:
         del known[stale]
     known.clear()
     known.update(per_path)
     rows = [
         row
-        for _, row in sorted(
+        for _, _, _, row in sorted(
             selected.values(),
-            key=lambda item: (item[1]["variant"], item[1]["task"], item[1]["replicate"]),
+            key=lambda item: (item[3]["variant"], item[3]["task"], item[3]["replicate"]),
         )
     ]
     return rows, known, folded_count, reused

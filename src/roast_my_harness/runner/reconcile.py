@@ -63,12 +63,34 @@ def _mtime(path: Path) -> float:
         return 0.0
 
 
+def _mtime_ns(path: Path) -> int:
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def is_newer(stamp: int, seq: int, path: str, best: tuple[int, int, str] | None) -> bool:
+    """True when (stamp, seq, path) beats the current best.
+
+    Newest stamp wins; ties fall back to smallest attempt-sequence then
+    smallest path so every selector agrees. All newest-wins sites call this."""
+    if best is None:
+        return True
+    if stamp != best[0]:
+        return stamp > best[0]
+    if seq != best[1]:
+        return seq < best[1]
+    return path < best[2]
+
+
 def _attempt_seq(trial_dir: Path) -> int:
     """Best-effort attempt order from the trial dir name, else -1.
 
     True filesystem recency is unknowable when result.json mtimes tie,
     so ties fall back to this sequence proxy (then path) for a stable winner.
     """
+
     match = _ATTEMPT_SEQ_RE.search(trial_dir.name)
     if match:
         try:
@@ -85,7 +107,7 @@ def reconcile_variant(
 
     A trial directory must contain agent/ and verifier/ plus result.json.
     """
-    cells: dict[tuple[str, int], tuple[float, int, str, Cell]] = {}
+    cells: dict[tuple[str, int], tuple[int, int, str, Cell]] = {}
     if not jobs_dir.is_dir():
         return {}
     for result_path in sorted(jobs_dir.rglob("result.json")):
@@ -171,16 +193,18 @@ def reconcile_variant(
             status=status,
             reward=reward,
             job_path=str(trial_dir),
-            finished_at=finished or datetime.fromtimestamp(_mtime(result_path), tz=UTC).isoformat(),
+            finished_at=finished or datetime.fromtimestamp(_mtime_ns(result_path) / 1_000_000_000, tz=UTC).isoformat(),
             replicate=replicate,
             exception_type=str(exception) if exception else None,
         )
-        stamp = _mtime(result_path)
-        key = (_attempt_seq(trial_dir), str(result_path))
+        stamp = _mtime_ns(result_path)
+        seq = _attempt_seq(trial_dir)
+        path_str = str(result_path)
         trial = (task_id, replicate)
         prev = cells.get(trial)
-        if prev is None or stamp > prev[0] or (stamp == prev[0] and key < (prev[1], prev[2])):
-            cells[trial] = (stamp, key[0], key[1], cell)
+        best = (prev[0], prev[1], prev[2]) if prev is not None else None
+        if is_newer(stamp, seq, path_str, best):
+            cells[trial] = (stamp, seq, path_str, cell)
     return {trial: cell for trial, (_, _, _, cell) in cells.items()}
 
 
@@ -273,7 +297,7 @@ def _cell_from_result(
     trial_dir: Path,
     result: dict,
     task_id: str,
-    stamp: float,
+    stamp: int,
     *,
     replicate: int = 1,
 ) -> Cell | None:
@@ -323,7 +347,7 @@ def _cell_from_result(
         status=status,
         reward=reward,
         job_path=str(trial_dir),
-        finished_at=finished or datetime.fromtimestamp(stamp, tz=UTC).isoformat(),
+        finished_at=finished or datetime.fromtimestamp(stamp / 1_000_000_000, tz=UTC).isoformat(),
         replicate=replicate,
         exception_type=str(exception) if exception else None,
     )
@@ -333,11 +357,11 @@ def reconcile_variant_incremental(
     variant_id: str,
     jobs_dir: Path,
     known_tasks: set[str],
-    file_state: dict[str, tuple[float, str, Cell | None]],
+    file_state: dict[str, tuple[int, str, Cell | None]],
 ) -> tuple[dict[tuple[str, int], Cell], int]:
     """Delta reconcile: parse only new/changed result.json files.
 
-    file_state maps result path -> (mtime, task_id or "", cell or None).
+    file_state maps result path -> (mtime_ns, task_id or "", cell or None).
     Mutated in place. Returns (cells, parsed_count). Winner semantics match
     reconcile_variant exactly (newest valid attempt per (task, replicate));
     unchanged files cost a stat, not a parse.
@@ -354,7 +378,7 @@ def reconcile_variant_incremental(
         key = str(result_path)
         seen.add(key)
         try:
-            stamp = result_path.stat().st_mtime
+            stamp = result_path.stat().st_mtime_ns
         except OSError:
             continue
         cached = file_state.get(key)
@@ -385,14 +409,15 @@ def reconcile_variant_incremental(
         file_state[key] = (stamp, task_id, cell)
     for stale in [k for k in file_state if k not in seen]:
         del file_state[stale]
-    winners: dict[tuple[str, int], tuple[float, int, str, Cell]] = {}
+    winners: dict[tuple[str, int], tuple[int, int, str, Cell]] = {}
     for key, (stamp, task_id, cell) in file_state.items():
         if not task_id or cell is None:
             continue
         trial_dir = Path(key).parent
         trial = (task_id, cell.replicate)
-        seq_path = (_attempt_seq(trial_dir), key)
+        seq = _attempt_seq(trial_dir)
         prev = winners.get(trial)
-        if prev is None or stamp > prev[0] or (stamp == prev[0] and seq_path < (prev[1], prev[2])):
-            winners[trial] = (stamp, seq_path[0], seq_path[1], cell)
+        best = (prev[0], prev[1], prev[2]) if prev is not None else None
+        if is_newer(int(stamp), seq, key, best):
+            winners[trial] = (int(stamp), seq, key, cell)
     return {trial: cell for trial, (_, _, _, cell) in winners.items()}, parsed
