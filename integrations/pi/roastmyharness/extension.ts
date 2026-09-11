@@ -9,59 +9,74 @@ import {
 } from "./core.ts";
 import { RUN_CARD_TYPE, postRunCard } from "./cards.ts";
 import { renderRunCard, streamBridgeRun } from "./watch.ts";
+import { collectWizard } from "./wizard.ts";
+import type { WizardAnswers } from "./wizard-options.ts";
 
 const WIDGET_ID = "roastmyharness-widget";
 
-const SPEC_TEMPLATE = (facts: WizardFacts) => `schema_version = 3
-name = "${facts.name}"
+const tomlStr = (value: string): string => JSON.stringify(value);
 
-model = "${facts.model}"
-thinking = "${facts.thinking}"
-pi_version = "${facts.piVersion}"
+const SPEC_TEMPLATE = (answers: WizardAnswers): string => {
+	const include = answers.taskIds.map((id) => `  ${tomlStr(id)},`).join("\n");
+	return `schema_version = 3
+name = ${tomlStr(answers.experimentName)}
 
+model = ${tomlStr(`${answers.modelProvider}/${answers.modelId}`)}
+thinking = ${tomlStr(answers.thinking)}
+pi_version = "latest"
+${answers.control === "fresh" ? "" : "control = false\n"}
 [tasks]
-path = "${facts.taskRoot}"
-include = ["*"]
+path = ${tomlStr(answers.taskRoot)}
+include = [
+${include}
+]
 
-[[variants]]
-id = "${facts.variantId}"
+[execution]
+repetitions = ${answers.repetitions}
 
-[[variants.extensions]]
-path = "${facts.extensionPath}"
-entry = "${facts.extensionEntry}"
+# Pi adds [[variants]] below from the variant request.
 `;
+};
 
-interface WizardFacts {
-	name: string;
-	model: string;
-	thinking: string;
-	piVersion: string;
-	taskRoot: string;
-	variantId: string;
-	extensionPath: string;
-	extensionEntry: string;
-}
-
-async function collectFacts(ctx: ExtensionContext): Promise<WizardFacts | undefined> {
-	const ask = async (prompt: string, initial = ""): Promise<string | undefined> => {
-		try {
-			return await ctx.ui.input(prompt, initial);
-		} catch {
-			return undefined;
-		}
-	};
-	const name = (await ask("Experiment name?", "test-my-extension"))?.trim();
-	if (!name) return undefined;
-	const taskRoot = (await ask("Benchmark task root?", "tasks/deepswe/tasks"))?.trim();
-	if (!taskRoot) return undefined;
-	const extensionPath = (await ask("Extension path under test?", "../my-extension"))?.trim();
-	if (!extensionPath) return undefined;
-	const extensionEntry = (await ask("Extension entry?", "src/index.ts"))?.trim() || "src/index.ts";
-	const variantId = (await ask("Variant id?", "my-ext"))?.trim() || "my-ext";
-	const model = (await ask("Model (provider/model from pi models.json)?", "openai-codex/gpt-5.6-luna"))?.trim() || "openai-codex/gpt-5.6-luna";
-	const thinking = (await ask("Thinking level?", "high"))?.trim() || "high";
-	const piVersion = (await ask("Pi version (latest or x.y.z)?", "latest"))?.trim() || "latest";
-	return { name, model, thinking, piVersion, taskRoot, variantId, extensionPath, extensionEntry };
+function requestText(
+	answers: WizardAnswers,
+	stagedNote: string,
+	specPath: string,
+): string {
+	const lines = [
+		"RoastMyHarness experiment request (from /roastmyharness wizard):",
+		`- name: ${answers.experimentName}`,
+		`- model: ${answers.modelProvider}/${answers.modelId}`,
+		`- thinking: ${answers.thinking}`,
+		`- control: ${answers.control}`,
+		`- tasks: ${answers.taskLabel} under ${answers.taskRoot}`,
+		`- repetitions: ${answers.repetitions}`,
+		"",
+		`Variant request: ${answers.variantRequest}`,
+	];
+	if (stagedNote) lines.push("", stagedNote);
+	if (answers.control === "historic") {
+		lines.push(
+			"",
+			`Historic baseline covers ${answers.historicCount} tasks; control = false. ` +
+				"Record the historic pool in the hypothesis and compare variant results against it.",
+		);
+	}
+	lines.push(
+		"",
+		`Write this experiment as schema_version = 3 TOML to ${specPath} ` +
+			`(draft below), fix any validation problems, then call ` +
+			`${SUBMIT_TOOL} with { "spec_path": ${JSON.stringify(specPath)} }.`,
+		"",
+		"```toml",
+		SPEC_TEMPLATE(answers),
+		"```",
+		"",
+		"Derive the experiment name, variant id, variant file locations, and variant " +
+			"configuration (extensions, skills, settings, env, pi_flags) from the variant request. " +
+			"Verify every local path with read-only tools before writing the TOML.",
+	);
+	return lines.join("\n");
 }
 
 export default function (pi: ExtensionAPI) {
@@ -120,7 +135,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("roastmyharness", {
 		description: "Configure, validate, and launch a Pi harness comparison",
-		handler: async (_args: string, ctx: ExtensionContext) => {
+		handler: async (args: string, ctx: ExtensionContext) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/roastmyharness requires an interactive Pi session.", "error");
 				return;
@@ -136,23 +151,15 @@ export default function (pi: ExtensionAPI) {
 			wizardRunning = true;
 			showSubmitTool();
 			try {
-				const facts = await collectFacts(ctx);
-				if (!facts) {
+				const collected = await collectWizard(pi, args, ctx);
+				if (!collected) {
 					ctx.ui.notify("RoastMyHarness wizard cancelled.", "info");
 					return;
 				}
-				const specPath = `${ctx.cwd}/.pi-files/roastmyharness/${facts.name}.toml`;
-				const request =
-					`RoastMyHarness experiment request (from /roastmyharness wizard):\n` +
-					`- name: ${facts.name}\n- model: ${facts.model}\n- thinking: ${facts.thinking}\n` +
-					`- pi_version: ${facts.piVersion}\n- tasks: ${facts.taskRoot}\n` +
-					`- variant ${facts.variantId}: extension ${facts.extensionPath} entry ${facts.extensionEntry}\n\n` +
-					`Write this experiment as schema_version = 3 TOML to ${specPath} ` +
-					`(draft below), fix any validation problems, then call ` +
-					`${SUBMIT_TOOL} with { "spec_path": "${specPath}" }.\n\n` +
-					"```toml\n" + SPEC_TEMPLATE(facts) + "```\n";
-				ctx.ui.notify("Wizard facts collected. Write the TOML, then submit it.", "info");
-				pi.sendMessage({ content: request, display: true, details: {} });
+				const { answers, stagedNote } = collected;
+				const specPath = `${ctx.cwd}/.pi-files/roastmyharness/${answers.experimentName}.toml`;
+				ctx.ui.notify("Wizard answers collected. Write the TOML, then submit it.", "info");
+				await pi.sendUserMessage(requestText(answers, stagedNote, specPath));
 			} finally {
 				ctx.ui.setStatus(WIDGET_ID, undefined);
 				hideSubmitTool();
