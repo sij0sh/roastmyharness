@@ -123,8 +123,8 @@ class FakePier:
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("ROAST_MY_HARNESS_RUNS_DIR", str(tmp_path / "runs"))
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("ROAST_MY_HARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("ROAST_MY_HARNESS_CACHE_DIR", str(tmp_path / "cache"))
     return tmp_path
 
 async def test_sentinel_reject_releases_held_controls(env, monkeypatch):
@@ -200,8 +200,8 @@ async def test_sentinel_reject_releases_held_controls(env, monkeypatch):
     result = CliRunner().invoke(
         cli_app, ["report", exp_id],
         env={
-            "XDG_DATA_HOME": os.environ["XDG_DATA_HOME"],
-            "XDG_CACHE_HOME": os.environ.get("XDG_CACHE_HOME", ""),
+            "ROAST_MY_HARNESS_DATA_DIR": os.environ["ROAST_MY_HARNESS_DATA_DIR"],
+            "ROAST_MY_HARNESS_CACHE_DIR": os.environ.get("ROAST_MY_HARNESS_CACHE_DIR", ""),
             "ROAST_MY_HARNESS_RUNS_DIR": os.environ.get(
                 "ROAST_MY_HARNESS_RUNS_DIR", ""
             ),
