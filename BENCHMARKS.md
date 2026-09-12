@@ -751,6 +751,165 @@ location.
 
 ---
 
+## Bash only vs full-tool Pi
+
+### Summary
+
+Restricting Pi to the bash tool does not degrade resolve rate on the tested
+pools. On `gpt-5.6-luna` (30 tasks x 2 reps) bash-only resolved 32/60 against
+28/60 for the fresh full-tool control, with 7 rescued tasks against 3 broken.
+On `muse-spark-1.3-contributor` (6 tasks x 1 rep) bash-only resolved 5/6 and
+matched the historic control on every task.
+
+The stronger signal is cost shape. Bash-only used 44% less cached-prefix
+traffic, 41% fewer tool calls, and 18% less wall time than control on the luna
+run while resolving more trials. The restriction changes how much work the
+model does, not whether it can do the work.
+
+The first bash-only attempt failed before this result existed: `pi_flags`
+carried `--tools=bash`, which Pi 0.85.1 rejects (`Unknown option: --tools`).
+All three trials exited in under a second with zero tokens. That failure is
+harness plumbing, not model evidence, and it is fixed (see Caveats).
+
+### Record
+
+| field | value |
+|---|---|
+| run_id | `roast-20260912t013353-17ea331a` |
+| companion_run | `roast-20260912t001343-339374cc` (muse-spark, 6 tasks) |
+| precursor_run | `roast-20260911t233258-e19545f0` (flag-form failure) |
+| date | 2026-09-12 |
+| status | COMPLETE (both runs) |
+| spec | `roast-20260912t013353.toml`, `roast-20260912t001343.toml` |
+| harness | roastmyharness 0.1.0, pier 0.3.x, schema v3 |
+| model | `gpt-5.6-luna` (main), `muse-spark-1.3-contributor` (companion) |
+| thinking | `high` |
+| pi_version | 0.85.1 |
+| corpus | bundled DeepSWE datacurve corpus |
+| task_count | 30 (main), 6 (companion) |
+| repetitions | 2 (main), 1 (companion) |
+| run_dir | `~/.roastmyharness/runs/roast-20260912t013353-17ea331a` |
+
+### Design
+
+The treatment arm is base Pi with `pi_flags = ["--no-builtin-tools", "--tools",
+`bash"]`, i.e. no built-in read/edit/write/grep/find/ls tools and no
+restriction beyond bash. The control arm is fresh full-tool Pi launched
+side by side on the main run; the companion run sets `control = false` and
+compares against historic control arms on the same model and thinking level.
+
+The model, thinking level, instruction, container image, and session handling
+were shared across arms. The bare-harness fairness flags (`--no-skills
+--no-prompt-templates --no-themes`) apply to both arms.
+
+### Results
+
+Main run (luna, 30 tasks x 2 reps):
+
+| metric (60 trials per arm) | bash-only | control |
+|---|---|---|
+| Resolved | 32/60 (53.3%) | 28/60 (46.7%) |
+| Output tokens | 1.61M | 1.77M |
+| Cached-prefix tokens | 145.6M | 260.7M |
+| Tool calls | 2,845 | 4,858 |
+| Wall time (sum) | 9.8h | 11.9h |
+
+Companion run (muse-spark, 6 tasks x 1 rep, no fresh control):
+
+| task | bash-only | historic control |
+|---|---|---|
+| fastapi-implicit-head-options | P (43/43) | 1/2 (fail in e19545f0, pass in 07c0e565) |
+| ipython-session-bundle-replay | P (17/17) | P |
+| kgateway-consistent-hash-policy | P (2/2) | P |
+| kombu-single-active-consumer-priority | P (85/85) | P |
+| obsidian-linter-auto-table-of-contents | F (0/41) | F |
+| returns-validated-error-accumulation | P (159/159) | P |
+
+Companion totals: 912k input / 261k output tokens, mean 55 tool calls and
+zero read calls per trial, 8m mean wall. Bash-only burned fewer input tokens
+than control on fastapi, ipython (77k vs 263k), and kombu, and more on
+kgateway (+159k) and returns (+29k).
+
+### Paired outcomes
+
+Main run, bash-only compared with control (per-task reps):
+
+| outcome | count | tasks |
+|---|---:|---|
+| rescued | 7 | `claude-code-by-agents-recursive-delegation`, `etree-xml-diff-patch`, `kombu-virtual-queue-dead-lettering`, `mobly-grouped-test-barriers`, `pebble-durability-wait-apis`, `valibot-recursive-schema-composition`, `wazero-multi-module-snapshots` |
+| broken | 3 | `bandit-incremental-cache-control`, `kgateway-consistent-hash-policy`, `numba-stencil-boundary-modes` |
+| both pass | 5 | `arcane-drift-detection-baselines`, `kcp-go-multiplexed-kcp-streams`, `prometheus-typed-label-sorting`, `tengo-callable-instance-isolation`, `vulture-persistent-analysis-cache` |
+| split | 8 | `boa-hierarchical-evaluation-cancellation`, `cattrs-partial-structuring-recovery`, `httpx-deterministic-cookie-store`, `ipython-session-bundle-replay`, `kombu-single-active-consumer-priority`, `optique-conditional-option-dependencies`, `returns-validated-error-accumulation`, `ts-pattern-match-each` (1/2 on both arms) |
+| both fail | 7 | `arktype-json-schema-refs-dependencies`, `clack-async-autocomplete-options`, `fastapi-implicit-head-options`, `onedump-dump-encryption-pipeline`, `prometheus-transactional-reload-status`, `python-statemachine-state-data-scoping`, `skrub-duration-encoding` |
+
+Companion run: 1 rescued relative to the latest control
+(`fastapi-implicit-head-options`), 0 broken, 4 concordant passes, 1
+concordant fail (`obsidian-linter-auto-table-of-contents`).
+
+### Task-level evidence
+
+`obsidian-linter-auto-table-of-contents` failed on every arm in both runs
+(historic control, ponytail, bash-only; 0/41 f2p on the companion). It reads
+as the hardest task in the pool rather than a bash-only weakness.
+
+`fastapi-implicit-head-options` is the informative flip. The luna main run
+failed it on both arms (0/2 each), while muse-spark bash-only passed it 43/43
+after the luna-control configurations split 1/2 historically. The task is
+model-sensitive; the tool restriction is not what decides it.
+
+The three luna breaks (`bandit`, `kgateway`, `numba`) share no obvious task
+class, and `kgateway` was also the companion run's most expensive pass (753s,
+99 tool calls). No pattern in the breaks points at a specific missing tool.
+
+### Implications
+
+Removing the read/edit/write/search builtins does not remove the model's
+ability to solve these tasks: both models match or beat their controls with
+bash alone, including zero read-tool calls on the companion run. The
+repeatable effect is efficiency, not capability: fewer tool calls, less
+reprocessed context, less wall time.
+
+The 7-vs-3 flip imbalance on the main run favors bash-only but sits inside
+overlapping intervals at 30 tasks, so it should be read as "no degradation"
+rather than "bash-only is better." A larger task pool would be needed to
+promote the direction to a claim.
+
+### Caveats and provenance
+
+The precursor run `roast-20260911t233258-e19545f0` recorded 0/3 for bash-only
+with `NonZeroAgentExitCodeError` on every trial: the spec passed
+`--tools=bash` (equals form) and Pi 0.85.1 only accepts the space form
+(`--tools bash`). Those zeros are launch failures and must not be pooled with
+the results above.
+
+Fixed in commit `0044800a87d9`: `normalize_extra_flags()` in
+`src/roast_my_harness/adapter/command.py` expands `--flag=value` to two
+tokens, and the `pi_flags` validator in `src/roast_my_harness/spec/models.py`
+accepts both forms while rejecting dangling flags, stray values, and `=` on
+boolean flags. Both runs here already use the corrected space form.
+
+The companion run has no fresh control arm (`control = false`); its baseline
+is historic control arms on the same model and thinking level, so run-variance
+caveats apply more strongly there than on the main run.
+
+Cost cells are $0.00 on all arms because the gateway reports no per-call cost;
+the token columns carry the comparison.
+
+### Reproduce
+
+```bash
+roastmyharness status roast-20260912t013353-17ea331a
+roastmyharness status roast-20260912t001343-339374cc
+```
+
+Per-task flips and token tables were derived from each run's `summary.csv`
+with the standard csv columns (`variant,task,resolved,input_tokens,
+output_tokens,cache_tokens,tool_calls,wall_sec`). A narrative final report for
+the main run lives at
+`~/.roastmyharness/runs/roast-20260912t013353-17ea331a/final-report.md`.
+
+---
+
 ## Adding a new experiment
 
 Add new experiments above the older ones and keep the same section order when it
