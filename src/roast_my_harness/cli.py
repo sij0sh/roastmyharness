@@ -188,8 +188,9 @@ def bridge_run(plan_id: str = typer.Argument(..., help="Plan id from validate.")
         for event in agent_service.AgentService().watch(started.experiment_id):
             sys.stdout.write(json.dumps(event, default=str) + "\n")
             sys.stdout.flush()
-    except agent_service.UnknownExperimentError:
-        print(json.dumps({"ok": False, "error": {"code": "unknown_experiment"}}))
+    except agent_service.UnknownExperimentError as error:
+        print(json.dumps({"ok": False, "error": {"code": "unknown_experiment",
+                                                     "message": str(error)}}))
         raise typer.Exit(1) from None
     except Exception as error:
         note = f"bridge error before a final event: {type(error).__name__}: {error}"

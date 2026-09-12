@@ -264,7 +264,31 @@ def test_watch_unknown_experiment_raises(tmp_path):
         plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
     )
     with pytest.raises(svc.UnknownExperimentError):
-        list(service.watch("nope", interval_sec=0.01))
+        list(service.watch("nope", interval_sec=0.01, startup_grace_sec=0))
+
+
+def test_watch_waits_for_worker_startup_row(environment, monkeypatch):
+    """A just-spawned worker has not inserted its DB row yet: watch waits."""
+    db_path, run_dir = environment
+    service = svc.AgentService(plans_dir=run_dir.parent / "plans", db_path=db_path)
+    original = svc.AgentService._observe
+    calls = {"n": 0}
+
+    def observe(self, experiment_id: str):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise svc.UnknownExperimentError(f"unknown experiment {experiment_id}")
+        repo = Repository(self.db_path)
+        repo.set_status(experiment_id, "COMPLETE", started=True)
+        repo.close()
+        return original(self, experiment_id)
+
+    monkeypatch.setattr(svc.AgentService, "_observe", observe)
+    events = list(service.watch(EXPERIMENT_ID, interval_sec=0.01, startup_grace_sec=5.0))
+    assert calls["n"] >= 3
+    assert events[0]["event"] == "snapshot"
+    assert events[-1]["event"] == "final"
+    assert events[-1]["state"] == "COMPLETE"
 
 
 def test_aggregate_by_variant_sums_completed_rows():

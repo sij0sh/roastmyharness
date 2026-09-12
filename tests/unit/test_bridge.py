@@ -139,3 +139,25 @@ def test_bridge_run_reports_watch_failure_as_final(tmp_path: Path, data_dir: Pat
     assert lines[0]["event"] == "started"
     assert lines[-1]["event"] == "final"
     assert "mid-walk race" in lines[-1]["note"]
+
+
+def test_bridge_run_unknown_experiment_carries_message(tmp_path: Path, data_dir: Path,
+                                                        monkeypatch):
+    def _missing(experiment_id, **kwargs):
+        raise cli_mod.agent_service.UnknownExperimentError(
+            f"unknown experiment {experiment_id}"
+        )
+        yield {}
+
+    service = SimpleNamespace(
+        start=lambda plan_id, skip_docker=False: SimpleNamespace(experiment_id="e1"),
+        watch=_missing,
+    )
+    monkeypatch.setattr(cli_mod.agent_service, "AgentService", lambda: service)
+    result = CliRunner().invoke(cli_mod.app, ["_bridge", "run", "plan_ffffffffffff"])
+    assert result.exit_code == 1, result.output
+    lines = [json.loads(line) for line in result.output.splitlines() if line.strip()]
+    assert lines[0]["event"] == "started"
+    assert lines[-1]["ok"] is False
+    assert lines[-1]["error"]["code"] == "unknown_experiment"
+    assert "e1" in lines[-1]["error"]["message"]

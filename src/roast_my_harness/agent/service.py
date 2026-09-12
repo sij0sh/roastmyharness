@@ -60,6 +60,7 @@ FINAL_STATES = frozenset({"COMPLETE", "FAILED", "CANCELLED"})
 WATCH_INTERVAL_SEC = 2.0
 WATCH_HEARTBEAT_SEC = 30.0
 WATCH_WORKER_GRACE_SEC = 10.0
+WATCH_STARTUP_GRACE_SEC = 60.0
 
 
 class ServiceError(RoastMyHarnessError):
@@ -474,6 +475,19 @@ class AgentService:
             repo.close()
         return controller, run_dir
 
+    def _observe_startup(
+        self, handle: str, interval_sec: float, startup_grace_sec: float
+    ) -> tuple[ExperimentController, Path]:
+        """First watch observation, waiting for a just-spawned worker."""
+        deadline = time.monotonic() + max(startup_grace_sec, 0.0)
+        while True:
+            try:
+                return self._observe(handle)
+            except UnknownExperimentError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(min(max(interval_sec, 0.01), 2.0))
+
     def status(self, experiment_id: str) -> models.StatusResult:
         """Current matrix and aggregates; cheap to poll."""
         controller, rd = self._observe(experiment_id)
@@ -514,6 +528,7 @@ class AgentService:
         *,
         interval_sec: float = WATCH_INTERVAL_SEC,
         worker_grace_sec: float = WATCH_WORKER_GRACE_SEC,
+        startup_grace_sec: float = WATCH_STARTUP_GRACE_SEC,
     ) -> Iterator[dict[str, Any]]:
         """Yield NDJSON-ready dicts describing progress until a final state.
 
@@ -524,7 +539,7 @@ class AgentService:
         with no lockable run dir and no live worker terminates with a note
         instead of hanging.
         """
-        controller, rd = self._observe(experiment_id)
+        controller, rd = self._observe_startup(experiment_id, interval_sec, startup_grace_sec)
         experiment_id = controller.experiment_id
         first = self._watch_snapshot(controller)
         yield {"event": "snapshot", **first}

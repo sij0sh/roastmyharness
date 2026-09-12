@@ -126,7 +126,11 @@ function applyEvent(details: WatchDetails, evt: Record<string, unknown>): void {
 	if (event === "started") return;
 	if (evt.ok === false && !details.note) {
 		const error = evt.error as { code?: unknown; message?: unknown } | undefined;
-		const message = typeof error?.message === "string" ? error.message : "unknown bridge error";
+		const message = typeof error?.message === "string" && error.message
+			? error.message
+			: typeof error?.code === "string" && error.code
+				? error.code
+				: "unknown bridge error";
 		details.note = `bridge error before a final event: ${message}`;
 		return;
 	}

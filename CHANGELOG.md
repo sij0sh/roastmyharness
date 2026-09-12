@@ -93,6 +93,11 @@ as z-scores against those bands.
 - Reports disclose a fresh control section; the historic disclosure
   section is gone. Variant types classify `agents_md` arms as
   `context_file`.
+- `watch` waits up to 60s for a just-spawned worker to write its
+  experiment row instead of failing the submit stream with
+  `unknown bridge error`. The `_bridge run` unknown-experiment error
+  now carries its message, and the Pi card falls back to the error
+  code when the message is missing.
 
 ### Kept
 
