@@ -72,6 +72,39 @@ def charts(run: Path = typer.Argument(..., help="Run dir or experiment id.")) ->
         typer.echo(str(path))
 
 
+@app.command()
+def norms(
+    runs: Path | None = typer.Argument(None, help="Runs root (default: configured home)."),
+    out: Path | None = typer.Option(None, help="Output JSON path."),
+) -> None:
+    from roast_my_harness.paths import runs_root as default_root
+    from roast_my_harness.report import norms as norms_mod
+
+    root = runs if runs is not None else default_root()
+    trials: list[dict] = []
+    for summary_path in sorted(root.glob("*/summary.json")):
+        try:
+            payload = json.loads(summary_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        provenance = payload.get("provenance", {})
+        model = provenance.get("model", "")
+        if isinstance(model, dict):
+            model = model.get("id", "")
+        thinking = provenance.get("thinking", "")
+        for trial in payload.get("trials", []):
+            if not isinstance(trial, dict):
+                continue
+            tagged = dict(trial)
+            tagged.setdefault("model", model)
+            tagged.setdefault("thinking", thinking)
+            trials.append(tagged)
+    norms = norms_mod.build_norms(trials)
+    target = out or (root / "norms.json")
+    target.write_text(json.dumps(norms, indent=2, default=str) + "\n")
+    typer.echo(f"{len(trials)} baseline trials -> {target}")
+
+
 bridge_app = typer.Typer(help="Private engine protocol for the Pi extension.", hidden=True)
 app.add_typer(bridge_app, name="_bridge")
 

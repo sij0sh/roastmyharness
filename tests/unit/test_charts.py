@@ -4,6 +4,7 @@ from roast_my_harness.report.charts import (
     outcome_label,
     partial_delta_series,
 )
+from roast_my_harness.report.norms import build_norms, flag_outliers
 from roast_my_harness.telemetry.result import COLUMNS, split_tests
 
 
@@ -90,3 +91,31 @@ def test_chart_series_stable_and_degrading():
     assert first["arms"]["control"]["near_miss"] == 0
     assert first["arms"]["control"]["mean_partial"] is None
     assert first["partial_deltas"] == []
+
+
+def test_norms_flag_runaway_output():
+    base = {
+        "variant": "control",
+        "model": "m",
+        "thinking": "high",
+        "task": "t",
+        "resolved": 0,
+        "exception_type": "",
+    }
+    trials = [
+        dict(base, partial=0.5, output_tokens=10000 + 100 * i, wall_sec=300.0)
+        for i in range(4)
+    ]
+    norms = build_norms(trials)
+    key = "m\0high\0t"
+    assert norms["tasks"][key]["output_tokens"]["n"] == 4
+    flagged = flag_outliers(
+        [dict(base, variant="variant", partial=0.5, output_tokens=90000, wall_sec=300.0)],
+        norms,
+    )
+    assert [(f["metric"], f["variant"]) for f in flagged] == [("output_tokens", "variant")]
+    quiet = flag_outliers(
+        [dict(base, variant="variant", partial=0.5, output_tokens=10100, wall_sec=300.0)],
+        norms,
+    )
+    assert quiet == []

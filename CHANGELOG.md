@@ -41,6 +41,11 @@ partial plus near-miss counts per arm.
 `roastmyharness charts <run>` regenerates them. The Pi extension gains
 an always-available `show_roast_charts` tool that renders the PNGs with
 the native `Image` component and keeps bytes out of model context.
+- Control-norm baselines. `roastmyharness norms <runs-root>` pools
+control/baseline trials across runs into per-task mean/sigma/CV norms
+for partial credit, output tokens, and wall time, with a pooled-CV
+fallback for tasks with few samples. `flag_outliers` scores new trials
+as z-scores against those bands.
 
 ### Removed
 
