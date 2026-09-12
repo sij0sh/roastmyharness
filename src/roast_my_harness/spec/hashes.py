@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from roast_my_harness import ADAPTER_PROTOCOL_VERSION
-from roast_my_harness.spec.models import EvalSpec, ExperimentSpec, ModelSpec, VariantSpec
+from roast_my_harness.spec.models import EvalSpec, ExperimentSpec, VariantSpec
 
 PROMPT_ISOLATION = "pi-fairness-v1"
 _DEFAULT_EVALUATION = EvalSpec().model_dump(mode="json")
@@ -18,7 +18,8 @@ def is_default_evaluation_dump(value: object) -> bool:
 
 
 def canonical_json_bytes(obj: Any) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    text = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return text.encode("utf-8")
 
 
 def sha256_canonical(obj: Any) -> str:

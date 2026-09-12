@@ -82,15 +82,18 @@ def _tool_visible() -> ActionResult:
     return ActionResult("tool", f"not on PATH; use {module}", problem=True)
 
 
-def setup(agent: str = "pi", scope: str = "user", *, root: Path | None = None, home: Path | None = None) -> list[ActionResult]:
+def setup(agent: str = "pi", scope: str = "user", *, root: Path | None = None,
+          home: Path | None = None) -> list[ActionResult]:
     if agent != "pi":
-        return [ActionResult("agent", f"unknown agent {agent!r}; RoastMyHarness is Pi-only", problem=True)]
+        detail = f"unknown agent {agent!r}; RoastMyHarness is Pi-only"
+        return [ActionResult("agent", detail, problem=True)]
     if scope not in ("user", "project"):
         return [ActionResult("scope", f"unknown scope {scope!r}", problem=True)]
     root = root or repo_root()
     home = home or Path.home()
     if root is None:
-        return [ActionResult("repo", "repo checkout not found; set ROAST_MY_HARNESS_REPO", problem=True)]
+        return [ActionResult("repo", "repo checkout not found; set ROAST_MY_HARNESS_REPO",
+                              problem=True)]
     managed = detect_pi_package(home=home) if scope == "user" else None
     if managed is not None:
         return [
@@ -119,16 +122,19 @@ def detect_agents() -> list[str]:
     return ["pi"] if shutil.which("pi") else []
 
 
-def run_doctor(*, root: Path | None = None, home: Path | None = None) -> list[preflight.CheckResult]:
+def run_doctor(*, root: Path | None = None,
+               home: Path | None = None) -> list[preflight.CheckResult]:
     results: list[preflight.CheckResult] = []
-    results.append(preflight._ok("python", f"{sys.version.split()[0]} (roastmyharness {__version__})"))
+    py = sys.version.split()[0]
+    results.append(preflight._ok("python", f"{py} (roastmyharness {__version__})"))
     pi = shutil.which("pi")
     results.append(preflight._ok("pi", pi) if pi else preflight._warn("pi", "pi not on PATH"))
     try:
         exe = pier_mod.pier_executable()
         version = pier_mod.pier_version()
         detail = f"{exe} {version}" if version else f"{exe} (version unreadable)"
-        results.append(preflight._ok("pier", detail) if version else preflight._warn("pier", detail))
+        results.append(preflight._ok("pier", detail) if version
+                       else preflight._warn("pier", detail))
     except Exception as e:
         results.append(preflight._fail("pier", str(e)))
     results.extend(preflight._docker())
@@ -136,9 +142,11 @@ def run_doctor(*, root: Path | None = None, home: Path | None = None) -> list[pr
     if cred is None:
         results.append(preflight._fail("auth", "no codex credential; run pi /login codex"))
     elif auth_service.refresh_hint(cred):
-        results.append(preflight._fail("auth", f"codex OAuth expired{auth_service.credential_expiry(cred)}"))
+        expiry = auth_service.credential_expiry(cred)
+        results.append(preflight._fail("auth", f"codex OAuth expired{expiry}"))
     else:
-        results.append(preflight._ok("auth", f"codex OAuth present{auth_service.credential_expiry(cred)}"))
+        expiry = auth_service.credential_expiry(cred)
+        results.append(preflight._ok("auth", f"codex OAuth present{expiry}"))
     try:
         models = auth_service.load_host_models()
         providers = ", ".join(sorted(models.get("providers", {}))[:8]) or "none"

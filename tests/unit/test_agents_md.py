@@ -10,7 +10,8 @@ from roast_my_harness.spec.models import ExperimentSpec, TaskSelection, VariantS
 
 
 def make_spec(tmp_path: Path, variants: list[VariantSpec]) -> ExperimentSpec:
-    return ExperimentSpec(name="ctx", tasks=TaskSelection(path=tmp_path), variants=variants, pi_version="0.84.3")
+    return ExperimentSpec(name="ctx", tasks=TaskSelection(path=tmp_path), variants=variants,
+                          pi_version="0.84.3")
 
 
 def test_agents_md_placed_at_home_root(tmp_path: Path):
@@ -25,6 +26,7 @@ def test_agents_md_placed_at_home_root(tmp_path: Path):
 
 def test_adapter_does_not_prepend_context(tmp_path: Path):
     import inspect
+
     from roast_my_harness.adapter import pi_agent
     src = inspect.getsource(pi_agent.PiAgent.run)
     assert "with_context_files" not in src

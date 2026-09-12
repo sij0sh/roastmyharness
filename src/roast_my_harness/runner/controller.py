@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from roast_my_harness import ADAPTER_PROTOCOL_VERSION, __version__
+from roast_my_harness import host_process as process_mod
 from roast_my_harness.adapter.registry import PI_IMPORT_PATH
 from roast_my_harness.auth import staging
 from roast_my_harness.errors import PierError
@@ -32,7 +33,6 @@ from roast_my_harness.report import markdown as report_markdown
 from roast_my_harness.report.collect import pending_replicates
 from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.runner import probe as probe_mod
-from roast_my_harness import host_process as process_mod
 from roast_my_harness.runner.patch_guard import (
     INFRA_ARTIFACT_COPY,
     INVALID_EMPTY_PATCH,
@@ -800,7 +800,7 @@ class ExperimentController:
                 key = (variant_id, task_id, replicate)
                 if previous.get(key) == cell.status:
                     continue
-                trial_id = self.store.upsert_reconciled_trial(
+                self.store.upsert_reconciled_trial(
                     experiment_id=self.experiment_id,
                     variant_id=variant_id,
                     task_id=task_id,
@@ -952,7 +952,7 @@ class ExperimentController:
     def _record_all_cells(self) -> None:
         for variant_id, cells in self.cells.items():
             for (task_id, _replicate), cell in cells.items():
-                trial_id = self.store.upsert_reconciled_trial(
+                self.store.upsert_reconciled_trial(
                     experiment_id=self.experiment_id,
                     variant_id=variant_id,
                     task_id=task_id,

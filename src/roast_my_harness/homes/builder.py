@@ -24,7 +24,6 @@ from roast_my_harness.homes.sources import (
 )
 from roast_my_harness.spec.hashes import variant_hash
 from roast_my_harness.spec.models import (
-    ExperimentSpec,
     SkillSpec,
     VariantSpec,
     _safe_relative_component,
@@ -89,7 +88,8 @@ def resolve_arm_pi_version(spec, variant, *, pi_version=None):
     return spec.resolved_pi_version_for(variant if variant.id != "control" else None)
 
 
-def build_home(variant, spec, homes_root, *, pi_version=None, runtime_agent_install=False) -> HomeBuild:
+def build_home(variant, spec, homes_root, *, pi_version=None,
+               runtime_agent_install=False) -> HomeBuild:
     resolved_version = resolve_arm_pi_version(spec, variant, pi_version=pi_version)
     if variant.agents_md is not None and not variant.agents_md.is_file():
         raise HomeBuildError(f"agents_md missing at {variant.agents_md}")
@@ -105,7 +105,8 @@ def build_home(variant, spec, homes_root, *, pi_version=None, runtime_agent_inst
         except json.JSONDecodeError:
             recorded = None
         if recorded and recorded.get("variant_hash") == v_hash:
-            manifest = VariantManifest.model_validate(json.loads((home / "variant.json").read_text()))
+            raw = (home / "variant.json").read_text()
+            manifest = VariantManifest.model_validate(json.loads(raw))
             return HomeBuild(path=home, manifest=manifest, variant_hash=v_hash)
         shutil.rmtree(home, ignore_errors=True)
     _validate_sources(variant)
@@ -141,7 +142,8 @@ def build_home(variant, spec, homes_root, *, pi_version=None, runtime_agent_inst
         if has_agents_md:
             assert variant.agents_md is not None
             (tmp / "AGENTS.md").write_bytes(Path(variant.agents_md).read_bytes())
-        (tmp / "settings.json").write_text(json.dumps(_settings_payload(variant, entries), indent=2) + "\n")
+        payload = json.dumps(_settings_payload(variant, entries), indent=2) + "\n"
+        (tmp / "settings.json").write_text(payload)
         npm_packages = [ext.package for ext in variant.extensions if ext.kind == "npm"]
         manifest = VariantManifest(
             variant_id=variant.id,
@@ -160,10 +162,12 @@ def build_home(variant, spec, homes_root, *, pi_version=None, runtime_agent_inst
             pi_flags=list(variant.pi_flags),
             runtime_agent_install=runtime_agent_install,
         )
-        (tmp / "variant.json").write_text(json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n")
-        (tmp / "build-manifest.json").write_text(json.dumps(
-            {"variant_hash": v_hash, "variant_id": variant.id, "pi_version": effective_pin,
-             "agent": "pi", "agent_version": resolved_version, "source_hashes": source_hashes}, indent=2) + "\n")
+        text = json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n"
+        (tmp / "variant.json").write_text(text)
+        manifest_json = {"variant_hash": v_hash, "variant_id": variant.id,
+                         "pi_version": effective_pin, "agent": "pi",
+                         "agent_version": resolved_version, "source_hashes": source_hashes}
+        (tmp / "build-manifest.json").write_text(json.dumps(manifest_json, indent=2) + "\n")
         _assert_no_instruction_leaks(tmp)
         _mark_readonly(tmp)
         if home.exists():

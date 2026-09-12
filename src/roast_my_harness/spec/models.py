@@ -211,7 +211,8 @@ class VariantSpec(BaseModel):
             if any(word in lowered for word in SECRET_KEY_WORDS):
                 raise ValueError(f"env key {key!r} looks like a credential; use env_from_host")
             if contains_secret(item):
-                raise ValueError(f"env value for {key!r} looks like a credential; use env_from_host")
+                raise ValueError(f"env value for {key!r} looks like a credential; "
+                                 "use env_from_host")
         return value
 
     @field_validator("env_from_host")
@@ -246,10 +247,13 @@ class VariantSpec(BaseModel):
                     i += 1
                     continue
                 if name in RESERVED_PI_FLAGS:
-                    raise ValueError(f"pi_flags entry {flag!r} conflicts with harness-controlled flags")
+                    raise ValueError(f"pi_flags entry {flag!r} conflicts "
+                                     "with harness-controlled flags")
                 if name in ALLOWED_PI_FLAGS:
-                    raise ValueError(f"pi_flags entry {flag!r} takes no value; pass {name!r} alone")
-                raise ValueError(f"pi_flags entry {flag!r} not allowlisted: {sorted(ALLOWED_PI_FLAGS)}")
+                    raise ValueError(f"pi_flags entry {flag!r} takes no value; "
+                                     f"pass {name!r} alone")
+                allowed = sorted(ALLOWED_PI_FLAGS)
+                raise ValueError(f"pi_flags entry {flag!r} not allowlisted: {allowed}")
             if any(ch.isspace() for ch in flag):
                 raise ValueError(f"pi_flags entries must be single tokens, got {flag!r}")
             if flag in _VALUE_PI_FLAGS:
@@ -261,8 +265,10 @@ class VariantSpec(BaseModel):
                 raise ValueError(f"pi_flags entry {flag!r} conflicts with harness-controlled flags")
             if flag not in ALLOWED_PI_FLAGS:
                 if flag.startswith("-"):
-                    raise ValueError(f"pi_flags entry {flag!r} not allowlisted: {sorted(ALLOWED_PI_FLAGS)}")
-                raise ValueError(f"pi_flags value {flag!r} must follow a value flag: {sorted(_VALUE_PI_FLAGS)}")
+                    allowed = sorted(ALLOWED_PI_FLAGS)
+                    raise ValueError(f"pi_flags entry {flag!r} not allowlisted: {allowed}")
+                want = sorted(_VALUE_PI_FLAGS)
+                raise ValueError(f"pi_flags value {flag!r} must follow a value flag: {want}")
             i += 1
         return value
 

@@ -48,7 +48,9 @@ def _load_or_update(name: str, payload) -> None:
     path = GOLDENS / name
     if os.environ.get("ROAST_GOLDEN_UPDATE") == "1":
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2) + "\n" if isinstance(payload, (dict, list)) else payload)
+        structured = isinstance(payload, (dict, list))
+        text = json.dumps(payload, indent=2) + "\n" if structured else payload
+        path.write_text(text)
     if isinstance(payload, (dict, list)):
         assert json.loads(path.read_text()) == payload, name
     else:

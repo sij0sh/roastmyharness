@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import shlex
-from typing import Any
 
 from roast_my_harness.adapter.command import REMOTE_HOME
 
@@ -25,6 +24,7 @@ async def npm_pi_install(agent, environment, package: str) -> None:
     await agent.exec_as_root(
         environment,
         command=("set -e; " f"export PI_CODING_AGENT_DIR={REMOTE_HOME}; "
-                 f"pi install npm:{shlex.quote(package)} " f"&& test -d {npm_root} " f"&& node --version"),
+                 f"pi install npm:{shlex.quote(package)} "
+                 f"&& test -d {npm_root} " f"&& node --version"),
         timeout_sec=900,
     )

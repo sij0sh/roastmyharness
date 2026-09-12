@@ -33,7 +33,8 @@ class ResolvedRunSpec(BaseModel):
 
 
 def identity_payload(resolved: ResolvedRunSpec) -> dict[str, Any]:
-    payload = resolved.model_dump(mode="json", exclude={"run_id": True, "requested_spec": {"hypothesis"}})
+    exclude = {"run_id": True, "requested_spec": {"hypothesis"}}
+    payload = resolved.model_dump(mode="json", exclude=exclude)
     if all(payload.get(k) is None for k in ("eval_type", "eval_id", "eval_revision", "eval_hash")):
         for key in ("eval_type", "eval_id", "eval_revision", "eval_hash"):
             payload.pop(key, None)

@@ -7,6 +7,7 @@ import pytest
 
 def test_npm_install_rejects_non_exact():
     import asyncio
+
     from roast_my_harness.adapter import npm_install
 
     class FakeAgent:

@@ -9,11 +9,18 @@ import pytest
 
 from roast_my_harness.errors import HomeBuildError
 from roast_my_harness.homes.builder import build_home
-from roast_my_harness.spec.models import ExperimentSpec, LocalExtension, SkillSpec, TaskSelection, VariantSpec
+from roast_my_harness.spec.models import (
+    ExperimentSpec,
+    LocalExtension,
+    SkillSpec,
+    TaskSelection,
+    VariantSpec,
+)
 
 
 def spec_for(tmp_path: Path, variants: list[VariantSpec]) -> ExperimentSpec:
-    return ExperimentSpec(name="t", tasks=TaskSelection(path=tmp_path), variants=variants, pi_version="0.84.3")
+    return ExperimentSpec(name="t", tasks=TaskSelection(path=tmp_path), variants=variants,
+                          pi_version="0.84.3")
 
 
 def make_ext(tmp_path: Path, name="myext", body="1") -> Path:
@@ -37,7 +44,8 @@ def test_bare_home(tmp_path: Path):
 
 def test_local_extension_home(tmp_path: Path):
     src = make_ext(tmp_path)
-    spec = spec_for(tmp_path, [VariantSpec(id="a", extensions=[LocalExtension(path=src, entry="src/index.ts")])])
+    ext = LocalExtension(path=src, entry="src/index.ts")
+    spec = spec_for(tmp_path, [VariantSpec(id="a", extensions=[ext])])
     home = build_home(spec.variants[0], spec, tmp_path / "homes")
     assert (home.path / "extensions" / "myext" / "src" / "index.ts").is_file()
     settings = json.loads((home.path / "settings.json").read_text())
@@ -64,7 +72,8 @@ def test_settings_file_merged(tmp_path: Path):
 
 def test_missing_entry_fails(tmp_path: Path):
     src = make_ext(tmp_path)
-    spec = spec_for(tmp_path, [VariantSpec(id="a", extensions=[LocalExtension(path=src, entry="src/nope.ts")])])
+    ext = LocalExtension(path=src, entry="src/nope.ts")
+    spec = spec_for(tmp_path, [VariantSpec(id="a", extensions=[ext])])
     with pytest.raises(HomeBuildError, match="entry missing"):
         build_home(spec.variants[0], spec, tmp_path / "homes")
 
@@ -89,7 +98,8 @@ def test_cache_hit_on_rebuild(tmp_path: Path):
 def test_instruction_leak_rejected(tmp_path: Path):
     src = make_ext(tmp_path)
     (src / "AGENTS.md").write_text("leak")
-    spec = spec_for(tmp_path, [VariantSpec(id="a", extensions=[LocalExtension(path=src, entry="src/index.ts")])])
+    ext = LocalExtension(path=src, entry="src/index.ts")
+    spec = spec_for(tmp_path, [VariantSpec(id="a", extensions=[ext])])
     home = build_home(spec.variants[0], spec, tmp_path / "homes")
     assert (home.path / "AGENTS.md").is_file() is False
     assert not (home.path / "extensions" / "myext" / "AGENTS.md").exists()

@@ -7,7 +7,6 @@ import os
 import socket
 from datetime import UTC, datetime
 from pathlib import Path
-from types import TracebackType
 from typing import Self
 
 from roast_my_harness.errors import RunBusyError

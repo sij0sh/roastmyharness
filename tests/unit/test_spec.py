@@ -56,17 +56,23 @@ def test_validation_error_is_single_line(tmp_path: Path):
 
 def test_reserved_control_id_rejected(tmp_path: Path):
     with pytest.raises(SpecError, match="reserved"):
-        load_experiment(write(tmp_path, 'schema_version = 3\nname = "x"\n[tasks]\npath = "."\n[[variants]]\nid = "control"\n'))
+        doc = ('schema_version = 3\nname = "x"\n[tasks]\npath = "."\n'
+               '[[variants]]\nid = "control"\n')
+        load_experiment(write(tmp_path, doc))
 
 
 def test_duplicate_variant_ids_rejected(tmp_path: Path):
     with pytest.raises(SpecError, match="duplicate"):
-        load_experiment(write(tmp_path, 'schema_version = 3\nname = "x"\n[tasks]\npath = "."\n[[variants]]\nid = "a"\n[[variants]]\nid = "a"\n'))
+        doc = ('schema_version = 3\nname = "x"\n[tasks]\npath = "."\n'
+               '[[variants]]\nid = "a"\n[[variants]]\nid = "a"\n')
+        load_experiment(write(tmp_path, doc))
 
 
 def test_unsafe_variant_id_rejected(tmp_path: Path):
     with pytest.raises(SpecError):
-        load_experiment(write(tmp_path, 'schema_version = 3\nname = "x"\n[tasks]\npath = "."\n[[variants]]\nid = "Bad Id!"\n'))
+        doc = ('schema_version = 3\nname = "x"\n[tasks]\npath = "."\n'
+               '[[variants]]\nid = "Bad Id!"\n')
+        load_experiment(write(tmp_path, doc))
 
 
 def test_pi_version_pins(tmp_path: Path):
@@ -78,7 +84,8 @@ def test_pi_version_pins(tmp_path: Path):
 
 
 def test_variant_pi_version_override(tmp_path: Path):
-    spec = load_experiment(write(tmp_path, MINIMAL + '\n[variants.pi_version]\n' if False else MINIMAL))
+    doc = MINIMAL + '\n[variants.pi_version]\n' if False else MINIMAL
+    spec = load_experiment(write(tmp_path, doc))
     assert spec.pi_version_for(spec.variants[0]) == "latest"
 
 
@@ -149,8 +156,10 @@ entry = "index.ts"
 
 def test_schema_version_must_be_3():
     with pytest.raises(ValueError, match="schema_version = 3"):
-        ExperimentSpec.model_validate({"schema_version": 2, "name": "x", "tasks": {"path": "/tmp"}, "variants": [{"id": "a"}]})
-    spec = ExperimentSpec.model_validate({"schema_version": 3, "name": "x", "tasks": {"path": "/tmp"}, "variants": [{"id": "a"}]})
+        data = {"name": "x", "tasks": {"path": "/tmp"}, "variants": [{"id": "a"}]}
+        ExperimentSpec.model_validate({"schema_version": 2, **data})
+    data = {"name": "x", "tasks": {"path": "/tmp"}, "variants": [{"id": "a"}]}
+    spec = ExperimentSpec.model_validate({"schema_version": 3, **data})
     assert spec.schema_version == 3
 
 

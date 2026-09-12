@@ -45,7 +45,8 @@ def _copy_tree(source: Path, dest: Path) -> ActionResult:
     return ActionResult(label, f"{source} -> {dest}", changed=True)
 
 
-def install_pi_extension(*, source_file: Path, source_dir: Path, dest_dir: Path) -> list[ActionResult]:
+def install_pi_extension(*, source_file: Path, source_dir: Path,
+                         dest_dir: Path) -> list[ActionResult]:
     results: list[ActionResult] = []
     results.append(_copy_file(source_file, dest_dir / source_file.name))
     results.append(_copy_tree(source_dir, dest_dir / source_dir.name))

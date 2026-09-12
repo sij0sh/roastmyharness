@@ -57,12 +57,14 @@ def _resolve_models_text(spec: ExperimentSpec, model: ModelSpec | None = None) -
     model = model or spec.model
     block = host_provider_block(model.provider)
     if block is None:
-        raise AuthError(f"provider '{model.provider}' not in host pi models.json ({auth_service.pi_models_file()})")
+        where = auth_service.pi_models_file()
+        raise AuthError(f"provider '{model.provider}' not in host pi models.json ({where})")
     resolved = model.resolved_model
     if resolved is not None and resolved.provider == model.provider:
         actual_hash = auth_service.provider_block_hash(block)
         if actual_hash != resolved.provider_block_sha256:
-            raise AuthError(f"host provider '{model.provider}' changed since load; reload before running")
+            raise AuthError(f"host provider '{model.provider}' changed since load; "
+                              "reload before running")
     return (model.provider, json.dumps({"providers": {model.provider: block}}, indent=2) + "\n")
 
 

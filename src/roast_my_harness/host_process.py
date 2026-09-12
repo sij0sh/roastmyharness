@@ -6,7 +6,6 @@ import asyncio
 import os
 import signal
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -71,7 +70,8 @@ async def cancel_all(processes: list[VariantProcess], grace_sec: float = 10.0) -
         await _terminate(proc)
     if not targets:
         return
-    _, pending = await asyncio.wait([asyncio.create_task(_wait(p)) for p in targets], timeout=grace_sec)
+    tasks = [asyncio.create_task(_wait(p)) for p in targets]
+    _, pending = await asyncio.wait(tasks, timeout=grace_sec)
     for task in pending:
         task.cancel()
     for proc in targets:

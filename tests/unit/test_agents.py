@@ -19,6 +19,7 @@ def test_fairness_has_no_implicit_context_flag():
 
 
 def test_spec_arms_are_pi_only(tmp_path):
-    spec = ExperimentSpec(name="x", tasks=TaskSelection(path=tmp_path), variants=[VariantSpec(id="a")])
+    spec = ExperimentSpec(name="x", tasks=TaskSelection(path=tmp_path),
+                          variants=[VariantSpec(id="a")])
     assert [a.id for a in spec.arms()] == ["control", "a"]
     assert spec.pi_version_for(None) == "latest"

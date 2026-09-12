@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness import host_process as process_mod
+from roast_my_harness.runner import pier as pier_mod
 from roast_my_harness.tasks.discover import discover_tasks
 
 SMOKE_MIN_TRIALS = 20

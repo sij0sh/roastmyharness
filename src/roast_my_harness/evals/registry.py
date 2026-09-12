@@ -49,11 +49,13 @@ def resolve_eval(
         return EvalFrozen(type="external", id=eval_id,
                           revision=selection.revision, eval_hash=None)
     if descriptor.id != eval_id:
-        raise SpecError(f"eval descriptor {path} describes {descriptor.id!r}, spec selects {eval_id!r}")
+        raise SpecError(f"eval descriptor {path} describes {descriptor.id!r}, "
+                          f"spec selects {eval_id!r}")
     file_revision = descriptor.revision
     if selection.revision is not None and file_revision is not None:
         if selection.revision != file_revision:
-            raise SpecError(f"evaluation revision {selection.revision!r} conflicts with {file_revision!r}")
+            raise SpecError(f"evaluation revision {selection.revision!r} "
+                              f"conflicts with {file_revision!r}")
     return EvalFrozen(type=eval_type, id=eval_id,
                       revision=selection.revision or file_revision,
                       eval_hash=descriptor.sha256)

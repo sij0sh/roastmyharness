@@ -16,6 +16,10 @@ from roast_my_harness.runner.patch_guard import (
 
 PASS_THRESHOLD = 0.999
 
+
+def _mtime_iso(mtime_ns: int) -> str:
+    return datetime.fromtimestamp(mtime_ns / 1_000_000_000, tz=UTC).isoformat()
+
 _log = logging.getLogger(__name__)
 
 _ATTEMPT_SEQ_RE = re.compile(r"(\d+)\s*$")
@@ -193,7 +197,7 @@ def reconcile_variant(
             status=status,
             reward=reward,
             job_path=str(trial_dir),
-            finished_at=finished or datetime.fromtimestamp(_mtime_ns(result_path) / 1_000_000_000, tz=UTC).isoformat(),
+            finished_at=finished or _mtime_iso(_mtime_ns(result_path)),
             replicate=replicate,
             exception_type=str(exception) if exception else None,
         )

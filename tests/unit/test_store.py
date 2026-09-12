@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from roast_my_harness.errors import RunBusyError
-from roast_my_harness.store.database import connect
 from roast_my_harness.host_lock import ExperimentLock
+from roast_my_harness.store.database import connect
 from roast_my_harness.store.migrations import MIGRATIONS, apply_migrations
 from roast_my_harness.store.repository import Repository
 

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from roast_my_harness.errors import SpecError
 from roast_my_harness.evals.registry import eval_label, resolve_eval
 from roast_my_harness.spec.models import ExperimentSpec, TaskSelection, VariantSpec
 
@@ -24,6 +23,7 @@ def test_default_eval_resolves_none(tmp_path: Path):
 
 def test_unknown_bundled_rejected(tmp_path: Path):
     from pydantic import ValidationError
+
     from roast_my_harness.spec.models import EvalSpec
     with pytest.raises(ValidationError):
         EvalSpec(type="bundled", id="nope")

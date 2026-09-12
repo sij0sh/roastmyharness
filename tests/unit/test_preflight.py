@@ -14,8 +14,10 @@ def _spec(*, extensions=(), pi_version="0.84.3"):
     return SimpleNamespace(
         pi_version=pi_version,
         arms=lambda: [control, variant],
-        pi_version_for=lambda v=None: (v.pi_version if v is not None and v.pi_version else pi_version),
-        resolved_pi_version_for=lambda v=None: (v.pi_version if v is not None and v.pi_version else pi_version),
+        pi_version_for=lambda v=None: (v.pi_version if v is not None
+                                       and v.pi_version else pi_version),
+        resolved_pi_version_for=lambda v=None: (v.pi_version if v is not None
+                                                 and v.pi_version else pi_version),
     )
 
 

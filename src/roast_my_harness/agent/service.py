@@ -30,6 +30,7 @@ from roast_my_harness.errors import RoastMyHarnessError, SpecError
 from roast_my_harness.evals.registry import eval_label, resolve_eval
 from roast_my_harness.files import atomic_write_text
 from roast_my_harness.homes.sources import source_file_hash, source_tree_hash
+from roast_my_harness.host_lock import ExperimentLock
 from roast_my_harness.paths import database_path, run_dir
 from roast_my_harness.paths import plans_dir as default_plans_dir
 from roast_my_harness.report.collect import (
@@ -48,7 +49,6 @@ from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.spec.models import ExperimentSpec
 from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
 from roast_my_harness.spec.resolved import identity_payload, resolve_run_spec
-from roast_my_harness.host_lock import ExperimentLock
 from roast_my_harness.store.repository import Repository
 from roast_my_harness.tasks.catalog import catalog_info
 from roast_my_harness.tasks.discover import discover_tasks
@@ -93,9 +93,11 @@ def _source_hashes(spec: ExperimentSpec) -> dict[str, str]:
     for variant in spec.arms():
         for item in variant.extensions:
             if item.kind == "local":
-                hashes[f"{variant.id}/ext/{item.name or item.path.name}"] = source_tree_hash(item.path)
+                key = f"{variant.id}/ext/{item.name or item.path.name}"
+                hashes[key] = source_tree_hash(item.path)
         for item in variant.skills:
-            hashes[f"{variant.id}/skill/{item.name or item.path.name}"] = source_tree_hash(item.path)
+            key = f"{variant.id}/skill/{item.name or item.path.name}"
+            hashes[key] = source_tree_hash(item.path)
         if variant.agents_md is not None:
             try:
                 hashes[f"{variant.id}/agents_md"] = source_file_hash(variant.agents_md)

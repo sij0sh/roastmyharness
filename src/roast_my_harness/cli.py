@@ -97,8 +97,8 @@ def bridge_wait(
         print(json.dumps({"ok": False, "error": {"code": error.code, "message": str(error)}}))
         raise typer.Exit(1) from None
     except Exception as error:
-        print(json.dumps({"event": "final", "final": False,
-                          "note": f"bridge error before a final event: {type(error).__name__}: {error}"}))
+        note = f"bridge error before a final event: {type(error).__name__}: {error}"
+        print(json.dumps({"event": "final", "final": False, "note": note}))
         sys.stdout.flush()
         raise typer.Exit(1) from None
 
@@ -131,8 +131,8 @@ def bridge_run(plan_id: str = typer.Argument(..., help="Plan id from validate.")
         print(json.dumps({"ok": False, "error": {"code": "unknown_experiment"}}))
         raise typer.Exit(1) from None
     except Exception as error:
-        print(json.dumps({"event": "final", "final": False,
-                          "note": f"bridge error before a final event: {type(error).__name__}: {error}"}))
+        note = f"bridge error before a final event: {type(error).__name__}: {error}"
+        print(json.dumps({"event": "final", "final": False, "note": note}))
         sys.stdout.flush()
         raise typer.Exit(1) from None
 
@@ -165,7 +165,7 @@ def worker(spec_path: Path = typer.Argument(...),
 
 @app.callback()
 def _default(ctx: typer.Context,
-             version: bool = typer.Option(False, "--version", help="Show version and exit.")) -> None:
+             version: bool = typer.Option(False, "--version", help="Show version.")) -> None:
     if version:
         typer.echo(f"roastmyharness {__version__}")
         raise typer.Exit(0)

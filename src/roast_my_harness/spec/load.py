@@ -41,7 +41,8 @@ def _apply_preset(tasks: TaskSelection) -> TaskSelection:
         return tasks
     catalog = load_catalog(tasks.path)
     if catalog is None:
-        raise SpecError(f"tasks.preset = {tasks.preset!r} needs catalog at {tasks.path / 'catalog.toml'}")
+        catalog_path = tasks.path / "catalog.toml"
+        raise SpecError(f"tasks.preset = {tasks.preset!r} needs catalog at {catalog_path}")
     preset = catalog.presets.get(tasks.preset)
     if preset is None:
         raise SpecError(f"unknown tasks.preset {tasks.preset!r}")
@@ -54,12 +55,14 @@ def _apply_preset(tasks: TaskSelection) -> TaskSelection:
 
 def _resolve(spec: ExperimentSpec, base_dir: Path) -> ExperimentSpec:
     updates: dict = {}
-    updates["tasks"] = _apply_preset(spec.tasks.model_copy(update={"path": absolute(spec.tasks.path, base_dir)}))
+    moved = spec.tasks.model_copy(update={"path": absolute(spec.tasks.path, base_dir)})
+    updates["tasks"] = _apply_preset(moved)
     variants = []
     for variant in spec.variants:
-        exts = [e.model_copy(update={"path": absolute(e.path, base_dir)}) if e.kind == "local" else e
-                for e in variant.extensions]
-        skills = [s.model_copy(update={"path": absolute(s.path, base_dir)}) for s in variant.skills]
+        exts = [e.model_copy(update={"path": absolute(e.path, base_dir)})
+                if e.kind == "local" else e for e in variant.extensions]
+        skills = [s.model_copy(update={"path": absolute(s.path, base_dir)})
+                  for s in variant.skills]
         v = variant.model_copy(update={"extensions": exts, "skills": skills})
         if v.agents_md is not None:
             v = v.model_copy(update={"agents_md": absolute(v.agents_md, base_dir)})
