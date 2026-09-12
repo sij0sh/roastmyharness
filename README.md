@@ -203,7 +203,7 @@ The walkthrough below uses a real run. It tests a third-party extension against 
 
 2. Pick the model.
 
-   ![Step 2 - pick the model](docs/images/wizard-2-model.png)
+   ![Step 2 - pick the models](docs/images/wizard-2-models.png)
 
 These come from your global Pi's models.json list.
 
