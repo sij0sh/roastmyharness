@@ -1,78 +1,117 @@
-# BENCHMARKS.md
+# BENCHMARKS
 
-Log of A/B experiments run with RoastMyHarness. One section per
-experiment, newest first. Each section records identity, design,
-results, and interpretation so numbers stay auditable after the fact.
+This file is the running record of RoastMyHarness experiments.
 
-How to read:
+The goal is not to turn every run into a leaderboard entry. It is to keep the
+evidence behind harness decisions in one place: what changed, what stayed fixed,
+what the result was, and how much confidence that result deserves.
 
-- Resolve rate alone is noise at small n. Paired flips are the signal:
-  which tasks flipped from fail to pass (rescued) or pass to fail
-  (broken) between arms.
-- Smoke runs (1 task) exist to validate plumbing, not to rank agents.
-- Cost is list-price basis for claude arms (Claude Code's own
-  accounting) and blank for pi arms on the gateways, which do
-  not surface per-call costs.
+1. **Summary** — the result in plain language.
+2. **Record** — run identity and experimental conditions.
+3. **Design** — what was held constant and what changed.
+4. **Results** — the measured data.
+5. **Paired outcomes** — rescued and broken tasks, not just aggregate score.
+6. **Task-level evidence** — details that help explain important flips.
+7. **Implications** — what the result supports, and what it does not.
+8. **Caveats and provenance** — incidents, missing telemetry, and post-hoc recovery.
+9. **Reproduce** — commands or analysis scripts when available.
+
+### Reading conventions
+
+A **rescue** means the treatment passed a task that the comparison arm failed.
+A **break** means the treatment failed a task that the comparison arm passed.
+At small sample sizes, those paired flips are more informative than a few
+percentage points of aggregate resolve rate.
+
+Smoke runs use one task to validate plumbing. They are not ranking evidence.
+
+Cost is reported on the basis available from the harness. Claude Code values use
+Claude Code's own list-price accounting. Pi runs through the gateways do not
+currently expose per-call cost, so those cells remain blank rather than being
+estimated.
 
 ---
 
 ## Token baselines: gpt-5.6-luna, low vs high thinking
 
-Not one experiment but a cross-run aggregate: every stored RoastMyHarness
-run through 2026-09-09 that used gpt-5.6-luna, pooled to answer one
-question - what is the normal token footprint per task, and when is a
-new run far outside the norm? Full per-task tables for reasoning and
-total tokens live in
-`.agents/artifacts/token-analysis-gpt-5.6-luna.md`; this section carries
-the headline output-token norms inline.
+### Summary
 
-### Identity and scope
+This is not a single A/B experiment. It pools stored RoastMyHarness runs through
+2026-09-09 to establish a practical token baseline for `gpt-5.6-luna`.
+
+The useful question is simple: **what does a normal run on this task usually
+cost in tokens, and when is a new run far enough outside that range to deserve
+inspection?**
+
+Two patterns are already clear in the stored data. High thinking uses a much
+larger and more consistent token budget than low thinking. Low-thinking runs
+have a heavier tail, including several obvious runaway failures. These norms are
+useful for triage, but many per-task estimates still have too few samples to be
+treated as stable distributions.
+
+Full per-task reasoning and total-token tables live in
+`.agents/artifacts/token-analysis-gpt-5.6-luna.md`. The tables below keep the
+headline output-token norms here.
+
+### Record
 
 | field | value |
 |---|---|
-| Model | `gpt-5.6-luna` |
-| Thinking levels | `low`, `high` (stray medium/off trials exist, out of scope) |
-| Window | 2026-08-27 to 2026-09-09 |
-| Run dirs scanned | 146 |
-| Experiments contributing trials | 124 |
-| Trials | 801 total, 768 usable (33 zero-token crashes excluded) |
-| Distinct tasks seen | 77 (bundled DeepSWE datacurve corpus) |
-| Baseline-arm trials (the norm) | 138 low, 105 high, 56 tasks |
-| Analysis script | `.agents/artifacts/token_stats_analysis.py` |
+| model | `gpt-5.6-luna` |
+| thinking | `low`, `high` |
+| window | 2026-08-27 to 2026-09-09 |
+| run_dirs_scanned | 146 |
+| experiments_contributing_trials | 124 |
+| trials | 801 total, 768 usable |
+| excluded_trials | 33 zero-token crashes |
+| distinct_tasks | 77 |
+| corpus | bundled DeepSWE datacurve corpus |
+| baseline_trials | 138 low, 105 high, 56 tasks |
+| analysis_script | `.agents/artifacts/token_stats_analysis.py` |
+
+Stray medium/off trials exist in storage but are outside this analysis.
 
 ### Method
 
-- "Norm" tables pool baseline arms only (`control`/`baseline`: the
-  unmodified pi harness). Treatment arms change token behaviour by
-  design, so they are excluded from the norm and pooled separately.
-- Metrics: `output_tokens` = generated tokens; `reasoning_tokens` =
-  thinking subset of output; `total` = input + cache-read + output
-  (cumulative context consumption).
-- sigma is the sample standard deviation; 1-sigma and 2-sigma ranges
-  are mean +/- sigma and mean +/- 2*sigma, clamped at 0. CV = sigma/mean.
-- Per-task sigma from n < 5 samples is unstable. For those tasks use
-  the pooled fallback below: sigma_hat = CV_pooled * task_mean.
-- Accounting on the gateway used: `input_tokens` counts only non-cached
-  input (tens to hundreds per trial); `cache_tokens` carries the bulk.
-  `peak_context_tokens` is not usable for this model (near-constant
-  value) and is excluded - a telemetry gap, disclosed here rather than
-  silently dropped.
+The norm uses baseline arms only: `control` or `baseline`, meaning unmodified Pi.
+Treatment arms are pooled separately because changing the harness is expected to
+change token behavior.
 
-### Model-level overview
+The metrics are:
+
+| metric | meaning |
+|---|---|
+| `output_tokens` | generated tokens |
+| `reasoning_tokens` | thinking tokens within output |
+| `total` | input + cache-read + output; cumulative context consumption |
+| `sigma` | sample standard deviation |
+| `CV` | sigma / mean |
+
+The 1-sigma and 2-sigma ranges are mean ± sigma and mean ± 2×sigma, clamped at
+zero. Per-task sigma is unstable when `n < 5`; sparse tasks should use the pooled
+fallback described below instead.
+
+On the gateway used for these runs, `input_tokens` records only non-cached input,
+while `cache_tokens` contains most of the prompt/context volume.
+`peak_context_tokens` is near-constant for this model and is not useful here, so
+it is excluded explicitly rather than treated as meaningful telemetry.
+
+### Aggregate results
 
 | thinking | n | output mean | output sigma | output median | output 2-sigma range | reasoning mean | total mean | total sigma |
 |---|---|---|---|---|---|---|---|---|
 | low | 565 | 4,790 | 9,626 | 3,211 | [0, 24.0k] | 400 | 246.4k | 176.0k |
 | high | 203 | 32.2k | 28.2k | 25.5k | [0, 88.6k] | 13.7k | 4.86M | 4.44M |
 
-Thinking levels separate cleanly: high median reasoning is ~40x low
-(13.4k vs 0.3k). A low run producing high-level reasoning counts, or
-vice versa, is a config error, not noise - the cheapest anomaly check
-in the stack.
+The thinking modes separate strongly. Median reasoning is about 13.4k at high
+thinking versus about 0.3k at low thinking, roughly a 40× difference. That makes
+reasoning-token scale a cheap configuration check: a run that looks like the
+wrong thinking mode should be inspected before its benchmark verdict is used.
 
-### Per-task output norms: thinking = low (22 tasks, 138 trials)
+### Per-task output norms: thinking = low
 
-15 of 22 tasks have n < 5; treat their sigma as provisional.
+22 tasks, 138 baseline trials. Fifteen tasks have fewer than five samples, so
+their task-specific sigma should be treated as provisional.
 
 | task | n | mean | sigma | 1-sigma range | 2-sigma range | median | max | CV |
 |---|---|---|---|---|---|---|---|---|
@@ -99,12 +138,14 @@ in the stack.
 | obsidian-linter-auto-table-of-contents | 4 | 2762 | 238 | [2524, 3000] | [2286, 3238] | 2718 | 3075 | 0.09 |
 | helm-array-merge-strategies | 1 | 2212 | - | - | - | 2212 | 2212 | - |
 
-Task names are `datacurve/`-prefixed; the prefix is dropped for width.
+Task names are `datacurve/`-prefixed in the source data; the prefix is omitted
+here for readability.
 
-### Per-task output norms: thinking = high (49 tasks, 105 trials)
+### Per-task output norms: thinking = high
 
-47 of 49 tasks have n < 5 - the pooled fallback is the primary guide
-here, the per-task sigma is directional only.
+49 tasks, 105 baseline trials. Forty-seven tasks have fewer than five samples.
+For most of this table, the pooled fallback is more useful than the raw
+task-specific sigma.
 
 | task | n | mean | sigma | 1-sigma range | 2-sigma range | median | max | CV |
 |---|---|---|---|---|---|---|---|---|
@@ -158,7 +199,9 @@ here, the per-task sigma is directional only.
 | wazero-multi-module-snapshots | 6 | 20.6k | 3527 | [17.1k, 24.1k] | [13.5k, 27.7k] | 20.2k | 26.4k | 0.17 |
 | true-myth-iterable-collection-combinators | 2 | 19.5k | 938 | [18.6k, 20.5k] | [17.6k, 21.4k] | 19.5k | 20.2k | 0.05 |
 
-### Flagged trials (beyond 2 sigma of their task norm)
+### Flagged trials
+
+These are baseline trials more than 2 sigma above or below their task norm.
 
 | z | thinking | task | variant | date | output | resolved | reward |
 |---|---|---|---|---|---|---|---|
@@ -167,38 +210,51 @@ here, the per-task sigma is directional only.
 | +2.8 | low | bandit-incremental-cache-control | control | 2026-09-07 | 67.2k | 0 | 0.0 |
 | +2.7 | low | bandit-incremental-cache-control | control | 2026-09-08 | 66.9k | 0 | 0.0 |
 
-All 4 flagged trials were unresolved failures. Low-thinking outliers are
-runaway/loop runs: a token count far above the 2-sigma band predicts a
-failed run before the verdict lands. No high-thinking trial breached
-its task norm.
+All four flagged trials in this dataset were unresolved failures. Three were
+extreme 66-68k-output low-thinking runs on tasks whose normal output is much
+smaller; the fourth was also an unresolved low-thinking outlier.
 
-### Fallback norm for tasks with few samples
+That is useful as a **triage signal**, not yet as a universal predictor. In this
+sample, a large low-thinking token excursion and an unresolved result occurred
+together. No high-thinking baseline trial breached its task-level 2-sigma norm.
 
-When a task has n < 5, use the pooled relative spread:
-sigma_hat = CV_pooled * task_mean.
+### Sparse-task fallback
+
+For a task with fewer than five samples, estimate its spread from the pooled
+relative variation:
+
+```text
+sigma_hat = CV_pooled * task_mean
+```
 
 | thinking | CV median | CV p75 | CV p90 | guidance for 1-sigma band |
 |---|---|---|---|---|
 | low | 0.15 | 0.21 | 1.63 | mean +/- 0.15*mean |
 | high | 0.07 | 0.09 | 0.11 | mean +/- 0.07*mean |
 
-High thinking is intrinsically consistent (median CV ~0.07): even one
-test run more than ~30% off the task mean is unusual. Low thinking is
-heavier tailed (median CV ~0.15, runaway runs up to CV 2+): use ~2x the
-median CV before flagging. The low p90 of 1.63 is the runaway tail, not
-steady-state spread - do not size normal bands from it.
+In this sample, high-thinking runs are relatively consistent around each task's
+mean: median CV is about 0.07. Low thinking is noisier at median CV 0.15 and has a
+much heavier runaway tail.
 
-### Interpretation
+For single-run triage, the median CV is a better starting point than the low
+p90. The low-thinking p90 of 1.63 is dominated by runaway behavior and would
+make a poor definition of a normal band.
 
-- Usable norm, honest caveat: per-task sigma at n < 5 is provisional.
-  The tables are a living baseline; re-run the analysis script after new
-  experiments and the bands tighten on their own.
-- Immediate triage rule for a single new run: output outside the task's
-  2-sigma band (or the fallback band) plus unresolved status = runaway;
-  reasoning tokens off by an order of magnitude = thinking-level misconfig.
-- The low-thinking failure mode is spending (66-68k output loops on
-  tasks whose norm is 3-10k); the high-thinking failure mode has not
-  shown up in tokens at all.
+### Implications
+
+The current baseline is good enough to answer two operational questions.
+
+First, a reasoning-token count that is off by roughly an order of magnitude is a
+strong reason to check whether the intended thinking level actually ran.
+
+Second, a low-thinking run that lands far outside its task's normal output range
+deserves inspection for looping or repeated work, especially if the task is
+also unresolved.
+
+The limit is sample depth. Most high-thinking tasks and many low-thinking tasks
+still have fewer than five baseline observations. The tables should therefore be
+treated as a living baseline, not frozen thresholds. As more control runs
+accumulate, rerunning the analysis will make the per-task ranges more useful.
 
 ### Reproduce
 
@@ -210,29 +266,62 @@ python3 .agents/artifacts/token_stats_analysis.py
 
 ---
 
-
-
 ## Snoop fixed retrieval (Phases A-E) vs historic arms
 
-### Headlines
+### Summary
 
-- ipython is the cleanest retrieval win: the old packet completely lacked the history files the task needs; both fixed packets have them all. Beats control too.
-- fastapi win is retrieval-plausible in rep 2 (translations gone, key files present); rep 1 won without calling snoop once, so that's agent variance.
-- boa and bandit exonerate the retrieval changes: boa fails the same single test 16/17 in both fixed runs with no uniformly-lost evidence; bandit's three snoop runs all land 88-89/89 with old and rep-2 failing the identical file-size edge test. Both sit at capability edge - single-test flips, not packet regressions.
+The fixed Snoop retrieval path produced the clearest positive retrieval result
+so far on `ipython-session-bundle-replay`: the old packet omitted the history
+files the task needed, while both fixed runs surfaced them and passed the task.
 
-### Identity and scope
+`fastapi-implicit-head-options` is also consistent with an improvement in
+retrieval quality, but only one replicate gives packet-level evidence because
+the other passed without calling Snoop.
+
+The important negative result is that the `boa` and `bandit` failures do not
+look like retrieval regressions. Both sit on single-test capability edges, and
+the packet comparisons do not show the fixed retrieval dropping the evidence
+needed to solve them.
+
+The headline totals vary enough between replicates that they should not be used
+to rank the arms. The useful signal is in the stable flips and packet-level
+differences.
+
+### Record
 
 | field | value |
 |---|---|
-| New runs | `snoop-fixed-fac02adf` (rep 1, COMPLETE), `snoop-fixed-d231ee72` (rep 2, matrix complete) |
-| Historic baseline | `snoop-smoke-b120e547` (CANCELLED, 31 trials: control + old-snoop arms) |
-| Spec | `snoop-fixed.toml`: snoop arm only, `control.enabled = false` |
-| Snoop code | Phases A-E (per-commit cap, locale collapse, lane + history fill gating); Debian-12 binary rebuilt post-change |
-| Model / thinking | `gpt-5.6-luna` / high, all arms |
-| Tasks | 14 paired tasks where both historic arms resolved (plus 4 probe artifacts in rep 2, excluded) |
-| Date | 2026-09-09 |
+| run_id | `snoop-fixed-fac02adf` (rep 1), `snoop-fixed-d231ee72` (rep 2) |
+| date | 2026-09-09 |
+| status | rep 1 COMPLETE; rep 2 matrix complete |
+| historic_comparison | `snoop-smoke-b120e547` |
+| historic_status | CANCELLED after 31 trials |
+| spec | `snoop-fixed.toml` |
+| treatment | Snoop Phases A-E |
+| model | `gpt-5.6-luna` |
+| thinking | `high` |
+| paired_tasks | 14 |
+| excluded_probe_artifacts | 4 in rep 2 |
+| control_in_new_runs | disabled |
+| snoop_build | Debian 12 binary rebuilt after retrieval changes |
+
+The treatment includes the per-commit cap, locale collapse, lane gating, and
+history-fill gating. The new runs contain the Snoop arm only, so the comparison
+uses resolved control and old-Snoop trials from the historic run.
+
+### Design
+
+The analysis is restricted to the 14 tasks for which both historic arms had a
+resolved result. The two fixed Snoop runs are treated as replicates of the same
+retrieval change.
+
+This is not a clean fresh-control A/B run. Its value comes from paired historical
+task outcomes plus direct packet inspection: queries, item kinds, commit SHAs,
+code locators, and verifier results.
 
 ### Results
+
+Legend: `P` = pass, `F` = fail.
 
 | Task | control | old-snoop | fixed r1 | fixed r2 |
 |---|---|---|---|---|
@@ -252,108 +341,137 @@ python3 .agents/artifacts/token_stats_analysis.py
 | kombu-virtual-queue-dead-lettering | F | F | F | F |
 | **Totals** | **8** | **5** | **9** | **6** |
 
-### Paired flips (fixed runs vs old-snoop)
+The fixed replicates resolve 9/14 and 6/14 tasks respectively, versus 5/14 for
+historic old-Snoop and 8/14 for the historic control. The spread between the two
+fixed runs is large enough that totals alone are not a reliable conclusion.
 
-- Rescued in both replicates: fastapi, claude-code, ipython.
-- Lost in both replicates: boa.
-- Split between replicates (variance, no call): bandit, kcp, cattrs, etree, kombu-single.
-- Stable: arcane, httpx (pass); clack, kgateway, kombu-dead (fail).
+### Paired outcomes
 
-### Discordant-pair deep dive
+Fixed Snoop compared with historic old-Snoop:
 
-Packet comparison across old-snoop, fixed-r1, fixed-r2 (queries, item kinds,
-commit shas, code locators) plus verifier reports:
+| outcome | tasks |
+|---|---|
+| rescued in both replicates | `fastapi-implicit-head-options`, `claude-code-by-agents-recursive-delegation`, `ipython-session-bundle-replay` |
+| broken in both replicates | `boa-hierarchical-evaluation-cancellation` |
+| split across replicates | `bandit-incremental-cache-control`, `kcp-go-multiplexed-kcp-streams`, `cattrs-partial-structuring-recovery`, `etree-xml-diff-patch`, `kombu-single-active-consumer-priority` |
+| stable pass | `arcane-drift-detection-baselines`, `httpx-deterministic-cookie-store` |
+| stable fail | `clack-async-autocomplete-options`, `kgateway-consistent-hash-policy`, `kombu-virtual-queue-dead-lettering` |
 
-- **ipython, retrieval-attributable win.** Old packet lacks `history.py`,
-  `historyapp.py`, `magics/history.py`, `test_history.py` - the exact files
-  the task needs. Both fixed packets contain all of them. Old had
-  `aaa5a456x3`, fixed runs cap at x2. Control failed too, so fixed snoop
-  beats control here.
-- **fastapi, retrieval-plausible win (rep 2).** Old q1 packet: 8 translated
-  `first-steps.md` siblings plus a x3 commit. Rep-2 q1: English-only docs,
-  no x3, `routing.py`/`models.py`/security files present. Rep-1 won with
-  zero `context` calls, so that replicate is agent path variance, not snoop.
-- **claude-code, weak-positive.** No x3 recurrence in fixed runs
-  (old had `6a9c59a5x3`), but agent queries diverged across all three
-  trials, so the win cannot be isolated to retrieval.
-- **boa, no retrieval attribution.** No commit is uniformly lost across the
-  fixed packets (empty set diff); code composition is similar. Both fixed
-  runs produce ~29KB patches failing the SAME single test 16/17
-  (`cancelled_session_jobs_are_skipped_but_unrelated_jobs_still_run`).
-  Task at capability edge; historic pass likely luck.
-- **bandit, edge-test noise.** All three snoop runs reach 88-89/89; old and
-  rep-2 fail the IDENTICAL single test
-  (`test_cache_stats_shows_cache_file_size_bytes`, file-size-in-bytes);
-  rep-1 passes fully. Not a retrieval story.
+The three repeat rescues are the strongest outcome signal. The split tasks should
+be treated as run variance until more repetitions say otherwise.
 
-### Interpretation
+### Task-level evidence
 
-Fixed retrieval converts three historic snoop fails to stable passes with
-packet-level mechanisms (missing key files surfacing, translation flood and
-x3 duplicates gone), holds code/docs recall at zero locator losses (A5
-replay), and shows no packet-attributable loss on boa/bandit - both sit at
-capability edge with single-test flips. Remaining variance (split
-replicates) dominates small-n reading; don't rank on totals.
+| task | observed packet/verifier difference | interpretation |
+|---|---|---|
+| `ipython-session-bundle-replay` | Old packet omitted `history.py`, `historyapp.py`, `magics/history.py`, and `test_history.py`. Both fixed packets contain all four. Old packet also repeated commit `aaa5a456` three times; fixed packets cap it at two. | Strongest retrieval-attributable win. Both fixed runs pass, while old Snoop and control fail. |
+| `fastapi-implicit-head-options` | Historic q1 packet contained eight translated `first-steps.md` siblings plus a triplicated commit. Fixed rep 2 keeps English docs and includes `routing.py`, `models.py`, and security files. | Retrieval-plausible in rep 2. Rep 1 passed without any `context` call, so that replicate cannot be credited to Snoop. |
+| `claude-code-by-agents-recursive-delegation` | The old packet repeated commit `6a9c59a5` three times; fixed packets do not. Agent queries differ across all runs. | Weak positive. Outcome improved, but retrieval is not isolated as the cause. |
+| `boa-hierarchical-evaluation-cancellation` | No commit is uniformly missing from the fixed packets. Both fixed runs produce ~29 KB patches and fail the same 16/17 test, `cancelled_session_jobs_are_skipped_but_unrelated_jobs_still_run`. | No packet-level evidence that the retrieval fix caused the loss. More consistent with a capability-edge flip. |
+| `bandit-incremental-cache-control` | All three Snoop runs reach 88-89/89. Historic old-Snoop and fixed rep 2 fail the same file-size edge test; rep 1 passes. | Single-test variance, not a clear retrieval effect. |
 
-### Incidents affecting the numbers
+A separate A5 replay found no code/doc locator that was uniformly lost after the
+retrieval changes. That matters because the positive packet changes are not
+paired with an obvious broad recall regression in this sample.
 
-- The 30-task `snoop-fixed` launch was SIGTERMed on its wrapper instead of
-  the runner; the runner survived and lazily enumerated the by-then-narrowed
-  14-task spec, completing as `fac02adf` (rep 1). Rep 2 (`d231ee72`) ran the
-  same 14 plus 4 probe artifacts (arktype/optique errors, mobly/onedump
-  probe fails from probe retries), excluded above.
-- Both fixed runs executed concurrently with each other and with unrelated
-  swe experiments; CPU contention may inflate split-replicate noise.
-- Stale `fac02adf`-era runner lingered post-COMPLETE and was reaped; no
-  trials affected.
+### Implications
+
+The fixed retrieval work has at least one convincing success case: `ipython`.
+There, the old packet was missing the files required by the task and both fixed
+packets supplied them.
+
+`fastapi` is a useful second example of the intended mechanism: less translation
+noise, no triplicated commit, and more relevant implementation files. Because
+one replicate succeeded without using Snoop, it should be described as
+supporting evidence rather than a clean causal win.
+
+The data does **not** support saying that fixed Snoop is globally better than
+either historic arm. Replicate totals are too unstable, and several tasks split
+between runs. The result supports a narrower conclusion: the retrieval changes
+fixed identifiable packet defects without producing an identifiable packet-level
+regression on the two most concerning losses.
+
+### Caveats and provenance
+
+The first 30-task `snoop-fixed` launch was terminated at the wrapper rather than
+the runner. The runner survived and later enumerated the narrowed 14-task spec,
+producing `snoop-fixed-fac02adf` as rep 1.
+
+Rep 2, `snoop-fixed-d231ee72`, ran the same 14 tasks plus four probe artifacts.
+The arktype/optique probe errors and mobly/onedump probe failures are excluded
+from the tables above.
+
+Both fixed runs also overlapped with each other and with unrelated SWE
+experiments. CPU contention may have increased wall-time and outcome variance.
+
+A stale runner from the `fac02adf` launch remained after completion and was
+reaped. No trial result above was affected.
+
+### Reproduce
+
+This historical comparison does not record a single standalone reproduction
+command in this file. The auditable inputs are the two fixed run IDs, the
+historic run ID, and `snoop-fixed.toml`.
 
 ---
 
-
-
 ## Claude Code bare vs Pi bare
 
-First harness-only comparison: both arms ran the SAME model at the
-SAME thinking level, so any difference isolates the harness, not the
-model.
+### Summary
 
-### Identity
+This smoke test held the model and thinking level constant while changing the
+coding harness: Pi versus Claude Code.
+
+Claude Code passed the one DeepSWE task and Pi missed one of 24 verifier tests.
+Claude also used substantially more input/output tokens and took six minutes
+longer.
+
+With one task, that is **not** evidence that Claude Code is the better harness.
+It is evidence that the plumbing worked and that this particular task produced
+a very narrow semantic difference worth following on a larger paired run.
+
+### Record
 
 | field | value |
 |---|---|
-| Run id | `pi-vs-claude-bare-ed2d5b93` |
-| Date | 2026-09-09 |
-| Spec | `pi-vs-claude-bare.toml` |
-| Branch | `ad-hoc/claude-bare` (Claude arm support restored from `40f6383`) |
-| Harness | roastmyharness 0.1.0, pier 0.3.1 |
-| Model (both arms) | `anthropic-gateway/claude-opus-5` |
-| Thinking (both arms) | `low` |
-| Pi arm | pi 0.85.1 (`pi_version = "latest"` at prepare) |
-| Claude arm | Claude Code 2.1.266 (npm-pinned) |
-| Task corpus | bundled DeepSWE, preset `luna-signal`, catalog rev 2026-09 |
-| Task hash | `90592907baf82f7bcd84c4eccce0b1229c63711f0e6e8ecf19c362ce01b6f7a0` |
-| Run dir | `~/.local/share/roastmyharness/runs/pi-vs-claude-bare-ed2d5b93` |
+| run_id | `pi-vs-claude-bare-ed2d5b93` |
+| date | 2026-09-09 |
+| status | COMPLETE |
+| spec | `pi-vs-claude-bare.toml` |
+| branch | `ad-hoc/claude-bare` |
+| harness | roastmyharness 0.1.0, pier 0.3.1 |
+| model | `anthropic-gateway/claude-opus-5` |
+| thinking | `low` |
+| pi_version | 0.85.1 |
+| claude_code_version | 2.1.266 |
+| corpus | bundled DeepSWE |
+| preset | `luna-signal` |
+| catalog_revision | 2026-09 |
+| task_hash | `90592907baf82f7bcd84c4eccce0b1229c63711f0e6e8ecf19c362ce01b6f7a0` |
+| task_count | 1 |
+| repetitions | 1 per arm |
+| concurrency | 1 |
+| run_dir | `~/.local/share/roastmyharness/runs/pi-vs-claude-bare-ed2d5b93` |
+
+Claude-arm support on this branch was restored from commit `40f6383`.
 
 ### Design
 
-Smoke scale: one task, one repetition per arm, concurrency 1.
+The task was `boa-hierarchical-evaluation-cancellation`, a medium-band DeepSWE
+task in the Boa JavaScript engine. The verifier contains 24 tests: 17
+fail-to-pass and 7 pass-to-pass. The task receives reward 1.0 only when all 24
+pass.
 
-Task: `boa-hierarchical-evaluation-cancellation` (DeepSWE, medium
-difficulty band). Rust work in the boa_engine JS engine: implement
-evaluation cancellation semantics (cancel handles, job skipping,
-parent/child reason propagation) behind a verifier of 24 cargo-nextest
-tests - 17 fail-to-pass and 7 pass-to-pass. The task grades to 1.0
-only when all 24 pass.
-
-Fairness contracts (bare means bare):
+The model, thinking level, task instruction, container image, egress allowlist,
+and git identity were the same on both arms. The harness contracts were:
 
 | arm | contract |
 |---|---|
-| pi control | `-nc --no-skills --no-prompt-templates --no-themes`, no extensions, no skills |
-| claude | `--strict-mcp-config`, pinned settings.json (`bypassPermissions`, telemetry/auto-update off), no MCP servers |
+| Pi bare | `-nc --no-skills --no-prompt-templates --no-themes`, no extensions, no skills |
+| Claude Code bare | `--strict-mcp-config`, pinned `settings.json` with `bypassPermissions`, telemetry/auto-update off, no MCP servers |
 
-Both arms ran the identical instruction, container image, egress
-allowlist (model gateway + npm), and git identity.
+Holding the model constant removes model choice as a confound. It does not remove
+normal run-to-run variance, which matters especially at `n=1`.
 
 ### Results
 
@@ -370,66 +488,72 @@ allowlist (model gateway + npm), and git identity.
 | Turns / recorded steps | - | 62 turns, 56 ATIF steps |
 | Peak context tokens | 81k | not captured (see provenance) |
 
-Paired flips (claude vs control): 1 broken flip - claude passed the
-task pi failed. No rescued flips, no both-pass.
+### Paired outcomes
 
-### Pi's near miss
+Claude Code compared with Pi:
 
-Pi scored 23/24. Every pass-to-pass test held (no regressions), and 16
-of 17 fail-to-pass tests flipped green. One fail-to-pass test stayed
-red:
+| outcome | count | tasks |
+|---|---:|---|
+| rescued | 1 | `boa-hierarchical-evaluation-cancellation` |
+| broken | 0 | — |
+| both pass | 0 | — |
+| both fail | 0 | — |
 
-```
+This corrects the earlier label in this file: Claude passing a task that Pi
+failed is a **rescue**, not a break.
+
+### Task-level evidence
+
+Pi reached 23/24 verifier tests. All seven pass-to-pass tests remained green, and
+16 of 17 fail-to-pass tests turned green. The remaining failure was:
+
+```text
 [f2p] boa_engine: tests::evaluation::
   cancelled_session_jobs_are_skipped_but_unrelated_jobs_still_run
 ```
 
-The semantic gap is precise: pi's implementation got cancellation to
-stop execution, propagate reasons to children, and reject enqueueing
-onto cancelled handles - but its job-skipping path did not preserve
-the "unrelated jobs still run" invariant when a session is cancelled.
-Under DeepSWE's all-or-nothing verifier that is reward 0.0 despite a
-~96% correct implementation. This is exactly the near-miss band the
-medium difficulty label targets, and it is the most useful single
-data point of the smoke: the arms differ by one semantic edge case,
-not by capability.
+The gap is narrow. Pi implemented cancellation, reason propagation, and
+rejection of enqueueing onto cancelled handles, but its job-skipping behavior
+did not preserve the invariant that unrelated jobs continue running after a
+session is cancelled.
 
-Claude Code passed all 17 fail-to-pass and all 7 pass-to-pass tests.
+DeepSWE scores the task all-or-nothing, so that one semantic edge case produces
+reward 0.0. Claude Code passed all 24 tests.
 
-### Behavioral notes (n=1, anecdotal)
+### Implications
 
-- Claude burned ~2x pi's cached input (5.1M vs 2.7M) and took 6
-  minutes longer; thinking contributed 15.8k of its 50k output.
-- Pi's failure mode was semantic (one edge case), not mechanical: no
-  errors, no empty patch, no timeout.
-- Claude's transcript shows heartbeat keep-alives during long rust
-  builds; wall-time comparisons on build-heavy tasks carry that noise.
+The useful result is not “Claude won 1-0.” The sample is far too small for that.
 
-### Telemetry provenance (incident disclosure)
+The useful result is that two harnesses running the same model reached nearly
+the same implementation, and the final difference was one semantic edge case.
+That makes this task a good example of the near-miss region where harness
+behavior, tool ergonomics, prompt wiring, or simple run variance may decide the
+verdict.
 
-The claude arm's token/cost cells initially reported zero. Cause:
-Claude Code writes its transcript and `.claude.json` mode 0600/0700
-as the container user; pier's host-side relocate preserved that, so
-the ATIF converter failed with PermissionError and silently dropped
-all metrics. Fixed in `f628ec7` (scan tolerance) and `c8a134a`
-(container-side chmod after agent exit). The numbers above were then
-recovered from this same trial's artifacts: transcript converted with
-pier's own ATIF converter, metrics folded into `result.json`, report
-regenerated. Nothing was re-run; the pass/fail verdicts were never in
-question. Cost is Claude Code's list-price accounting; actual gateway
-cost differs.
+The resource shape is also worth tracking on a larger run. Claude used about
+twice Pi's cached input, generated more output, made more tool calls, and took
+six minutes longer. At `n=1` those numbers are descriptive, not a stable cost
+ratio.
 
-### Interpretation
+### Caveats and provenance
 
-- n=1: no ranking signal. The single paired flip is consistent with
-  harness differences in prompt wiring, tool ergonomics, or luck.
-- Next step when resuming this experiment: set `include = ["*"]` in
-  `pi-vs-claude-bare.toml` for the 30-task `luna-signal` screen,
-  `per_variant = 2`. Expect roughly $140-200 list-price for the
-  claude arm at this per-task cost.
-- Watch item: whether pi's near-miss pattern (many tests green, one
-  semantic edge case red) repeats on other tasks; all-or-nothing
-  verifiers punish it disproportionately.
+Claude's token and cost cells initially appeared as zero. Claude Code wrote its
+transcript and `.claude.json` with restrictive permissions, and Pier preserved
+those permissions during host-side relocation. The ATIF converter then failed
+with `PermissionError` and silently dropped the metrics.
+
+The scan was fixed in `f628ec7`, and container-side permissions were fixed in
+`c8a134a`. The values above were recovered from the original trial artifacts by
+converting the transcript with Pier's ATIF converter and folding the metrics
+back into `result.json`. The task was not rerun, and the pass/fail verdicts did
+not change.
+
+Claude cost is Claude Code's list-price accounting. Actual gateway cost may
+differ.
+
+Long Rust builds also produced heartbeat keep-alives in the Claude transcript,
+so wall-time differences on build-heavy tasks include some harness/runtime
+noise.
 
 ### Reproduce
 
@@ -439,54 +563,65 @@ roastmyharness run pi-vs-claude-bare.toml
 roastmyharness watch <run-id>
 ```
 
-Requires `GATEWAY_API_KEY` exported, docker running, and the
-`ad-hoc/claude-bare` branch (Claude arm support is not on main).
+Requires `GATEWAY_API_KEY`, Docker, and the `ad-hoc/claude-bare` branch. Claude
+arm support is not on main.
 
 ---
 
-
-
 ## Pi bare vs OMP bare (partial, cancelled)
 
-The first cross-agent comparison in this log, and the run that drove
-omp support (`1d285a6`). Both arms ran the SAME model at the SAME
-thinking level, so arm differences isolate the harness plumbing. The
-run was cancelled partway, so the omp column is partial - disclosed
-here rather than dropped.
+### Summary
 
-### Identity
+This was the first cross-agent comparison in the log and the run that drove OMP
+support.
+
+On the four tasks completed by both arms, Pi resolved 2/4 and OMP resolved 1/4.
+The stronger finding is not the score difference. OMP used about 3.3× as much
+cached input, about 1.9× as many agent steps, and about 1.7× the wall time, while
+not producing an extra pass in the matched sample.
+
+The run was cancelled before OMP reached five of the nine tasks, so outcome
+ranking would overstate what the data can support.
+
+### Record
 
 | field | value |
 |---|---|
-| Run id | `omp-9task-53a89fc3` (9-task) + `omp-live-smoke-16a9f2f7` (smoke) |
-| Date | 2026-08-28 |
-| Harness | roastmyharness 0.1.0, pier 0.3.x, schema v1 (pre-catalog, pre-bundled corpus) |
-| Model (both arms) | `gpt-5.6-luna` (same hosted gateway as every other section) |
-| Thinking (both arms) | `high` |
-| Pi arm | pi 0.84.3 |
-| OMP arm | oh-my-pi (omp) 18.0.9, first omp support (`1d285a6`) |
-| Task corpus | DeepSWE via external DSE-tests checkout (pre-bundling), 9 hand-picked tasks |
-| Status | CANCELLED at 20:27 UTC; control finished 7/9, omp 4/9 |
-| Run dir | `~/.roastmyharness/runs/omp-9task-53a89fc3` |
+| run_id | `omp-9task-53a89fc3` |
+| precursor_smoke_run | `omp-live-smoke-16a9f2f7` |
+| date | 2026-08-28 |
+| status | CANCELLED |
+| harness | roastmyharness 0.1.0, pier 0.3.x, schema v1 |
+| model | `gpt-5.6-luna` |
+| thinking | `high` |
+| pi_version | 0.84.3 |
+| omp_version | oh-my-pi 18.0.9 |
+| corpus | DeepSWE via external DSE-tests checkout |
+| task_count | 9 hand-picked |
+| completed_by_pi | 7/9 |
+| completed_by_omp | 4/9 |
+| matched_tasks | 4 |
+| run_dir | `~/.roastmyharness/runs/omp-9task-53a89fc3` |
+
+This predates the bundled corpus, catalog, and current experiment schema.
 
 ### Design
 
-Nine DeepSWE tasks across TypeScript (awilix, clack, happy-dom), Go
-(etree), Python (httpx, ipython), and rendering/parsers (katex),
-`per_variant = 2`, bare control enabled, no repetitions. This predates
-presets and the catalog: tasks were listed explicitly in the spec.
+The nine tasks covered TypeScript, Go, Python, rendering, and parser work.
+`per_variant = 2`; the control was enabled; there were no repetitions.
 
-Fairness contracts (bare means bare):
+The model, thinking level, instruction, container image, egress allowlist, and
+git identity were shared across the arms. The bare-harness contracts were:
 
 | arm | contract |
 |---|---|
-| pi control | `-nc --no-skills --no-prompt-templates --no-themes`, no extensions, no skills |
-| omp | `--no-skills` plus staged `config.yml` disabling implicit provider-config auto-load; Bun pinned because task images shadow it |
+| Pi bare | `-nc --no-skills --no-prompt-templates --no-themes`, no extensions, no skills |
+| OMP bare | `--no-skills` plus staged `config.yml` disabling implicit provider-config auto-load; Bun pinned because task images shadow it |
 
-Both arms ran the identical instruction, container image, egress
-allowlist, and git identity.
+As with the Claude smoke, holding the model constant removes model choice as a
+confound but does not eliminate run variance.
 
-### Results (4 matched tasks; 3 control-only, 2 never started)
+### Results
 
 | task | pi | omp | pi f2p | omp f2p | verdict |
 |---|---|---|---|---|---|
@@ -508,86 +643,100 @@ optique, numba.
 | Wall time (sum) | 58m | 101m (1.7x) |
 | Errors / timeouts / empty patches | 0 | 0 |
 
-Per-task cached-input ratio omp/pi: 2.75x, 6.58x, 3.79x, 2.85x -
-omp's context amplification is consistent, not one outlier.
+OMP's cached-input amplification is present on every matched task. The per-task
+OMP/Pi ratios are 2.75×, 6.58×, 3.79×, and 2.85×, so the aggregate 3.3× ratio is
+not being driven by one isolated outlier.
 
-Paired flips (omp vs pi): 1 broken (etree), 0 rescued, 1 both-pass,
-2 both-fail.
+### Paired outcomes
 
-### The broken flip: etree one test short
+OMP compared with Pi on the four matched tasks:
 
-omp scored 51/52 on etree-xml-diff-patch and lost the task on a single
-fail-to-pass test:
+| outcome | count | tasks |
+|---|---:|---|
+| rescued | 0 | — |
+| broken | 1 | `etree-xml-diff-patch` |
+| both pass | 1 | `happy-dom-abort-pending-body-reads` |
+| both fail | 2 | `awilix-async-container-initialization`, `clack-async-autocomplete-options` |
 
-```
+Three tasks were completed only by Pi before cancellation: `httpx` (FAIL,
+114/115), `ipython` (PASS), and `katex` (FAIL, 92/94). `optique` and `numba`
+never started on either arm.
+
+### Task-level evidence
+
+#### `etree-xml-diff-patch`
+
+OMP reached 51/52 tests and failed one fail-to-pass case:
+
+```text
 [f2p] github.com/beevik/etree.TestMerge3WayStructuralConflict
 ```
 
-pi passed all 52. Same shape as pi's near miss in the Claude smoke:
-an all-or-nothing verifier turns one semantic edge case (three-way
-merge conflict resolution here) into reward 0.0 despite a ~98% correct
-implementation.
+Pi passed all 52. This is another all-or-nothing near miss: a single semantic
+edge case in three-way merge conflict resolution changed the task verdict.
 
-### Both-fail anatomy
+#### Both-fail tasks
 
-- awilix: pi missed exactly one test ("allows scope.initialize()
-  without calling parent.initialize"); omp missed that same test plus
-  "initialization failure triggers rollback leaves container in failed
-  state". Strictly worse by one test, same semantic neighborhood.
-- clack: pi missed 3, omp missed 10 - a cluster of AbortController,
-  retry, and loading-state semantics ("AbortError from fetch is
-  silently swallowed", "loading remains true between retries", ...).
-  omp reached 102 steps vs pi's 32 and still left more of the
-  cluster red: its extra activity did not convert into coverage.
+On `awilix`, Pi missed one test:
+`allows scope.initialize() without calling parent.initialize`. OMP missed that
+same test plus
+`initialization failure triggers rollback leaves container in failed state`.
 
-### The smoke that preceded it
+On `clack`, Pi missed 3 tests and OMP missed 10. The failures cluster around
+AbortController, retry, and loading-state semantics. OMP took 102 steps versus
+Pi's 32 but still left more of that cluster unresolved.
 
-`omp-live-smoke-16a9f2f7` (same day, one task:
-ofetch-per-origin-circuit-breaker): both arms PASS 60/60 (47 f2p + 13
-p2p). pi 9.5m wall, 1.9M cached input, 42 steps; omp 19.7m wall, 5.2M
-cached input (2.7x), 63 steps. Identical verdicts, so the smoke only
-validated plumbing - and foreshadowed the token/steps gap the 9-task
-run then measured.
+The extra activity therefore did not translate into better coverage on these
+matched failures.
 
-### Behavioral notes
+### Precursor smoke
 
-- omp's stable signature: ~3x pi's cached input, ~1.9x the steps,
-  ~1.2x the output, ~1.7-2.1x the wall time, on every matched task.
-  Its session/prompt wiring re-reads far more context per turn; the
-  extra turns are mostly verification and re-checking.
-- pi's failures were never mechanical: no timeouts, no empty patches,
-  no infra errors on either arm. Every miss was a semantic test gap.
-- All four arms' failures sit in async-lifecycle semantics (abort,
-  retry, rollback, cleanup) - the shared model likely drives the
-  shared blind spots; the harness shapes only how far it gets.
+The same-day smoke run, `omp-live-smoke-16a9f2f7`, used
+`ofetch-per-origin-circuit-breaker`.
 
-### Telemetry provenance
+Both arms passed all 60 tests. Pi took 9.5 minutes, used 1.9M cached-input
+tokens, and recorded 42 steps. OMP took 19.7 minutes, used 5.2M cached-input
+tokens (2.7×), and recorded 63 steps.
 
-The run was cancelled before finalize, so no summary/report was
-generated at run time. All numbers here were reconciled 2026-09-09
-from the raw trial artifacts (result.json, verifier/ctrf.json,
-verifier/reward.json) with `.agents/artifacts/omp_deep_dive.py`; wall
-times come from result.json started_at/finished_at. Nothing was
-re-run; pass/fail verdicts were never in question. Gaps at this
-harness vintage, disclosed: reasoning-token split and tool-call counts
-were not captured by the adapter payload, and `peak_context_tokens`
-is unusable (same telemetry issue as the token-baseline section).
+That smoke did what a smoke test should do: it validated the OMP plumbing. It
+also foreshadowed the higher context and step count later seen across the four
+matched tasks.
 
-### Interpretation
+### Implications
 
-- n=4 matched: no ranking signal, and the cancelled tail means the
-  omp arm never saw 5 of 9 tasks. Treat this as a plumbing-validating
-  first cross-agent run with one usable paired flip.
-- The robust finding is cost shape, not outcomes: omp trades ~3x
-  context and ~2x wall time for activity that did not convert into
-  extra passes here - and its one extra missed test (etree) decided
-  the only flip.
-- The near-miss band (one red test on an all-or-nothing verifier) has
-  now appeared in both cross-agent smokes; it is the recurring shape
-  of harness differences at this scale.
-- If resumed today: rebuild the spec on schema v2 against the bundled
-  corpus with `preset = "luna-signal"` and `repetitions >= 1`; the
-  stored run's identity hashes are not comparable to current runs.
+There is not enough completed task coverage to rank Pi and OMP.
+
+There **is** a repeatable cost-shape signal in this sample. Across the matched
+tasks and the precursor smoke, OMP reprocessed substantially more context, took
+more steps, and ran longer. Those extra turns did not create an additional pass
+in the four-task matched set.
+
+The semantic misses also cluster in similar async lifecycle areas across both
+arms. That suggests the shared model is responsible for at least some of the
+common blind spots, while the harness changes how much work the model does
+around them.
+
+The recurring one-test near misses on strict all-or-nothing verifiers are worth
+tracking in future harness comparisons. At this scale, a harness difference may
+show up as one edge case rather than a broad capability gap.
+
+### Caveats and provenance
+
+The run was cancelled before finalization, so no summary/report was generated at
+run time.
+
+The numbers here were reconciled on 2026-09-09 from the original trial
+artifacts: `result.json`, `verifier/ctrf.json`, and `verifier/reward.json`, using
+`.agents/artifacts/omp_deep_dive.py`. Wall times come from
+`result.json` start/finish timestamps. Nothing was rerun, and the recorded
+pass/fail verdicts were not changed.
+
+This harness version did not capture the reasoning-token split or tool-call
+counts in the adapter payload. `peak_context_tokens` is also unusable for the
+same telemetry reason described in the token-baseline section.
+
+Because this run predates the current bundled corpus and schema, its identity
+hashes should not be compared directly with current experiments.
 
 ### Reproduce
 
@@ -596,18 +745,93 @@ python3 .agents/artifacts/omp_deep_dive.py   # per-trial metrics + flips
 roastmyharness status omp-9task-53a89fc3     # matrix (from the merged DB)
 ```
 
-Run data lives under `~/.roastmyharness/runs/`; the DB row was
-migrated with run_dir rewritten, so status/report work from the new
-home.
+The run data lives under `~/.roastmyharness/runs/`. The database row was migrated
+with `run_dir` rewritten, so status/report commands resolve against the new
+location.
 
 ---
 
+## Adding a new experiment
 
+Add new experiments above the older ones and keep the same section order when it
+fits the run.
 
-## Adding a new experiment section
+### Summary
 
-Append above the oldest section. Minimum fields: run id, date, spec
-file, branch/harness versions, model and thinking per arm, task
-corpus and scale, results table, paired flips, interpretation, and
-any incident affecting the numbers. Disclose telemetry gaps and
-post-hoc recoveries inline - never silently.
+Write two or three short paragraphs answering:
+
+- What changed?
+- What is the strongest result?
+- What should **not** be concluded from this sample?
+
+### Record
+
+Use a two-column `field | value` table. Prefer these field names when applicable:
+
+| field | expected value |
+|---|---|
+| `run_id` | immutable run identifier |
+| `date` | run date |
+| `status` | COMPLETE, CANCELLED, partial, etc. |
+| `spec` | experiment spec filename |
+| `branch` | branch or commit context when relevant |
+| `harness` | RoastMyHarness / Pier versions |
+| `model` | provider/model or model id |
+| `thinking` | thinking level |
+| `pi_version` | Pi version when relevant |
+| `corpus` | benchmark corpus |
+| `preset` | named task preset |
+| `task_count` | number of intended tasks |
+| `matched_tasks` | tasks with comparable results across arms |
+| `repetitions` | repetitions per task/arm |
+| `run_dir` | stored run path when useful |
+
+Extra experiment-specific fields are fine, but reuse the same field name for the
+same concept across sections.
+
+### Design
+
+State what changed between arms and what was held constant. If “bare” has a
+specific contract, record it in a table.
+
+### Results
+
+Keep measured values in Markdown tables with stable column names. Do not mix
+interpretation into metric cells. Put units in either the column name or the
+value consistently.
+
+### Paired outcomes
+
+Use this schema whenever there is a control/comparison arm:
+
+| outcome | count | tasks |
+|---|---:|---|
+| rescued |  |  |
+| broken |  |  |
+| both pass |  |  |
+| both fail |  |  |
+
+If replicates disagree, add a `split` row instead of forcing a verdict.
+
+### Task-level evidence
+
+Use this only for flips or failures that materially explain the experiment.
+Prefer a table when several tasks are discussed.
+
+### Implications
+
+Separate observed facts from interpretation. State the narrowest conclusion the
+data supports first, then the limits imposed by sample size, variance, or
+benchmark design.
+
+### Caveats and provenance
+
+Record cancellations, concurrent runs, telemetry gaps, post-hoc recovery, or
+anything else that could change how the numbers should be read. Keep these
+disclosures inline with the experiment rather than in a separate hidden log.
+
+### Reproduce
+
+Record the exact command or analysis script when one exists. If an old run
+cannot be reproduced cleanly under the current schema, say so instead of
+inventing an equivalent command.
