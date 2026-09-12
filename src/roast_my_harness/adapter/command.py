@@ -27,6 +27,29 @@ EVENT_STAMPER = (
     ".on('line',l=>process.stdout.write(Date.now()+' '+l+'\\n'))\""
 )
 
+# Flags that take a value. Pi rejects the --flag=value form for these
+# (verified: `--tools=bash` exits with `Unknown option: --tools` while
+# `--tools bash` works), so build_run_command expands them to two tokens.
+_VALUE_FLAGS = frozenset({
+    "--append-system-prompt",
+    "--system-prompt",
+    "--tools",
+    "--exclude-tools",
+})
+
+
+def normalize_extra_flags(extra_flags: list[str]) -> list[str]:
+    """Expand --flag=value into --flag value for value-taking flags."""
+    normalized: list[str] = []
+    for flag in extra_flags:
+        if flag.startswith("--") and "=" in flag:
+            name, value = flag.split("=", 1)
+            if name in _VALUE_FLAGS and value:
+                normalized.extend([name, value])
+                continue
+        normalized.append(flag)
+    return normalized
+
 
 def skill_flags(skills: list[str]) -> str:
     """One --skill flag per declared skill; never load implicit skills."""
@@ -66,7 +89,7 @@ def build_run_command(
     if flags:
         parts.append(flags)
     parts.append(f"--session-dir {SESSION_BASE_DIR}/{SESSIONS_DIR}")
-    for flag in extra_flags:
+    for flag in normalize_extra_flags(extra_flags):
         parts.append(shlex.quote(flag))
     parts.append(shlex.quote(instruction))
     parts.append("</dev/null")

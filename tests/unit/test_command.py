@@ -81,4 +81,13 @@ def test_bash_only_flags_follow_fairness():
     )
     fairness_at = command.index("--no-skills --no-prompt-templates --no-themes")
     assert command.index("--no-builtin-tools") > fairness_at
-    assert command.index("--tools=bash") > fairness_at
+    assert command.index("--tools bash") > fairness_at
+    assert "--tools=bash" not in command
+
+
+def test_equals_form_expands_to_space_form():
+    from roast_my_harness.adapter.command import normalize_extra_flags
+
+    assert normalize_extra_flags(["--tools=bash"]) == ["--tools", "bash"]
+    assert normalize_extra_flags(["--tools", "bash"]) == ["--tools", "bash"]
+    assert normalize_extra_flags(["--no-builtin-tools"]) == ["--no-builtin-tools"]

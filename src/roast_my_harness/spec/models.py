@@ -26,6 +26,12 @@ ALLOWED_PI_FLAGS = {
     "--no-builtin-tools",
     "--no-tools",
 }
+_VALUE_PI_FLAGS = frozenset({
+    "--append-system-prompt",
+    "--system-prompt",
+    "--tools",
+    "--exclude-tools",
+})
 _FAIRNESS_FLAG_NAMES = frozenset(FAIRNESS_FLAGS.split())
 _CONSTRUCTION_PI_FLAGS = {
     "--no-context-files",
@@ -227,14 +233,37 @@ class VariantSpec(BaseModel):
     @field_validator("pi_flags")
     @classmethod
     def _allowlisted_flags(cls, value: list[str]) -> list[str]:
-        for flag in value:
+        i = 0
+        while i < len(value):
+            flag = value[i]
+            if "=" in flag and flag.startswith("-"):
+                name, inline = flag.split("=", 1)
+                if any(ch.isspace() for ch in name):
+                    raise ValueError(f"pi_flags entries must be single tokens, got {flag!r}")
+                if name in _VALUE_PI_FLAGS:
+                    if not inline:
+                        raise ValueError(f"pi_flags entry {flag!r} needs a value")
+                    i += 1
+                    continue
+                if name in RESERVED_PI_FLAGS:
+                    raise ValueError(f"pi_flags entry {flag!r} conflicts with harness-controlled flags")
+                if name in ALLOWED_PI_FLAGS:
+                    raise ValueError(f"pi_flags entry {flag!r} takes no value; pass {name!r} alone")
+                raise ValueError(f"pi_flags entry {flag!r} not allowlisted: {sorted(ALLOWED_PI_FLAGS)}")
             if any(ch.isspace() for ch in flag):
                 raise ValueError(f"pi_flags entries must be single tokens, got {flag!r}")
-            name = flag.split("=", 1)[0]
-            if name in RESERVED_PI_FLAGS:
+            if flag in _VALUE_PI_FLAGS:
+                if i + 1 >= len(value) or value[i + 1].startswith("-") or not value[i + 1]:
+                    raise ValueError(f"pi_flags entry {flag!r} needs a following value token")
+                i += 2
+                continue
+            if flag in RESERVED_PI_FLAGS:
                 raise ValueError(f"pi_flags entry {flag!r} conflicts with harness-controlled flags")
-            if name not in ALLOWED_PI_FLAGS:
-                raise ValueError(f"pi_flags entry {flag!r} not allowlisted: {sorted(ALLOWED_PI_FLAGS)}")
+            if flag not in ALLOWED_PI_FLAGS:
+                if flag.startswith("-"):
+                    raise ValueError(f"pi_flags entry {flag!r} not allowlisted: {sorted(ALLOWED_PI_FLAGS)}")
+                raise ValueError(f"pi_flags value {flag!r} must follow a value flag: {sorted(_VALUE_PI_FLAGS)}")
+            i += 1
         return value
 
 class TaskSelection(BaseModel):

@@ -280,3 +280,23 @@ def test_non_allowlisted_flag_rejected():
 def test_allowed_pi_flags_accepted():
     variant = VariantSpec(id="a", pi_flags=["--no-builtin-tools", "--tools=fs"])
     assert variant.pi_flags == ["--no-builtin-tools", "--tools=fs"]
+
+
+def test_split_value_flag_accepted():
+    variant = VariantSpec(id="a", pi_flags=["--no-builtin-tools", "--tools", "bash"])
+    assert variant.pi_flags == ["--no-builtin-tools", "--tools", "bash"]
+
+
+def test_dangling_value_flag_rejected():
+    with pytest.raises(ValueError, match="needs a following value"):
+        VariantSpec(id="a", pi_flags=["--tools"])
+
+
+def test_stray_value_rejected():
+    with pytest.raises(ValueError, match="must follow a value flag"):
+        VariantSpec(id="a", pi_flags=["bash"])
+
+
+def test_boolean_flag_with_value_rejected():
+    with pytest.raises(ValueError, match="takes no value"):
+        VariantSpec(id="a", pi_flags=["--no-builtin-tools=true"])
