@@ -300,6 +300,60 @@ inspect score, flips, and cost
 
 RoastMyHarness stays out of the normal Pi session until you invoke it. It does not permanently add a pile of benchmarking tools to the model's everyday context just because the extension is installed.
 
+## How easy is it?
+
+You type one command.
+
+```text
+/roastmyharness
+```
+
+The wizard asks six short questions. Pi writes the config file. Pi runs the analysis. You answer prompts and review the result.
+
+The extension adds nothing to your everyday harness. It hides its two tools (`submit_roast_experiment` and `await_roast_experiment`) when the session starts. It exposes them only while the wizard runs. It rejects calls outside the wizard. Your normal Pi session keeps its tools, context, and behavior unchanged.
+
+The walkthrough below uses a real run. It tests a third-party extension against bare Pi.
+
+1. Describe the variant.
+
+   ![Step 1 - describe the variant](.agents/artifacts/Screenshot_20260912_132847.png)
+
+   You enter `https://github.com/dietrichgebert/ponytail`. You use a GitHub URL because you want to test a real extension without downloading it by hand. Pi clones the repo into its cache and records the address and commit for you. The header shows the cost of asking: 3 of 15 tools active and about 1.1k harness tokens.
+
+2. Pick the model.
+
+   ![Step 2 - pick the model](.agents/artifacts/Screenshot_20260912_133108.png)
+
+   You pick `openai-codex/gpt-5.6-luna (recommended)`. You pick Luna because the curated sets target it. A mid-range score leaves room to see both rescues and breaks.
+
+3. Pick the thinking level.
+
+   ![Step 3 - pick the thinking level](.agents/artifacts/Screenshot_20260912_133147.png)
+
+   You pick `high`. You match the Luna High reference data. This choice keeps the run comparable with published baselines.
+
+4. Pick the control.
+
+   ![Step 4 - pick the control](.agents/artifacts/Screenshot_20260912_133158.png)
+
+   You pick `Fresh control`. You want a clean bare-Pi baseline for the same model and thinking level. The wizard also offers a historic baseline and a no-control option.
+
+5. Pick the tasks and repetitions.
+
+   ![Step 6 - pick repetitions](.agents/artifacts/Screenshot_20260912_133227.png)
+
+   You pick `1 (single run)`. You start with one repetition because you verify plumbing before you spend compute. The wizard pairs this with a small task set. The review below resolves to one smoke-test task.
+
+6. Review and launch.
+
+   ![Review the generated TOML and launch](.agents/artifacts/Screenshot_20260912_133351.png)
+
+   Pi writes the experiment TOML for you. The draft sets `schema_version = 3`. It records your model, thinking, task path, and repetition count. It derives the variant id (`ponytail`) and the staged extension path and entry file. It validates the file and reports `2 trials (1 task x 2 arms x 1 repetition)`. You select `Yes` to launch. You select `No` to edit the TOML and resubmit.
+
+Pi handles the rest. It streams live progress. It posts the run card and charts. It reads `report.md` and `summary.csv` from the run directory. It reports resolve rate per variant, cost and timing deltas, behavior deltas, and the paired rescue-versus-break list. It inspects trial logs for fidelity and closes with a results verdict and a fidelity verdict.
+
+You never hand-write TOML unless you want to.
+
 ---
 
 ## A sensible first workflow
