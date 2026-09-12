@@ -69,20 +69,16 @@ jobs:
         run: |
           export HOME=/tmp/wheelhome PATH=/tmp/wheelcheck/bin:$PATH
           mkdir -p /tmp/wheelwork && cd /tmp/wheelwork
-          /tmp/wheelcheck/bin/roastmyharness setup --agent pi --scope user
+          /tmp/wheelcheck/bin/roastmyharness setup --scope user
+          test -f /tmp/wheelhome/.pi/agent/extensions/roastmyharness.ts
+          test -f /tmp/wheelhome/.pi/agent/extensions/roastmyharness/extension.ts
       - name: Bundled discovery
         run: |
           export HOME=/tmp/wheelhome PATH=/tmp/wheelcheck/bin:$PATH
           cd /tmp/wheelwork
-          /tmp/wheelcheck/bin/roastmyharness profiles
-          /tmp/wheelcheck/bin/roastmyharness tool catalog | /tmp/wheelcheck/bin/python -c "import json,sys; d=json.load(sys.stdin); assert d['task_count'] > 100, d; print('catalog ok:', d['task_count'], 'tasks')"
-      - name: Generated-eval discovery from the wheel
-        run: |
-          export HOME=/tmp/wheelhome PATH=/tmp/wheelcheck/bin:$PATH
-          cd /tmp/wheelwork
-          EVAL=$(/tmp/wheelcheck/bin/python -c "from roast_my_harness import setup as s; print(s.bundled_root() / 'examples/evals/structured-output/tasks')")
-          /tmp/wheelcheck/bin/roastmyharness eval validate "$EVAL"
-          /tmp/wheelcheck/bin/roastmyharness tool catalog --tasks "$EVAL" | /tmp/wheelcheck/bin/python -c "import json,sys; d=json.load(sys.stdin); assert d['eval']['id'] == 'structured-output', d; print('eval catalog ok:', d['eval']['id'], d['task_count'], 'tasks')"
+          /tmp/wheelcheck/bin/roastmyharness _bridge version
+          TASKS=$(/tmp/wheelcheck/bin/python -c "from roast_my_harness import setup as s; print(s.bundled_tasks_root())")
+          /tmp/wheelcheck/bin/roastmyharness _bridge wizard-context "$TASKS" --model openai-codex/gpt-5.6-luna --thinking high
       - name: Doctor executes without a checkout
         # No docker/auth in CI, so a nonzero exit is expected; the gate is
         # that doctor runs and prints the table from the wheel install.
