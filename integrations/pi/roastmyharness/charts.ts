@@ -85,8 +85,13 @@ export function renderChartsCard(
 	const shown = expanded ? details.images : details.images.slice(0, 1);
 	const card = new Container();
 	card.addChild(new Text(lines.join("\n"), 0, 0));
+	// Image expects ImageTheme { fallbackColor }, not the full Pi Theme.
+	// Pi core adapts it as { fallbackColor: (s) => theme.fg("muted", s) };
+	// passing the Theme through directly crashes on terminals without image
+	// support when Image.render takes the fallback path.
+	const imageTheme = { fallbackColor: (text: string) => theme.fg("muted", text) };
 	for (const image of shown) {
-		card.addChild(new Image(image.base64, "image/png", theme as never, { maxWidthCells: 80, maxHeightCells: 24 }));
+		card.addChild(new Image(image.base64, "image/png", imageTheme, { maxWidthCells: 80, maxHeightCells: 24 }));
 	}
 	return card;
 }
