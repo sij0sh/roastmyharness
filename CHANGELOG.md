@@ -30,6 +30,17 @@ for one model/thinking combo.
 `control_retention` (default false; true lifts the control size cap and
 keeps only the per-group prune). Legacy `max_size` still feeds the
 variant cap. `enabled = false` keeps everything, as before.
+- Near-miss test columns in the tool-owned schema. `summary.csv` gains
+`f2p_total`, `f2p_passed`, `p2p_total`, `p2p_passed`, `tests_total`,
+`tests_passed`, and `partial`, promoted from the verifier rewards map.
+`summary.json` embeds a byte-reproducible `charts` series, `report.md`
+gains Near misses and Charts sections, and `analysis.md` reports mean
+partial plus near-miss counts per arm.
+- PNG chart pipeline. Finalize renders `charts/` (`resolve-rate`,
+`flips`, `near-miss`, `partial-delta`, `cost`) via matplotlib, and
+`roastmyharness charts <run>` regenerates them. The Pi extension gains
+an always-available `show_roast_charts` tool that renders the PNGs with
+the native `Image` component and keeps bytes out of model context.
 
 ### Removed
 

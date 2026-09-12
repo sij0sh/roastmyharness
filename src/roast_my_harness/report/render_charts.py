@@ -79,7 +79,7 @@ def render_near_miss(path: Path, near_miss: dict[str, Any]) -> None:
     for bucket in buckets:
         vals = [arms[n].get(bucket, 0) for n in names]
         ax.barh(y, vals, left=left, label=bucket)
-        left = [a + b for a, b in zip(left, vals)]
+        left = [a + b for a, b in zip(left, vals, strict=True)]
     ax.set_yticks(y, names or ["no data"])
     ax.set_xlabel("unresolved trials by partial credit")
     ax.legend(title="partial", fontsize=9)

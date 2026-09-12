@@ -1,12 +1,18 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { Container, Image, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	AWAIT_TOOL,
+	CHARTS_TOOL,
+	CHART_FILES,
 	SUBMIT_TOOL,
 	bridgeArgs,
 	runBridgeJson,
+	roastBinary,
 	summarize,
+	type ChartsDetails,
 	type RoastResponse,
 } from "./core.ts";
 import { RUN_CARD_TYPE, postRunCard } from "./cards.ts";
@@ -89,7 +95,7 @@ const ANALYSIS_BODY = "Read the report.md and summary.csv paths quoted above wit
 	"(2) a cost/timing table per variant (sum and mean input tokens, output tokens, cache-read tokens, cost USD, wall sec) with pct deltas vs control; " +
 	"(3) a behavior table per variant (mean tool calls, read calls, rereads, distinct files, compactions, peak context tokens) from report.md and summary.csv; " +
 	"(4) a discordant-task list from the report.md Paired flips matrix (rescued vs broken, with task names and direction). " +
-	"Then inspect trial logs under <run>/jobs/<variant>/ to judge fidelity: check result.json rewards/partial scores, verifier/reward.json, trial.log tail, and agent/pi-events.jsonl for extension-load errors, tool failures, or empty patches. " +
+	"Then inspect trial logs under <run>/jobs/<variant>/ to judge fidelity: check summary.csv partial/f2p/p2p/test columns, result.json rewards, verifier/reward.json, trial.log tail, and agent/pi-events.jsonl for extension-load errors, tool failures, or empty patches. " +
 	"Close with two short paragraphs: results verdict (vs the spec hypothesis, with small-n caveat) and fidelity verdict (did the variant work as intended, and does any flip look caused by the variant vs task noise).";
 
 const ANALYSIS_GUIDE = `Analyze the run and report back: ${ANALYSIS_BODY}`;
@@ -110,7 +116,10 @@ function postRunText(watched: {
 			`Do not poll status in a sleep loop. Then analyze the run: ${ANALYSIS_BODY}`;
 	}
 	const lines = [head];
-	if (watched.report) lines.push(`report: ${watched.report.markdown} and ${watched.report.csv}`);
+	if (watched.report) {
+		lines.push(`report: ${watched.report.markdown} and ${watched.report.csv}`);
+		lines.push(`charts: ${dirname(watched.report.markdown)}/charts/ (view with ${CHARTS_TOOL})`);
+	}
 	if (watched.aggregates) lines.push(`aggregates: ${JSON.stringify(watched.aggregates)}`);
 	lines.push(ANALYSIS_GUIDE);
 	return lines.join("\n");
@@ -250,6 +259,75 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 			return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
+		},
+	});
+
+	pi.registerTool({
+		name: CHARTS_TOOL,
+		label: "Show roast charts",
+		description: "Render PNG comparison charts for a finished RoastMyHarness run. Pass run_dir or experiment_id. Works outside the wizard.",
+		parameters: Type.Object({
+			run_dir: Type.Optional(Type.String({ description: "Run directory with summary.json and charts/." })),
+			experiment_id: Type.Optional(Type.String({ description: "Experiment id; run dir resolves via bridge status." })),
+		}),
+		execute: async (_id, params, signal, onUpdate) => {
+			const args = params as { run_dir?: string; experiment_id?: string };
+			let runDir = args.run_dir ?? "";
+			if (!runDir && args.experiment_id) {
+				try {
+					const status = await runBridgeJson(pi, bridgeArgs("status", args.experiment_id), { signal });
+					const report = status.report as { markdown?: string } | undefined;
+					if (report?.markdown) runDir = dirname(report.markdown);
+				} catch (error) {
+					return { content: [{ type: "text", text: `charts unavailable: ${error instanceof Error ? error.message : String(error)}` }], details: {} };
+				}
+			}
+			if (!runDir) {
+				return { content: [{ type: "text", text: "charts need run_dir or experiment_id" }], details: {} };
+			}
+			onUpdate?.({ content: [{ type: "text", text: `reading charts from ${runDir}` }], details: {} });
+			try {
+				await pi.exec(roastBinary(), ["charts", runDir], { signal, timeout: 120_000 });
+			} catch {}
+			const images: { name: string; base64: string }[] = [];
+			for (const name of CHART_FILES) {
+				try {
+					const base64 = await readFile(join(runDir, "charts", name), "base64");
+					images.push({ name, base64 });
+				} catch {}
+			}
+			const summary: string[] = [];
+			const reportPath = join(runDir, "report.md");
+			try {
+				const summaryJson = JSON.parse(await readFile(join(runDir, "summary.json"), "utf8")) as {
+					charts?: { arms?: Record<string, { resolved?: number; total?: number; near_miss?: number; mean_partial?: number | null }> };
+				};
+				for (const [variant, arm] of Object.entries(summaryJson.charts?.arms ?? {})) {
+					const partial = typeof arm.mean_partial === "number" ? `, mean partial ${(100 * arm.mean_partial).toFixed(1)}%` : "";
+					summary.push(`${variant}: ${arm.resolved ?? 0}/${arm.total ?? 0} resolved, ${arm.near_miss ?? 0} near misses${partial}`);
+				}
+			} catch {}
+			const details: ChartsDetails = { runDir, reportPath, images, summary };
+			const text = summary.length ? summary.join("\n") + `\nreport: ${reportPath}` : `report: ${reportPath}`;
+			return { content: [{ type: "text", text }], details };
+		},
+		renderResult(result, { expanded, isPartial }, theme, context) {
+			const details = (result.details ?? {}) as ChartsDetails;
+			const lines = [...(details.summary ?? [])];
+			if (details.reportPath) lines.push(`report: ${details.reportPath}`);
+			if (isPartial) return new Text("Rendering charts…", 0, 0);
+			if (!context.showImages || !details.images?.length) {
+				if (!details.images?.length) lines.push("no chart PNGs; open the report markdown instead");
+				else lines.push("terminal images unsupported; open the report markdown instead");
+				return new Text(lines.join("\n"), 0, 0);
+			}
+			const shown = expanded ? details.images : details.images.slice(0, 1);
+			const card = new Container();
+			card.addChild(new Text(lines.join("\n"), 0, 0));
+			for (const image of shown) {
+				card.addChild(new Image(image.base64, "image/png", theme, { maxWidthCells: 80, maxHeightCells: 24 }));
+			}
+			return card;
 		},
 	});
 
