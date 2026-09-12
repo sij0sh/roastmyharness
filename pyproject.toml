@@ -11,6 +11,7 @@ license = "MIT"
 authors = [{ name = "RoastMyHarness" }]
 requires-python = ">=3.12"
 dependencies = [
+    "matplotlib>=3.8",
     "platformdirs>=4.3",
     "pydantic>=2.9",
     "typer>=0.15",

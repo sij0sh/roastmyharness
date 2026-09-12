@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from roast_my_harness.files import atomic_write_text
+from roast_my_harness.report.charts import NEAR_MISS_THRESHOLD, outcome_label
 from roast_my_harness.report.collect import collect_rows
 from roast_my_harness.report.dimensions import dimension_summary, has_dimensions
 from roast_my_harness.report.statistics import (
@@ -21,7 +22,7 @@ from roast_my_harness.report.statistics import (
     variant_type,
 )
 from roast_my_harness.tasks.catalog import load_catalog
-from roast_my_harness.telemetry.result import DETERMINISTIC_KEY, JUDGE_KEY
+from roast_my_harness.telemetry.result import DETERMINISTIC_KEY, JUDGE_KEY, fnum_or_none
 
 
 def task_labels(provenance: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -167,6 +168,55 @@ def generate_report(
                 lines.append("")
 
     # 4. Difficulty stratification.
+    lines.append("## Near misses\n")
+    lines.append(
+        "Unresolved non-error trials with partial >= "
+        f"{NEAR_MISS_THRESHOLD} count as near misses. "
+        "Mean partial is the mean of per-task means."
+    )
+    lines.append("| variant | near misses | mean partial | p2p regressions |")
+    lines.append("|---|---|---|---|")
+    for v in variants:
+        tasks = list(grouped[v].values())
+        valid = resolved_rows(tasks)
+        near = sum(1 for t in valid if outcome_label(t) == "near-miss")
+        partials: dict[str, list[float]] = {}
+        for t in valid:
+            value = fnum_or_none(t.get("partial"))
+            if value is None:
+                continue
+            partials.setdefault(str(t["task"]), []).append(value)
+        means = [sum(p) / len(p) for p in partials.values()]
+        mean_disp = f"{100 * sum(means) / len(means):.1f}%" if means else "—"
+        regs = 0
+        for t in valid:
+            if int(t.get("resolved") or 0) != 1:
+                continue
+            try:
+                total = int(t.get("p2p_total") or 0)
+                passed = int(t.get("p2p_passed") or 0)
+            except (TypeError, ValueError):
+                continue
+            if total and passed < total:
+                regs += 1
+        lines.append(f"| {v} | {near} | {mean_disp} | {regs} |")
+    lines.append("")
+
+    charts_dir = run_dir / "charts"
+    chart_files = [
+        "resolve-rate.png",
+        "flips.png",
+        "near-miss.png",
+        "partial-delta.png",
+        "cost.png",
+    ]
+    if any((charts_dir / name).is_file() for name in chart_files):
+        lines.append("## Charts\n")
+        for name in chart_files:
+            if (charts_dir / name).is_file():
+                lines.append(f"![{name}](charts/{name})\n")
+        lines.append("")
+
     labels = task_labels(provenance)
     strata = stratify(
         rows, labels, seed=deterministic_seed(f"{experiment_id}\0strata")

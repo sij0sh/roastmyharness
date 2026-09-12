@@ -44,6 +44,34 @@ def doctor() -> None:
         raise typer.Exit(1)
 
 
+@app.command()
+def charts(run: Path = typer.Argument(..., help="Run dir or experiment id.")) -> None:
+    from roast_my_harness.paths import run_dir as resolve_run_dir
+
+    target = resolve_run_dir(str(run)) if not run.is_dir() else run
+    summary_path = target / "summary.json"
+    try:
+        payload = json.loads(summary_path.read_text())
+    except (json.JSONDecodeError, OSError) as error:
+        typer.echo(f"cannot read {summary_path}: {error}", err=True)
+        raise typer.Exit(1) from error
+    rows = payload.get("trials", [])
+    provenance = payload.get("provenance", {})
+    experiment_id = str(provenance.get("experiment_id") or target.name)
+    try:
+        from roast_my_harness.report import render_charts as report_charts
+
+        series = payload.get("charts") or report_charts.chart_series_for_run(
+            target, rows, experiment_id
+        )
+        written = report_charts.render_all_charts(target, series)
+    except ImportError:
+        typer.echo("chart rendering needs matplotlib", err=True)
+        raise typer.Exit(1) from None
+    for path in written:
+        typer.echo(str(path))
+
+
 bridge_app = typer.Typer(help="Private engine protocol for the Pi extension.", hidden=True)
 app.add_typer(bridge_app, name="_bridge")
 

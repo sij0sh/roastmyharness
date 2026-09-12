@@ -909,6 +909,13 @@ class ExperimentController:
         provenance = self._provenance([])
         csv = report_exports.write_summary_csv(self.run_dir, rows)
         report_exports.write_summary_json(self.run_dir, rows, provenance)
+        try:
+            from roast_my_harness.report import render_charts as report_charts
+
+            series = report_charts.chart_series_for_run(self.run_dir, rows, self.experiment_id)
+            report_charts.render_all_charts(self.run_dir, series)
+        except Exception as error:
+            self._logger.emit("progress", state=self.state, message=f"charts unavailable: {error}")
         report = report_markdown.generate_report(
             self.run_dir,
             experiment_id=self.experiment_id,

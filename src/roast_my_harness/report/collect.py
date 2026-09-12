@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from roast_my_harness.report.charts import outcome_label
 from roast_my_harness.runner.reconcile import _attempt_seq, is_newer, replicate_of
-from roast_my_harness.telemetry.result import is_trial_dir, trial_row
+from roast_my_harness.telemetry.result import fnum_or_none, is_trial_dir, trial_row
 
 
 def scan_variant(
@@ -216,6 +217,9 @@ def aggregate_by_variant(rows: list[dict[str, Any]]) -> dict[str, dict[str, floa
                 "output_tokens": 0.0,
                 "wall_sec": 0.0,
                 "cost_usd": 0.0,
+                "partial_sum": 0.0,
+                "partial_n": 0,
+                "near_miss": 0,
             },
         )
         agg["n"] += 1
@@ -228,9 +232,21 @@ def aggregate_by_variant(rows: list[dict[str, Any]]) -> dict[str, dict[str, floa
                 agg[key] += float(row.get(key) or 0)
             except (TypeError, ValueError):
                 pass
+        if not row.get("exception_type"):
+            value = fnum_or_none(row.get("partial"))
+            if value is not None:
+                agg["partial_sum"] += value
+                agg["partial_n"] += 1
+            if outcome_label(row) == "near-miss":
+                agg["near_miss"] += 1
     for agg in out.values():
         agg["wall_sec"] = round(agg["wall_sec"], 1)
         agg["cost_usd"] = round(agg["cost_usd"], 4)
+        agg["mean_partial"] = (
+            round(agg["partial_sum"] / agg["partial_n"], 4) if agg["partial_n"] else 0.0
+        )
+        resolved = agg["resolved"]
+        agg["cost_per_resolve"] = round(agg["cost_usd"] / resolved, 4) if resolved else 0.0
     return out
 
 

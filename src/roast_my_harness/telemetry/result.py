@@ -57,6 +57,13 @@ COLUMNS = [
     "reward_deterministic",
     "reward_judge",
     "judge_model",
+    "f2p_total",
+    "f2p_passed",
+    "p2p_total",
+    "p2p_passed",
+    "tests_total",
+    "tests_passed",
+    "partial",
 ]
 
 CUSTOM_PREFIX = "cm_"
@@ -72,7 +79,16 @@ JUDGE_MODEL_KEY = "judge_model"
 """Rewards-map key naming the judge model that produced reward_judge."""
 
 DIMENSION_COLUMNS = ("reward_deterministic", "reward_judge", "judge_model")
-"""Row columns carrying scoring dimensions; appended to the CSV schema."""
+
+TEST_COLUMNS = (
+    "f2p_total",
+    "f2p_passed",
+    "p2p_total",
+    "p2p_passed",
+    "tests_total",
+    "tests_passed",
+    "partial",
+)
 
 
 def fnum_or_none(value: Any) -> float | None:
@@ -90,6 +106,39 @@ def _dim_float(value: Any) -> float | str:
     """
     parsed = fnum_or_none(value)
     return "" if parsed is None else parsed
+
+
+def _test_int(value: Any) -> int | str:
+    if value in ("", None):
+        return ""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return ""
+
+
+def split_tests(rewards: dict[str, Any]) -> dict[str, Any]:
+    f2p_total = _test_int(rewards.get("f2p_total"))
+    f2p_passed = _test_int(rewards.get("f2p_passed"))
+    p2p_total = _test_int(rewards.get("p2p_total"))
+    p2p_passed = _test_int(rewards.get("p2p_passed"))
+    if isinstance(f2p_total, int) and isinstance(p2p_total, int):
+        tests_total: int | str = f2p_total + p2p_total
+    else:
+        tests_total = ""
+    if isinstance(f2p_passed, int) and isinstance(p2p_passed, int):
+        tests_passed: int | str = f2p_passed + p2p_passed
+    else:
+        tests_passed = ""
+    return {
+        "f2p_total": f2p_total,
+        "f2p_passed": f2p_passed,
+        "p2p_total": p2p_total,
+        "p2p_passed": p2p_passed,
+        "tests_total": tests_total,
+        "tests_passed": tests_passed,
+        "partial": _dim_float(rewards.get("partial")),
+    }
 
 
 def split_dimensions(rewards: dict[str, Any]) -> dict[str, Any]:
@@ -214,6 +263,7 @@ def _row_base(result_path: Path, variant: str) -> dict[str, Any] | None:
         "reward": reward,
         "rewards": json.dumps(rewards, sort_keys=True) if rewards else "",
         **split_dimensions(rewards),
+        **split_tests(rewards),
         "exception_type": exception_type,
         "input_tokens": agent.get("n_input_tokens", ""),
         "output_tokens": agent.get("n_output_tokens", ""),

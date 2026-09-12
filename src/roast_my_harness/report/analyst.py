@@ -15,25 +15,38 @@ from pathlib import Path
 from typing import Any
 
 from roast_my_harness.files import atomic_write_text
+from roast_my_harness.report.charts import outcome_label
 from roast_my_harness.report.statistics import (
     resolved_rows,
     task_rates,
     variant_type,
 )
+from roast_my_harness.telemetry.result import fnum_or_none
 
 
 def _arm_scores(rows: list[dict]) -> dict[str, dict[str, float]]:
     """resolved/total plus the mean of per-task rates, per arm."""
     totals: dict[str, dict[str, float]] = {}
     rates = task_rates(rows)
+    partials: dict[str, dict[str, list[float]]] = {}
+    near: dict[str, float] = {}
     for row in resolved_rows(rows):
         variant = str(row["variant"])
         arm = totals.setdefault(variant, {"resolved": 0.0, "total": 0.0})
         arm["resolved"] += int(row["resolved"])
         arm["total"] += 1
+        if outcome_label(row) == "near-miss":
+            near[variant] = near.get(variant, 0.0) + 1.0
+        value = fnum_or_none(row.get("partial"))
+        if value is not None:
+            task_partials = partials.setdefault(variant, {})
+            task_partials.setdefault(str(row["task"]), []).append(value)
     for variant, arm in totals.items():
         per_task = list(rates.get(variant, {}).values())
         arm["score"] = sum(per_task) / len(per_task) if per_task else 0.0
+        task_means = [sum(v) / len(v) for v in partials.get(variant, {}).values()]
+        arm["mean_partial"] = sum(task_means) / len(task_means) if task_means else 0.0
+        arm["near_miss"] = near.get(variant, 0.0)
     return totals
 
 
@@ -125,6 +138,8 @@ def _analyze(run_dir: Path) -> dict[str, Any]:
                 "resolved": int(arm["resolved"]),
                 "total": int(arm["total"]),
                 "score": arm["score"],
+                "mean_partial": arm["mean_partial"],
+                "near_miss": int(arm["near_miss"]),
             }
             for variant, arm in sorted(arms.items())
         },
@@ -158,12 +173,13 @@ def render_markdown(payload: dict[str, Any]) -> str:
         lines.append("")
     lines.append("## Arms")
     lines.append("")
-    lines.append("| arm | type | resolved | score |")
-    lines.append("|---|---|---|---|")
+    lines.append("| arm | type | resolved | score | mean partial | near misses |")
+    lines.append("|---|---|---|---|---|---|")
     for variant, arm in payload.get("arms", {}).items():
         lines.append(
             f"| {variant} | {arm['type']} | "
-            f"{arm['resolved']}/{arm['total']} | {100 * arm['score']:.1f}% |"
+            f"{arm['resolved']}/{arm['total']} | {100 * arm['score']:.1f}% | "
+            f"{100 * arm.get('mean_partial', 0.0):.1f}% | {arm.get('near_miss', 0)} |"
         )
     lines.append("")
     best = payload.get("best_arm")
