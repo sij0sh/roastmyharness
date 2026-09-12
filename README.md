@@ -316,37 +316,43 @@ The walkthrough below uses a real run. It tests a third-party extension against 
 
 1. Describe the variant.
 
-   ![Step 1 - describe the variant](.agents/artifacts/Screenshot_20260912_132847.png)
+   ![Step 1 - describe the variant](docs/images/wizard-1-variant.png)
 
    You enter `https://github.com/dietrichgebert/ponytail`. You use a GitHub URL because you want to test a real extension without downloading it by hand. Pi clones the repo into its cache and records the address and commit for you. The header shows the cost of asking: 3 of 15 tools active and about 1.1k harness tokens.
 
 2. Pick the model.
 
-   ![Step 2 - pick the model](.agents/artifacts/Screenshot_20260912_133108.png)
+   ![Step 2 - pick the model](docs/images/wizard-2-model.png)
 
    You pick `openai-codex/gpt-5.6-luna (recommended)`. You pick Luna because the curated sets target it. A mid-range score leaves room to see both rescues and breaks.
 
 3. Pick the thinking level.
 
-   ![Step 3 - pick the thinking level](.agents/artifacts/Screenshot_20260912_133147.png)
+   ![Step 3 - pick the thinking level](docs/images/wizard-3-thinking.png)
 
    You pick `high`. You match the Luna High reference data. This choice keeps the run comparable with published baselines.
 
 4. Pick the control.
 
-   ![Step 4 - pick the control](.agents/artifacts/Screenshot_20260912_133158.png)
+   ![Step 4 - pick the control](docs/images/wizard-4-control.png)
 
    You pick `Fresh control`. You want a clean bare-Pi baseline for the same model and thinking level. The wizard also offers a historic baseline and a no-control option.
 
-5. Pick the tasks and repetitions.
+5. Pick the tasks.
 
-   ![Step 6 - pick repetitions](.agents/artifacts/Screenshot_20260912_133227.png)
+   ![Step 5 - pick the tasks](docs/images/wizard-5-tasks.png)
 
-   You pick `1 (single run)`. You start with one repetition because you verify plumbing before you spend compute. The wizard pairs this with a small task set. The review below resolves to one smoke-test task.
+   You pick `1 (smoke test)`. You start with one task because you verify plumbing before you spend compute. The wizard also offers the Luna and GLM curated sets, the full suite, and a custom count.
 
-6. Review and launch.
+6. Pick the repetitions.
 
-   ![Review the generated TOML and launch](.agents/artifacts/Screenshot_20260912_133351.png)
+   ![Step 6 - pick repetitions](docs/images/wizard-6-repetitions.png)
+
+   You pick `1 (single run)`. You start with one repetition because you run more repetitions only when a close result needs them.
+
+7. Review and launch.
+
+   ![Review the generated TOML and launch](docs/images/wizard-7-review.png)
 
    Pi writes the experiment TOML for you. The draft sets `schema_version = 3`. It records your model, thinking, task path, and repetition count. It derives the variant id (`ponytail`) and the staged extension path and entry file. It validates the file and reports `2 trials (1 task x 2 arms x 1 repetition)`. You select `Yes` to launch. You select `No` to edit the TOML and resubmit.
 
