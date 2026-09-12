@@ -2,7 +2,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const SUBMIT_TOOL = "submit_roast_experiment";
 export const AWAIT_TOOL = "await_roast_experiment";
-export const CHARTS_TOOL = "show_roast_charts";
 export const CHART_FILES = [
 	"resolve-rate.png",
 	"flips.png",
@@ -11,18 +10,6 @@ export const CHART_FILES = [
 	"cost.png",
 ];
 
-export interface ChartImage {
-	name: string;
-	base64: string;
-}
-
-export interface ChartsDetails {
-	runDir: string;
-	reportPath: string;
-	images: ChartImage[];
-	summary: string[];
-	note?: string;
-}
 export const DEFAULT_RECENT_TRIALS = 20;
 export const WATCH_INTERVAL_SEC = 2;
 export const ABORT_GRACE_MS = 3_000;
@@ -99,6 +86,8 @@ export interface WatchDetails {
 	summaries: TrialEvent[];
 	aggregates?: Record<string, Record<string, number>>;
 	report?: { markdown: string; csv: string } | null;
+	run_dir?: string;
+	charts?: { run_dir: string; files: string[] };
 	elapsed_sec?: number;
 }
 

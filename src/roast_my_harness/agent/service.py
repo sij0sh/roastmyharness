@@ -671,6 +671,15 @@ class AgentService:
                 "markdown": str(rd / "report.md"),
                 "csv": str(rd / "summary.csv"),
             }
+        charts: dict[str, Any] | None = None
+        try:
+            charts_dir = rd / "charts"
+            if charts_dir.is_dir():
+                files = sorted(p.name for p in charts_dir.glob("*.png") if p.is_file())
+                if files:
+                    charts = {"run_dir": str(rd), "files": files}
+        except OSError:
+            charts = None
         event: dict[str, Any] = {
             "event": "final",
             "experiment_id": experiment_id,
@@ -678,7 +687,10 @@ class AgentService:
             "final": state in FINAL_STATES,
             "aggregates": aggregates,
             "report": report,
+            "run_dir": str(rd),
         }
+        if charts is not None:
+            event["charts"] = charts
         if note:
             event["note"] = note
         return event
@@ -774,6 +786,13 @@ class AgentService:
                 provenance["secret_scan_hits"] = staging.scan_for_secrets(rd)
                 csv = report_exports.write_summary_csv(rd, rows)
                 report_exports.write_summary_json(rd, rows, provenance)
+                try:
+                    from roast_my_harness.report import render_charts as report_charts
+
+                    series = report_charts.chart_series_for_run(rd, rows, experiment_id)
+                    report_charts.render_all_charts(rd, series)
+                except Exception:
+                    pass
                 out = report_markdown.generate_report(
                     rd,
                     experiment_id=experiment_id,

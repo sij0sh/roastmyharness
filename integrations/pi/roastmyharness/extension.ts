@@ -1,21 +1,18 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { Container, Image, Text } from "@earendil-works/pi-tui";
+import { dirname } from "node:path";
 import { Type } from "typebox";
 import {
 	AWAIT_TOOL,
-	CHARTS_TOOL,
-	CHART_FILES,
 	SUBMIT_TOOL,
 	bridgeArgs,
 	runBridgeJson,
-	roastBinary,
 	summarize,
-	type ChartsDetails,
 	type RoastResponse,
+	type WatchDetails,
 } from "./core.ts";
 import { RUN_CARD_TYPE, postRunCard } from "./cards.ts";
+import { CHARTS_CARD_TYPE, postChartsCard, renderChartsCard } from "./charts.ts";
 import { renderRunCard, streamBridgeRun } from "./watch.ts";
 import { checkEngine, type EngineStatus } from "./versions.ts";
 import { collectWizard } from "./wizard.ts";
@@ -118,24 +115,31 @@ function postRunText(watched: {
 	const lines = [head];
 	if (watched.report) {
 		lines.push(`report: ${watched.report.markdown} and ${watched.report.csv}`);
-		lines.push(`charts: ${dirname(watched.report.markdown)}/charts/ (view with ${CHARTS_TOOL})`);
+		lines.push(`charts: ${dirname(watched.report.markdown)}/charts/ (posted automatically below)`);
 	}
 	if (watched.aggregates) lines.push(`aggregates: ${JSON.stringify(watched.aggregates)}`);
 	lines.push(ANALYSIS_GUIDE);
 	return lines.join("\n");
 }
 
+async function postFinalCards(pi: ExtensionAPI, watched: WatchDetails): Promise<void> {
+	postRunCard(pi, watched);
+	try {
+		await postChartsCard(pi, watched);
+	} catch {}
+}
+
 export default function (pi: ExtensionAPI) {
 	let wizardState: "idle" | "prompting" | "awaiting-submit" = "idle";
 
 	const wizardTools = [SUBMIT_TOOL, AWAIT_TOOL];
-	const hideSubmitTool = () => {
+	const hideRoastTools = () => {
 		const active = pi.getActiveTools();
 		if (active.some((name) => wizardTools.includes(name))) {
 			pi.setActiveTools(active.filter((name) => !wizardTools.includes(name)));
 		}
 	};
-	const showSubmitTool = () => {
+	const showRoastTools = () => {
 		const active = pi.getActiveTools();
 		const missing = wizardTools.filter((name) => !active.includes(name));
 		if (missing.length) pi.setActiveTools([...active, ...missing]);
@@ -145,7 +149,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		wizardState = "idle";
-		hideSubmitTool();
+		hideRoastTools();
 		engineStatus = await checkEngine(pi);
 		if (engineStatus.kind === "missing") {
 			ctx.ui.notify(`RoastMyHarness engine missing. ${engineStatus.hint}`, "error");
@@ -207,14 +211,14 @@ export default function (pi: ExtensionAPI) {
 				const watched = await streamBridgeRun(["_bridge", "run", planId], planId, signal, (text, details) => {
 					onUpdate?.({ content: [{ type: "text", text }], details });
 				});
-				postRunCard(pi, watched);
+				await postFinalCards(pi, watched);
 				launchedFinal = watched.final;
 				return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
 			} finally {
 				ctx.ui.setStatus(WIDGET_ID, undefined);
 				if (launchedFinal) {
 					wizardState = "idle";
-					hideSubmitTool();
+					hideRoastTools();
 				}
 			}
 		},
@@ -225,7 +229,7 @@ export default function (pi: ExtensionAPI) {
 		label: "Wait for roast experiment",
 		description: "Block until a roast experiment reaches a final state, with live progress. Use instead of polling status in a sleep loop.",
 		parameters: Type.Object({ experiment_id: Type.String({ description: "Experiment id from the submit step." }) }),
-		execute: async (_id, params, signal, onUpdate, ctx) => {
+		execute: async (_id, params, signal, onUpdate, _ctx) => {
 			if (wizardState === "idle") {
 				throw new Error(`${AWAIT_TOOL} is only valid during the active /roastmyharness wizard`);
 			}
@@ -239,15 +243,15 @@ export default function (pi: ExtensionAPI) {
 			} catch (error) {
 				return { content: [{ type: "text", text: `wait failed: ${error instanceof Error ? error.message : String(error)}` }], details: {} };
 			}
-			postRunCard(pi, watched);
+			await postFinalCards(pi, watched);
 			if (watched.final) {
 				wizardState = "idle";
-				hideSubmitTool();
+				hideRoastTools();
 				return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
 			}
 			if (watched.note?.includes("worker not running")) {
 				wizardState = "idle";
-				hideSubmitTool();
+				hideRoastTools();
 				return {
 					content: [{
 						type: "text",
@@ -259,75 +263,6 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 			return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
-		},
-	});
-
-	pi.registerTool({
-		name: CHARTS_TOOL,
-		label: "Show roast charts",
-		description: "Render PNG comparison charts for a finished RoastMyHarness run. Pass run_dir or experiment_id. Works outside the wizard.",
-		parameters: Type.Object({
-			run_dir: Type.Optional(Type.String({ description: "Run directory with summary.json and charts/." })),
-			experiment_id: Type.Optional(Type.String({ description: "Experiment id; run dir resolves via bridge status." })),
-		}),
-		execute: async (_id, params, signal, onUpdate) => {
-			const args = params as { run_dir?: string; experiment_id?: string };
-			let runDir = args.run_dir ?? "";
-			if (!runDir && args.experiment_id) {
-				try {
-					const status = await runBridgeJson(pi, bridgeArgs("status", args.experiment_id), { signal });
-					const report = status.report as { markdown?: string } | undefined;
-					if (report?.markdown) runDir = dirname(report.markdown);
-				} catch (error) {
-					return { content: [{ type: "text", text: `charts unavailable: ${error instanceof Error ? error.message : String(error)}` }], details: {} };
-				}
-			}
-			if (!runDir) {
-				return { content: [{ type: "text", text: "charts need run_dir or experiment_id" }], details: {} };
-			}
-			onUpdate?.({ content: [{ type: "text", text: `reading charts from ${runDir}` }], details: {} });
-			try {
-				await pi.exec(roastBinary(), ["charts", runDir], { signal, timeout: 120_000 });
-			} catch {}
-			const images: { name: string; base64: string }[] = [];
-			for (const name of CHART_FILES) {
-				try {
-					const base64 = await readFile(join(runDir, "charts", name), "base64");
-					images.push({ name, base64 });
-				} catch {}
-			}
-			const summary: string[] = [];
-			const reportPath = join(runDir, "report.md");
-			try {
-				const summaryJson = JSON.parse(await readFile(join(runDir, "summary.json"), "utf8")) as {
-					charts?: { arms?: Record<string, { resolved?: number; total?: number; near_miss?: number; mean_partial?: number | null }> };
-				};
-				for (const [variant, arm] of Object.entries(summaryJson.charts?.arms ?? {})) {
-					const partial = typeof arm.mean_partial === "number" ? `, mean partial ${(100 * arm.mean_partial).toFixed(1)}%` : "";
-					summary.push(`${variant}: ${arm.resolved ?? 0}/${arm.total ?? 0} resolved, ${arm.near_miss ?? 0} near misses${partial}`);
-				}
-			} catch {}
-			const details: ChartsDetails = { runDir, reportPath, images, summary };
-			const text = summary.length ? summary.join("\n") + `\nreport: ${reportPath}` : `report: ${reportPath}`;
-			return { content: [{ type: "text", text }], details };
-		},
-		renderResult(result, { expanded, isPartial }, theme, context) {
-			const details = (result.details ?? {}) as ChartsDetails;
-			const lines = [...(details.summary ?? [])];
-			if (details.reportPath) lines.push(`report: ${details.reportPath}`);
-			if (isPartial) return new Text("Rendering charts…", 0, 0);
-			if (!context.showImages || !details.images?.length) {
-				if (!details.images?.length) lines.push("no chart PNGs; open the report markdown instead");
-				else lines.push("terminal images unsupported; open the report markdown instead");
-				return new Text(lines.join("\n"), 0, 0);
-			}
-			const shown = expanded ? details.images : details.images.slice(0, 1);
-			const card = new Container();
-			card.addChild(new Text(lines.join("\n"), 0, 0));
-			for (const image of shown) {
-				card.addChild(new Image(image.base64, "image/png", theme, { maxWidthCells: 80, maxHeightCells: 24 }));
-			}
-			return card;
 		},
 	});
 
@@ -352,13 +287,13 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			wizardState = "prompting";
-			showSubmitTool();
+			showRoastTools();
 			try {
 				const collected = await collectWizard(pi, args, ctx);
 				if (!collected) {
 					ctx.ui.notify("RoastMyHarness wizard cancelled.", "info");
 					wizardState = "idle";
-					hideSubmitTool();
+					hideRoastTools();
 					return;
 				}
 				const { answers, stagedNote } = collected;
@@ -374,4 +309,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerMessageRenderer(RUN_CARD_TYPE, (message, options, theme) =>
 		renderRunCard(message.details as never, options.expanded, theme as never));
+
+	pi.registerMessageRenderer(CHARTS_CARD_TYPE, (message, options, theme) =>
+		renderChartsCard(message.details as never, options.expanded, theme as never));
 }
