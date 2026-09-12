@@ -4,11 +4,11 @@
 
 It is easy to make a coding agent more complicated.
 
-You add a repository-search extension because it found the right file immediately in one ugly codebase. You write a large `AGENTS.md` because the model keeps making the same mistake. You add a skill for debugging tests, a context manager to keep long sessions under control, or a new set of defaults that feels better in day-to-day use.
+You add a repository-search extension because it found the right file immediately in one ugly codebase. You write a large `AGENTS.md` because the model keeps making the same mistake. You add a skill for debugging tests because it solved an overlooked problem, and a context manager because it kept useful observations that Pi's compact probably would have missed.
 
 Any of those changes might be good. The problem is that they are surprisingly hard to judge by feel.
 
-A new tool can be excellent when it is needed and still make the agent worse overall because the model now spends time deciding when to call it. Extra instructions can prevent one mistake while nudging unrelated tasks in the wrong direction. A context-management extension can be valuable in a genuinely long session while doing nothing useful on shorter work except adding overhead.
+A new tool can be excellent when it is needed and still make the agent worse overall because the model now spends time deciding when to call it. Extra instructions can prevent one mistake while nudging unrelated tasks in the wrong direction.
 
 RoastMyHarness exists to answer the less exciting but more useful question:
 
@@ -16,11 +16,9 @@ RoastMyHarness exists to answer the less exciting but more useful question:
 
 It runs the same software-engineering tasks with the same model and thinking level against a plain Pi control and the Pi configuration you want to test. It then compares not just how many tasks were solved, but which tasks changed, how many tokens were used, how long the runs took, and what the agent did along the way.
 
-The name is a little rude. The experiment is not.
-
 ---
 
-## Why benchmark the harness?
+## Why benchmark your harness?
 
 When people talk about coding-agent performance, most of the attention goes to the model. In practice, the model is only part of what you are using.
 
@@ -196,6 +194,7 @@ It supports the bundled DeepSWE tasks and compatible external task roots. It is 
 That narrow scope is useful while the measurement plumbing is still being hardened. Pi telemetry, task pairing, staged homes, reporting, repeatability, and control behavior all need to be trustworthy before adding more axes of comparison.
 
 Expanding beyond the current Pi + DeepSWE focus is part of the development direction. Until then, treat RoastMyHarness as a tool for answering a specific question well rather than every evaluation question badly.
+
 
 ---
 
