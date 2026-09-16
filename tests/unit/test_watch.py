@@ -259,6 +259,29 @@ def test_watch_survives_transient_observe_error(environment, monkeypatch):
     assert any("transient observe error" in e.get("note", "") for e in heartbeats)
 
 
+def test_watch_heartbeat_carries_progress(environment, monkeypatch):
+    """Quiet-period heartbeats carry totals/running so cards stay alive."""
+    db_path, run_dir = environment
+    service = svc.AgentService(plans_dir=run_dir.parent / "plans", db_path=db_path)
+    _patch_observe_states(
+        monkeypatch,
+        service,
+        run_dir,
+        [{"state": "RUNNING", "results": []}] * 12
+        + [{"state": "COMPLETE", "results": []}],
+    )
+    monkeypatch.setattr(svc, "WATCH_HEARTBEAT_SEC", 0.05)
+    events = list(service.watch(EXPERIMENT_ID, interval_sec=0.01, worker_grace_sec=60.0))
+    heartbeats = [
+        e for e in events
+        if e["event"] == "heartbeat" and "transient" not in e.get("note", "")
+    ]
+    assert heartbeats, "expected quiet-period heartbeats before completion"
+    assert "totals" in heartbeats[0] and "running" in heartbeats[0]
+    assert heartbeats[0]["state"] == "RUNNING"
+    assert events[-1]["event"] == "final"
+
+
 def test_watch_unknown_experiment_raises(tmp_path):
     service = svc.AgentService(
         plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"

@@ -535,3 +535,67 @@ def test_service_prepare_needs_input(tmp_path):
     service = AgentService(plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite")
     result = service.prepare(bad)
     assert result.state == "needs_input"
+
+
+def test_pending_snapshot_from_plan_bindings(tmp_path, green_preflight):
+    """Optimistic first snapshot: arms x tasks pending, no DB access."""
+    spec_path = make_spec(tmp_path)
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    prepared = service.prepare(spec_path)
+    plan = json.loads((tmp_path / "plans" / f"{prepared.plan_id}.json").read_text())
+    snap = service.pending_snapshot(prepared.plan_id)
+    assert snap["event"] == "snapshot"
+    assert snap["experiment_id"] == plan["experiment_id"]
+    assert snap["state"] == "STARTING"
+    assert snap["matrix"] == {"control": {"t1": "."}, "bare": {"t1": "."}}
+    assert snap["totals"] == {
+        "control": {"P": 0, "F": 0, "E": 0, "H": 0},
+        "bare": {"P": 0, "F": 0, "E": 0, "H": 0},
+    }
+    assert snap["rewards"] == {}
+    assert snap["running"] == []
+    with pytest.raises(svc.UnknownPlanError):
+        service.pending_snapshot("plan_000000000000")
+
+
+def test_worker_runs_frozen_plan_without_reresolve(tmp_path, green_preflight, monkeypatch):
+    """The worker re-enters through the plan so its run id cannot drift."""
+    monkeypatch.setenv("ROAST_MY_HARNESS_DATA_DIR", str(tmp_path))
+    spec_path = make_spec(tmp_path)
+    service = svc.AgentService()
+    prepared = service.prepare(spec_path)
+    plan = json.loads((tmp_path / "plans" / f"{prepared.plan_id}.json").read_text())
+    captured: dict = {}
+
+    def fake_run_experiment(
+        spec_path_arg, *, progress=None, resolved=None, experiment_id=None
+    ):
+        captured.update(
+            spec_path=spec_path_arg, resolved=resolved, experiment_id=experiment_id
+        )
+        return (experiment_id, "COMPLETE")
+
+    monkeypatch.setattr(svc, "run_experiment", fake_run_experiment)
+    assert svc.run_experiment_worker(prepared.plan_id) == 0
+    assert captured["spec_path"] == Path(plan["spec_path"])
+    assert captured["experiment_id"] == plan["experiment_id"]
+    assert captured["resolved"].run_id == plan["experiment_id"]
+
+
+def test_run_experiment_rejects_drifted_experiment_id(tmp_path, green_preflight, monkeypatch):
+    """A frozen run never lands under the wrong experiment id."""
+    from roast_my_harness.errors import SpecError
+    from roast_my_harness.spec.resolved import ResolvedRunSpec
+
+    monkeypatch.setenv("ROAST_MY_HARNESS_DATA_DIR", str(tmp_path))
+    spec_path = make_spec(tmp_path)
+    service = svc.AgentService()
+    prepared = service.prepare(spec_path)
+    plan = json.loads((tmp_path / "plans" / f"{prepared.plan_id}.json").read_text())
+    resolved = ResolvedRunSpec.model_validate(plan["bindings"]["resolved"])
+    with pytest.raises(SpecError, match="does not match"):
+        svc.run_experiment(
+            Path(plan["spec_path"]), resolved=resolved, experiment_id="other-id"
+        )

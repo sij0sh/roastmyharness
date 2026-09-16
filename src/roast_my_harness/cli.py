@@ -157,6 +157,12 @@ def bridge_run(plan_id: str = typer.Argument(..., help="Plan id from validate.")
                       "plan_id": plan_id}, default=str))
     sys.stdout.flush()
     try:
+        pending = agent_service.AgentService().pending_snapshot(plan_id)
+        print(json.dumps(pending, default=str))
+        sys.stdout.flush()
+    except Exception:
+        pass
+    try:
         for event in agent_service.AgentService().watch(started.experiment_id):
             sys.stdout.write(json.dumps(event, default=str) + "\n")
             sys.stdout.flush()
@@ -192,9 +198,9 @@ def bridge_cancel(experiment_id: str = typer.Argument(...)) -> None:
 
 
 @app.command("_worker", hidden=True)
-def worker(spec_path: Path = typer.Argument(...),
+def worker(plan_id: str = typer.Argument(..., help="Plan id from validate."),
             skip_docker: bool = typer.Option(False, help="Skip docker checks.")) -> None:
-    raise typer.Exit(agent_service.run_experiment_worker(spec_path, skip_docker=skip_docker))
+    raise typer.Exit(agent_service.run_experiment_worker(plan_id, skip_docker=skip_docker))
 
 
 @app.callback()

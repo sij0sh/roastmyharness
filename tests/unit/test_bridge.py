@@ -123,6 +123,37 @@ def test_bridge_run_streams_started_then_events(tmp_path: Path, data_dir: Path, 
     assert lines[-1]["state"] == "COMPLETE"
 
 
+def test_bridge_run_emits_pending_snapshot(tmp_path: Path, data_dir: Path, monkeypatch):
+    pending = {
+        "event": "snapshot",
+        "experiment_id": "e1",
+        "state": "STARTING",
+        "totals": {},
+        "matrix": {"control": {"t1": "."}},
+        "rewards": {},
+        "running": [],
+    }
+    events = [
+        {"event": "snapshot", "state": "RUNNING", "matrix": {}, "rewards": {}, "running": []},
+        {"event": "final", "experiment_id": "e1", "state": "COMPLETE", "final": True,
+         "aggregates": {}, "report": None},
+    ]
+    service = SimpleNamespace(
+        start=lambda plan_id, skip_docker=False: SimpleNamespace(experiment_id="e1"),
+        pending_snapshot=lambda plan_id: pending,
+        watch=lambda experiment_id, **kwargs: iter(events),
+    )
+    monkeypatch.setattr(cli_mod.agent_service, "AgentService", lambda: service)
+    result = CliRunner().invoke(cli_mod.app, ["_bridge", "run", "plan_ffffffffffff"])
+    assert result.exit_code == 0, result.output
+    lines = [json.loads(line) for line in result.output.splitlines() if line.strip()]
+    assert lines[0]["event"] == "started"
+    assert lines[1]["event"] == "snapshot"
+    assert lines[1]["state"] == "STARTING"
+    assert lines[1]["matrix"] == {"control": {"t1": "."}}
+    assert lines[-1]["event"] == "final"
+
+
 def test_bridge_run_reports_watch_failure_as_final(tmp_path: Path, data_dir: Path, monkeypatch):
     def _boom(experiment_id, **kwargs):
         yield {"event": "snapshot", "state": "RUNNING"}

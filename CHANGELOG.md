@@ -7,6 +7,22 @@ RoastMyHarness is now a Pi-native experiment extension. The spec is
 control against explicitly configured Pi variants unless the spec sets
 `control = false`.
 
+### Fixed
+
+- Submit-time `unknown_experiment` race, for real this time. The worker
+re-enters through the frozen plan instead of re-resolving `latest` pins,
+so its run id cannot drift from the plan's experiment id and the DB row
+lands in milliseconds, not after an `npm view` round-trip. `_bridge run`
+also prints an optimistic pending snapshot right after `started`, so the
+card shows arms x tasks immediately instead of `RUNNING 0/0`. Engine
+`0.1.1`; a stale engine is now a hard version-mismatch error.
+- Hanging `Waiting on roast...` card. Partial tool results render the live
+run card (state, done/total, elapsed, running trials, matrix) instead of
+static text, quiet-period heartbeats carry totals and the running list,
+and the heartbeat interval drops to 15s. The extension also pins one
+engine binary per session instead of re-resolving `roastmyharness` from
+a cwd-dependent `PATH`.
+
 ### Added
 
 - Six-step `/roastmyharness` wizard. Step 1 takes a freeform variant

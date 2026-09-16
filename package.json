@@ -1,6 +1,6 @@
 {
   "name": "roastmyharness",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi-native harness comparison extension for RoastMyHarness",
   "keywords": ["pi-package"],
   "license": "MIT",
@@ -11,5 +11,8 @@
   },
   "pi": {
     "extensions": ["./integrations/pi/roastmyharness.ts"]
+  },
+  "scripts": {
+    "test": "node --test tests/pi/*.test.mjs"
   }
 }

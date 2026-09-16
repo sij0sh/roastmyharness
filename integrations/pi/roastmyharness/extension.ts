@@ -5,6 +5,8 @@ import {
 	AWAIT_TOOL,
 	SUBMIT_TOOL,
 	bridgeArgs,
+	isWatchDetails,
+	pinRoastBinary,
 	runBridgeJson,
 	summarize,
 	type RoastResponse,
@@ -137,6 +139,21 @@ function renderToolResult(details: unknown, expanded: boolean, theme: never): Co
 	return card;
 }
 
+function renderPartialResult(
+	result: unknown,
+	expanded: boolean,
+	theme: { fg: (color: string, text: string) => string },
+	fallback: string,
+): Component {
+	const details = (result as { details?: unknown }).details;
+	if (isWatchDetails(details)) {
+		try {
+			return renderToolResult(details, expanded, theme as never);
+		} catch {}
+	}
+	return new Text(theme.fg("warning", fallback), 0, 0);
+}
+
 export default function (pi: ExtensionAPI) {
 	let wizardState: "idle" | "prompting" | "awaiting-submit" = "idle";
 
@@ -158,12 +175,13 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		wizardState = "idle";
 		hideRoastTools();
+		await pinRoastBinary(pi);
 		engineStatus = await checkEngine(pi);
 		if (engineStatus.kind === "missing") {
 			ctx.ui.notify(`RoastMyHarness engine missing. ${engineStatus.hint}`, "error");
 			ctx.ui.setStatus(WIDGET_ID, "engine missing");
 		} else if (engineStatus.kind === "mismatch") {
-			ctx.ui.notify(`RoastMyHarness engine outdated. ${engineStatus.hint}`, "warning");
+			ctx.ui.notify(`RoastMyHarness engine outdated. ${engineStatus.hint}`, "error");
 			ctx.ui.setStatus(WIDGET_ID, `engine ${engineStatus.found} outdated`);
 		} else {
 			ctx.ui.setStatus(WIDGET_ID, undefined);
@@ -183,7 +201,7 @@ export default function (pi: ExtensionAPI) {
 			);
 		},
 		renderResult(result, { expanded, isPartial }, theme) {
-			if (isPartial) return new Text(theme.fg("warning", "Running roast..."), 0, 0);
+			if (isPartial) return renderPartialResult(result, expanded, theme, "Running roast...");
 			try {
 				return renderToolResult((result as { details?: unknown }).details, expanded, theme as never);
 			} catch {
@@ -260,7 +278,7 @@ export default function (pi: ExtensionAPI) {
 			);
 		},
 		renderResult(result, { expanded, isPartial }, theme) {
-			if (isPartial) return new Text(theme.fg("warning", "Waiting on roast..."), 0, 0);
+			if (isPartial) return renderPartialResult(result, expanded, theme, "Waiting on roast...");
 			try {
 				return renderToolResult((result as { details?: unknown }).details, expanded, theme as never);
 			} catch {

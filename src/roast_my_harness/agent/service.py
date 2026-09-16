@@ -48,7 +48,11 @@ from roast_my_harness.spec.hashes import spec_hash as compute_spec_hash
 from roast_my_harness.spec.load import load_experiment
 from roast_my_harness.spec.models import ExperimentSpec
 from roast_my_harness.spec.normalize import experiment_id as make_experiment_id
-from roast_my_harness.spec.resolved import identity_payload, resolve_run_spec
+from roast_my_harness.spec.resolved import (
+    ResolvedRunSpec,
+    identity_payload,
+    resolve_run_spec,
+)
 from roast_my_harness.store.repository import Repository
 from roast_my_harness.tasks.catalog import catalog_info
 from roast_my_harness.tasks.discover import discover_tasks
@@ -58,7 +62,7 @@ from roast_my_harness.telemetry.result import trial_row, trial_row_cached
 PLAN_ID_RE = re.compile(r"^plan_[0-9a-f]{12}$")
 FINAL_STATES = frozenset({"COMPLETE", "FAILED", "CANCELLED"})
 WATCH_INTERVAL_SEC = 2.0
-WATCH_HEARTBEAT_SEC = 30.0
+WATCH_HEARTBEAT_SEC = 15.0
 WATCH_WORKER_GRACE_SEC = 10.0
 WATCH_STARTUP_GRACE_SEC = 60.0
 
@@ -391,7 +395,7 @@ class AgentService:
                 started=False,
             )
         try:
-            pid = self._spawn_worker(spec_path, experiment_id, skip_docker)
+            pid = self._spawn_worker(plan_id, experiment_id, skip_docker)
         except BaseException:
             # Roll back the launch claim: an unstarted plan must stay
             # startable (the deterministic plan_id cannot be re-prepared)
@@ -487,6 +491,31 @@ class AgentService:
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(min(max(interval_sec, 0.01), 2.0))
+
+    def pending_snapshot(self, plan_id: str) -> dict[str, Any]:
+        """Optimistic first snapshot from frozen plan bindings; no DB access.
+
+        Lets `_bridge run` show arms x tasks as pending before the worker
+        inserts its DB row, so the card never sits at 0/0 with no matrix.
+        Best-effort: callers fall back to the startup-grace wait on failure.
+        """
+        plan = self._load_plan(plan_id)
+        bindings = plan["bindings"]
+        task_ids = [pair[0] for pair in bindings["task_hashes"]]
+        requested = bindings["resolved"]["requested_spec"]
+        arm_ids = ["control"] if requested.get("control", True) else []
+        arm_ids += [v["id"] for v in requested.get("variants", [])]
+        matrix = {arm: {task: "." for task in task_ids} for arm in arm_ids}
+        totals = {arm: {"P": 0, "F": 0, "E": 0, "H": 0} for arm in arm_ids}
+        return {
+            "event": "snapshot",
+            "experiment_id": plan["experiment_id"],
+            "state": "STARTING",
+            "totals": totals,
+            "matrix": matrix,
+            "rewards": {},
+            "running": [],
+        }
 
     def status(self, experiment_id: str) -> models.StatusResult:
         """Current matrix and aggregates; cheap to poll."""
@@ -616,7 +645,12 @@ class AgentService:
                     )
                     return
                 if quiet:
-                    yield {"event": "heartbeat", "state": state}
+                    yield {
+                        "event": "heartbeat",
+                        "state": state,
+                        "totals": snap["totals"],
+                        "running": snap["running"],
+                    }
                     last_emit = now
         finally:
             report_collect.save_fold_cache(rd, fold_cache)
@@ -805,9 +839,14 @@ class AgentService:
             markdown_path=str(out),
         )
 
-    def _spawn_worker(self, spec_path: Path, experiment_id: str, skip_docker: bool) -> int:
-        """Detached worker so the caller (extension/bridge) can poll and exit."""
-        argv = [sys.executable, "-m", "roast_my_harness", "_worker", str(spec_path)]
+    def _spawn_worker(self, plan_id: str, experiment_id: str, skip_docker: bool) -> int:
+        """Detached worker so the caller (extension/bridge) can poll and exit.
+
+        The worker re-enters through the frozen plan, never by re-resolving
+        `latest` pins, so its run id cannot drift from the plan's
+        experiment id while the watcher waits for the DB row.
+        """
+        argv = [sys.executable, "-m", "roast_my_harness", "_worker", plan_id]
         if skip_docker:
             argv.append("--skip-docker")
         log = run_dir(experiment_id) / "logs" / "worker.log"
@@ -878,30 +917,41 @@ def run_experiment(
     spec_path: Path,
     *,
     progress: Callable[[str], None] | None = None,
+    resolved: ResolvedRunSpec | None = None,
+    experiment_id: str | None = None,
 ) -> tuple[str, str]:
     """Run one experiment headless; return (experiment_id, final state).
 
     The single orchestration body shared by `roastmyharness run` and the
     detached worker. Callers own exit-code mapping and final-state reporting.
+    A frozen `resolved` (from the approved plan) skips re-resolving `latest`
+    pins so the run id cannot drift from the plan's experiment id.
     """
     spec = load_experiment(spec_path)
-    tasks = discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
-    catalog_revision, catalog_hash = catalog_info(spec.tasks.path)
-    eval_frozen = resolve_eval(
-        spec,
-        spec.tasks.path,
-        catalog_revision=catalog_revision,
-        catalog_hash=catalog_hash,
-    )
-    resolved = resolve_run_spec(
-        spec,
-        [(t.task_id, compute_task_hash(t.path)) for t in tasks],
-        repetitions=spec.execution.repetitions,
-        catalog_revision=catalog_revision,
-        catalog_hash=catalog_hash,
-        eval=eval_frozen,
-    )
-    experiment_id = resolved.run_id
+    if resolved is None:
+        tasks = discover_tasks(spec.tasks.path, spec.tasks.include, spec.tasks.exclude)
+        catalog_revision, catalog_hash = catalog_info(spec.tasks.path)
+        eval_frozen = resolve_eval(
+            spec,
+            spec.tasks.path,
+            catalog_revision=catalog_revision,
+            catalog_hash=catalog_hash,
+        )
+        resolved = resolve_run_spec(
+            spec,
+            [(t.task_id, compute_task_hash(t.path)) for t in tasks],
+            repetitions=spec.execution.repetitions,
+            catalog_revision=catalog_revision,
+            catalog_hash=catalog_hash,
+            eval=eval_frozen,
+        )
+    if experiment_id is None:
+        experiment_id = resolved.run_id
+    if resolved.run_id != experiment_id:
+        raise SpecError(
+            f"frozen run {resolved.run_id} does not match experiment "
+            f"{experiment_id}; prepare the spec that produced this run instead"
+        )
     from roast_my_harness.store import retention as retention_mod
 
     retention_mod.enforce_storage_policy(exclude=experiment_id, progress=progress)
@@ -946,7 +996,18 @@ def run_experiment(
     return experiment_id, final
 
 
-def run_experiment_worker(spec_path: Path, *, skip_docker: bool = False) -> int:
-    """Headless run of one prepared experiment; returns a process exit code."""
-    _experiment_id, final = run_experiment(spec_path)
+def run_experiment_worker(plan_id: str, *, skip_docker: bool = False) -> int:
+    """Headless run of one prepared experiment; returns a process exit code.
+
+    Re-enters through the frozen plan so `latest` pins resolve exactly as
+    approved; the DB row lands under the plan's experiment id.
+    """
+    service = AgentService()
+    plan = service._load_plan(plan_id)
+    resolved = ResolvedRunSpec.model_validate(plan["bindings"]["resolved"])
+    _experiment_id, final = run_experiment(
+        Path(plan["spec_path"]),
+        resolved=resolved,
+        experiment_id=plan["experiment_id"],
+    )
     return EXIT_CODES.get(final, 0)

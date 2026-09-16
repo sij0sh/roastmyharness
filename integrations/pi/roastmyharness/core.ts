@@ -89,8 +89,37 @@ export type RoastDetails = RoastResponse | WatchDetails;
 export type ExecHost = Pick<ExtensionAPI, "exec">;
 export const ROAST_JSON_TIMEOUT_MS = 120_000;
 
+let cachedBinary: string | null = null;
+
 export function roastBinary(): string {
-	return process.env.ROAST_MY_HARNESS_BIN || "roastmyharness";
+	return cachedBinary ?? process.env.ROAST_MY_HARNESS_BIN ?? "roastmyharness";
+}
+
+/**
+ * Pin the engine binary for this session. The first PATH lookup wins and
+ * every later spawn/exec reuses the absolute path, so long runs never
+ * flip between a dev venv and a stale `uv tool` install when the cwd
+ * changes. Falls back to the bare name when resolution fails.
+ */
+export async function pinRoastBinary(host: ExecHost): Promise<string> {
+	if (cachedBinary) return cachedBinary;
+	const override = process.env.ROAST_MY_HARNESS_BIN;
+	if (override) {
+		cachedBinary = override;
+		return cachedBinary;
+	}
+	try {
+		const result = await host.exec("sh", ["-c", "command -v roastmyharness"], { timeout: 5_000 });
+		const found = result.stdout.trim().split("\n").pop()?.trim() ?? "";
+		if (result.code === 0 && found.startsWith("/")) cachedBinary = found;
+	} catch {}
+	return roastBinary();
+}
+
+export function isWatchDetails(value: unknown): value is WatchDetails {
+	return typeof value === "object" && value !== null &&
+		(value as { stream?: unknown }).stream === true &&
+		typeof (value as { experiment_id?: unknown }).experiment_id === "string";
 }
 
 export function bridgeArgs(op: "inspect" | "validate" | "run" | "status" | "cancel", target: string): string[] {
@@ -198,7 +227,15 @@ export function countDone(details: WatchDetails): { done: number; total: number 
 
 export function oneLineStatus(details: WatchDetails): string {
 	const { done, total } = countDone(details);
-	return `state=${details.state} done=${done}/${total}` + (details.detached ? " (detached)" : "");
+	let text = `state=${details.state} done=${done}/${total}`;
+	const running = details.running ?? [];
+	if (running.length) {
+		const shown = running.slice(0, 2).map(([v, task]) => `${v}/${task}`).join(", ");
+		text += ` running=${running.length}${shown ? ` (${shown}${running.length > 2 ? ", …" : ""})` : ""}`;
+	}
+	if (Number.isFinite(details.elapsed_sec)) text += ` elapsed=${formatElapsed(details.elapsed_sec as number)}`;
+	if (details.detached) text += " (detached)";
+	return text;
 }
 
 export function finalText(details: WatchDetails): string {

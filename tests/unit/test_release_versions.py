@@ -32,3 +32,14 @@ def test_pi_manifest_points_at_extension() -> None:
     pkg = json.loads((root / "package.json").read_text())
     assert "pi-package" in pkg.get("keywords", [])
     assert "./integrations/pi/roastmyharness.ts" in pkg["pi"]["extensions"]
+
+
+def test_adapter_protocol_in_sync() -> None:
+    root = _repo_root()
+    text = (root / "integrations/pi/roastmyharness/versions.ts").read_text()
+    match = re.search(r"EXPECTED_ADAPTER_PROTOCOL\s*=\s*(\d+)", text)
+    assert match is not None
+    from roast_my_harness import ADAPTER_PROTOCOL_VERSION
+
+    assert int(match.group(1)) == ADAPTER_PROTOCOL_VERSION
+

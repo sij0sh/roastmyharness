@@ -7,6 +7,7 @@ import {
 	DEFAULT_RECENT_TRIALS,
 	countDone,
 	finalText,
+	formatElapsed,
 	oneLineStatus,
 	renderMatrix,
 	roastBinary,
@@ -163,6 +164,12 @@ function applyEvent(details: WatchDetails, evt: Record<string, unknown>): void {
 	if ((evt as { totals?: unknown }).totals && typeof evt.totals === "object") {
 		details.totals = evt.totals as WatchDetails["totals"];
 	}
+	if (Array.isArray(evt.running)) {
+		details.running = (evt.running as unknown[]).filter(
+			(pair): pair is [string, string] =>
+				Array.isArray(pair) && typeof pair[0] === "string" && typeof pair[1] === "string",
+		);
+	}
 	if (typeof evt.state === "string") details.state = evt.state;
 	if (evt.final === true) details.final = true;
 }
@@ -177,9 +184,24 @@ export function renderWatchResult(details: WatchDetails, opts: { expanded: boole
 	return new Text(text, 0, 0);
 }
 
+export function liveStatusLine(details: WatchDetails, theme: ThemeLike): string {
+	const parts: string[] = [];
+	if (Number.isFinite(details.elapsed_sec)) parts.push(formatElapsed(details.elapsed_sec as number));
+	const running = details.running ?? [];
+	if (running.length) {
+		const shown = running.slice(0, 2).map(([v, task]) => `${v}/${task}`).join(", ");
+		parts.push(`running ${running.length}${shown ? `: ${shown}${running.length > 2 ? ", …" : ""}` : ""}`);
+	}
+	return parts.length ? theme.fg("dim", parts.join(" · ")) : "";
+}
+
 export function renderRunCard(details: WatchDetails, expanded: boolean, theme: ThemeLike): Component {
 	const { done, total } = countDone(details);
 	let text = `${theme.fg("accent", theme.bold("roastmyharness"))} ${theme.fg("muted", details.experiment_id)} · ${details.state} ${done}/${total}`;
+	if (!details.final) {
+		const live = liveStatusLine(details, theme);
+		if (live) text += ` · ${live}`;
+	}
 	if (details.matrix) {
 		const matrix = renderMatrix(details.matrix, theme);
 		if (matrix) text += `\n${matrix}`;
