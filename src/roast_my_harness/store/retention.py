@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -276,7 +277,7 @@ def enforce_retention(
         if candidate.name in excluded:
             result.skipped_active = candidate.name
             continue
-        freed = sizes.get(candidate, 0)
+        freed = dir_size(candidate)
         try:
             shutil.rmtree(candidate, ignore_errors=True)
         except OSError:
@@ -292,7 +293,11 @@ def enforce_retention(
         if progress is not None:
             progress(f"retention: pruned {candidate.name} ({format_size(freed)})")
     result.deleted = pruned_ids
-    result.total_after = total
+    try:
+        remaining = [q for q in runs_dir.iterdir() if q.is_dir() and not q.is_symlink()]
+        result.total_after = sum(dir_size(q) for q in remaining)
+    except OSError:
+        result.total_after = max(0, total)
     if db_path is not None and pruned_ids:
         try:
             from roast_my_harness.store.repository import Repository
@@ -303,8 +308,11 @@ def enforce_retention(
                     repo.delete_experiment(experiment_id)
             finally:
                 repo.close()
-        except OSError:
-            pass
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "retention: db cleanup failed for %s; rows may lag dirs",
+                ",".join(pruned_ids),
+            )
     return result
 
 
@@ -495,7 +503,7 @@ def enforce_storage_policy(
     """Load settings and prune when enabled. Never raises: fail-open."""
     try:
         active = settings or load_storage_settings()
-    except (OSError, ValueError):
+    except Exception:
         return None
     if not active.retention_enabled:
         return None
@@ -520,5 +528,5 @@ def enforce_storage_policy(
         result.freed_bytes += trial_bytes
         result.total_before += trial_bytes
         return result
-    except OSError:
+    except Exception:
         return None
