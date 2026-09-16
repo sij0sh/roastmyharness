@@ -74,25 +74,41 @@ def _mtime_ns(path: Path) -> int:
         return 0
 
 
-def is_newer(stamp: int, seq: int, path: str, best: tuple[int, int, str] | None) -> bool:
-    """True when (stamp, seq, path) beats the current best.
+def is_newer(
+    stamp: int, seq: int, path: str, best: tuple[int, int, str] | tuple[int, str] | None
+) -> bool:
+    """True when (stamp, path) beats the current best.
 
-    Newest stamp wins; ties fall back to smallest attempt-sequence then
-    smallest path so every selector agrees. All newest-wins sites call this."""
+    Newest stamp wins; exact stamp ties fall back to smallest path as the
+    documented-arbitrary deterministic winner. The seq argument is ignored
+    and kept only for backward-compatible callers; dir-name digits are not
+    a clock. All newest-wins sites call this."""
     if best is None:
         return True
-    if stamp != best[0]:
-        return stamp > best[0]
-    if seq != best[1]:
-        return seq < best[1]
-    return path < best[2]
+    if len(best) == 2:  # type: ignore[union-attr]
+        b_stamp, b_path = best  # type: ignore[misc]
+    else:
+        b_stamp, _, b_path = best  # type: ignore[misc]
+    if stamp != b_stamp:
+        return stamp > b_stamp
+    if path == b_path:
+        return False
+    _log.warning(
+        "reconcile tie: identical mtime %s for %r vs %r; "
+        "keeping smallest path as arbitrary winner, not newest",
+        stamp,
+        b_path,
+        path,
+    )
+    return path < b_path
 
 
 def _attempt_seq(trial_dir: Path) -> int:
-    """Best-effort attempt order from the trial dir name, else -1.
+    """Deprecated dir-name number, else -1. Retained for compatibility only.
 
-    True filesystem recency is unknowable when result.json mtimes tie,
-    so ties fall back to this sequence proxy (then path) for a stable winner.
+    True filesystem recency is unknowable when result.json mtimes tie, and
+    dir-name digits are a random suffix, not a clock. Do not use for
+    ordering; is_newer ignores this value.
     """
 
     match = _ATTEMPT_SEQ_RE.search(trial_dir.name)
@@ -123,31 +139,9 @@ def reconcile_variant(
         except (json.JSONDecodeError, OSError):
             continue
         raw_task = str(result.get("task_name") or trial_dir.name)
-        task_id = raw_task
-        if known_tasks and task_id not in known_tasks:
-            short = raw_task.rsplit("/", 1)[-1]
-            base = trial_dir.name.split("__", 1)[0]
-            short_hit = short in known_tasks
-            base_hit = base in known_tasks
-            if base_hit and short_hit:
-                if short == base:
-                    task_id = base
-                else:
-                    _log.warning(
-                        "reconcile conflict: dir %s implies task %r but pier task_name %r "
-                        "implies %r; keeping dir task",
-                        trial_dir,
-                        base,
-                        raw_task,
-                        short,
-                    )
-                    task_id = base
-            elif base_hit:
-                task_id = base
-            elif short_hit:
-                task_id = short
-            else:
-                continue
+        task_id = _resolve_task_id(raw_task, trial_dir, known_tasks)
+        if task_id is None:
+            continue
         exception_info = result.get("exception_info") or {}
         if not isinstance(exception_info, dict):
             exception_info = {}
@@ -268,32 +262,44 @@ def is_timeout_error(exception_type: str | None) -> bool:
 
 
 def _resolve_task_id(raw_task: str, trial_dir: Path, known_tasks: set[str]) -> str | None:
-    task_id = raw_task
-    if known_tasks and task_id not in known_tasks:
-        short = raw_task.rsplit("/", 1)[-1]
-        base = trial_dir.name.split("__", 1)[0]
-        short_hit = short in known_tasks
-        base_hit = base in known_tasks
-        if base_hit and short_hit:
-            if short == base:
-                task_id = base
-            else:
-                _log.warning(
-                    "reconcile conflict: dir %s implies task %r but pier task_name %r "
-                    "implies %r; keeping dir task",
-                    trial_dir,
-                    base,
-                    raw_task,
-                    short,
-                )
-                task_id = base
-        elif base_hit:
-            task_id = base
-        elif short_hit:
-            task_id = short
-        else:
-            return None
-    return task_id
+    if not known_tasks:
+        return raw_task
+    base = trial_dir.name.split("__", 1)[0]
+    short = raw_task.rsplit("/", 1)[-1]
+    base_hit = base in known_tasks
+    raw_hit = raw_task in known_tasks
+    short_hit = short in known_tasks
+    if raw_hit and base_hit:
+        if base == raw_task or base == short:
+            return base
+        _log.warning(
+            "reconcile conflict: dir %s implies task %r but pier task_name %r "
+            "implies %r; keeping dir task",
+            trial_dir,
+            base,
+            raw_task,
+            short,
+        )
+        return base
+    if raw_hit:
+        return raw_task
+    if base_hit and short_hit:
+        if short == base:
+            return base
+        _log.warning(
+            "reconcile conflict: dir %s implies task %r but pier task_name %r "
+            "implies %r; keeping dir task",
+            trial_dir,
+            base,
+            raw_task,
+            short,
+        )
+        return base
+    if base_hit:
+        return base
+    if short_hit:
+        return short
+    return None
 
 
 def _cell_from_result(
