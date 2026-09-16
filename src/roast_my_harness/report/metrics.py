@@ -171,23 +171,104 @@ def cost_series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def token_series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+# Row column -> canonical token-series name. cache_tokens is accumulated
+# cache-read traffic across turns (total cached-prefix input), not a
+# session-unique count; cache_write_tokens is the cache-write side.
+_TOKEN_FIELDS: tuple[tuple[str, str], ...] = (
+    ("input_tokens", "input"),
+    ("cache_tokens", "cache_read"),
+    ("cache_write_tokens", "cache_write"),
+    ("output_tokens", "output"),
+    ("reasoning_tokens", "reasoning"),
+    ("llm_calls", "llm_calls"),
+)
+
+
+def token_series(
+    rows: list[dict[str, Any]], *, control: str = "control"
+) -> list[dict[str, Any]]:
     grouped = by_variant(rows)
-    out = []
+    means: dict[str, dict[str, float]] = {}
+    totals: dict[str, dict[str, float]] = {}
+    counts: dict[str, int] = {}
     for variant in sorted(grouped):
         tasks = list(grouped[variant].values())
         valid = resolved_rows(tasks)
         n = len(valid) or 1
-        out.append(
-            {
-                "variant": variant,
-                "mean_input": sum(fnum(t.get("input_tokens", "")) for t in valid) / n,
-                "mean_output": sum(fnum(t.get("output_tokens", "")) for t in valid) / n,
-                "mean_cache_read": sum(fnum(t.get("cache_tokens", "")) for t in valid) / n,
-                "mean_cache_write": sum(fnum(t.get("cache_write_tokens", "")) for t in valid) / n,
-                "mean_reasoning": sum(fnum(t.get("reasoning_tokens", "")) for t in valid) / n,
-            }
-        )
+        counts[variant] = len(valid)
+        for column, _name in _TOKEN_FIELDS:
+            total = sum(fnum(t.get(column, "")) for t in valid)
+            totals.setdefault(variant, {})[column] = total
+            means.setdefault(variant, {})[column] = total / n
+    base = means.get(control, {})
+    out = []
+    for variant in sorted(grouped):
+        entry: dict[str, Any] = {"variant": variant, "n": counts[variant]}
+        for column, name in _TOKEN_FIELDS:
+            total = totals[variant][column]
+            mean = means[variant][column]
+            entry[f"{name}_total"] = total
+            entry[f"{name}_mean"] = mean
+            baseline = base.get(column)
+            entry[f"{name}_delta_pct"] = (
+                None if variant == control or not baseline else 100 * (mean - baseline) / baseline
+            )
+        # Legacy mean-only keys kept for backward compatibility.
+        entry["mean_input"] = entry["input_mean"]
+        entry["mean_output"] = entry["output_mean"]
+        entry["mean_cache_read"] = entry["cache_read_mean"]
+        entry["mean_cache_write"] = entry["cache_write_mean"]
+        entry["mean_reasoning"] = entry["reasoning_mean"]
+        out.append(entry)
+    return out
+
+
+def tool_series(
+    rows: list[dict[str, Any]], *, control: str = "control"
+) -> list[dict[str, Any]]:
+    grouped = by_variant(rows)
+    means: dict[str, dict[str, float]] = {}
+    counts: dict[str, int] = {}
+    for variant in sorted(grouped):
+        tasks = list(grouped[variant].values())
+        valid = resolved_rows(tasks)
+        n = len(valid) or 1
+        counts[variant] = len(valid)
+        m_tool = sum(fnum(t.get("tool_calls", "")) for t in valid) / n
+        m_read = sum(fnum(t.get("read_calls", "")) for t in valid) / n
+        m_reread = sum(fnum(t.get("read_rereads", "")) for t in valid) / n
+        m_overlap = sum(fnum(t.get("read_overlap_rereads", "")) for t in valid) / n
+        m_files = sum(fnum(t.get("distinct_read_files", "")) for t in valid) / n
+        m_fail = sum(fnum(t.get("tool_failures", "")) for t in valid) / n
+        means[variant] = {
+            "mean_tool_calls": m_tool,
+            "mean_read_calls": m_read,
+            "mean_rereads": m_reread,
+            "mean_overlap_rereads": m_overlap,
+            "mean_distinct_files": m_files,
+            "mean_reads_per_file": (m_read / m_files) if m_files else 0.0,
+            "mean_tool_failures": m_fail,
+        }
+    base = means.get(control, {})
+    out = []
+    for variant in sorted(means):
+        entry: dict[str, Any] = {"variant": variant, "n": counts[variant], **means[variant]}
+        for key in (
+            "mean_tool_calls",
+            "mean_read_calls",
+            "mean_rereads",
+            "mean_overlap_rereads",
+            "mean_distinct_files",
+            "mean_reads_per_file",
+            "mean_tool_failures",
+        ):
+            short = key.removeprefix("mean_")
+            entry[f"{short}_delta_vs_control"] = (
+                None
+                if variant == control
+                else means[variant][key] - base.get(key, 0.0)
+            )
+        out.append(entry)
     return out
 
 
@@ -240,6 +321,7 @@ def analysis_series(
         "partial_deltas": partial_delta_series(rows),
         "cost": cost_series(rows),
         "tokens": token_series(rows),
+        "tools": tool_series(rows),
         "p2p_regressions": p2p_regressions(rows),
         "arms": arms,
     }

@@ -150,6 +150,8 @@ def _analyze(run_dir: Path) -> dict[str, Any]:
         )
     cost = series.get("cost", [])
     flips = series.get("flips", [])
+    tokens = series.get("tokens", [])
+    tools = series.get("tools", [])
     partial_deltas = series.get("partial_deltas", [])
     return {
         "status": "ok",
@@ -179,9 +181,80 @@ def _analyze(run_dir: Path) -> dict[str, Any]:
         },
         "flips": flips,
         "cost": cost,
+        "tokens": tokens,
+        "tools": tools,
         "partial_deltas": partial_deltas[:10] if isinstance(partial_deltas, list) else [],
         "strata": strata,
     }
+
+
+SMALL_N_THRESHOLD = 5
+"""Below this per-arm task count, bootstrap CIs are reported with a caution."""
+
+
+def _small_n(payload: dict[str, Any]) -> int | None:
+    """Smallest arm task count, or None when arms carry no totals."""
+    arms = payload.get("arms", {})
+    totals = [a.get("total") for a in arms.values() if isinstance(a, dict)]
+    totals = [t for t in totals if isinstance(t, (int, float))]
+    if not totals:
+        return None
+    return int(min(totals))
+
+
+def _paired_totals(payload: dict[str, Any]) -> tuple[int, int]:
+    rescued = broken = 0
+    for entry in payload.get("flips", []):
+        if not isinstance(entry, dict):
+            continue
+        try:
+            rescued += int(entry.get("a_fail_b_pass", 0) or 0)
+            broken += int(entry.get("b_fail_a_pass", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    return rescued, broken
+
+
+def _sep_sentence(payload: dict[str, Any], separated: bool | None) -> str:
+    """CI-overlap sentence with a small-n guard against overstating."""
+    small = _small_n(payload)
+    if separated is True:
+        if small is not None and small < SMALL_N_THRESHOLD:
+            rescued, broken = _paired_totals(payload)
+            return (
+                "Observed task-bootstrap intervals do not overlap, but "
+                f"n={small} per arm is insufficient for a meaningful "
+                "uncertainty estimate. The paired result for this run is "
+                f"{rescued} rescued and {broken} broken."
+            )
+        return "The 95% intervals do not overlap, so the separation is visible at this scale."
+    if separated is False:
+        return (
+            "The confidence intervals overlap (or no control baseline exists), "
+            "so this run is evidence worth confirming rather than a strong separation."
+        )
+    return "No control baseline exists for a separation check."
+
+
+def _fmt_tokens(value: Any) -> str:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if num >= 1_000_000:
+        return f"{num / 1_000_000:.2f}m"
+    if num >= 1000:
+        return f"{num / 1000:.1f}k"
+    return f"{num:.0f}"
+
+
+def _fmt_signed(value: Any, digits: int = 1) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        return f"{float(value):+.{digits}f}"
+    except (TypeError, ValueError):
+        return "n/a"
 
 
 def _bar(frac: float, width: int = 20) -> str:
@@ -220,7 +293,18 @@ def _fmt_pct_delta(value: Any) -> str:
         return "n/a"
 
 
-def render_markdown(payload: dict[str, Any]) -> str:
+def artifact_links(run_dir: Path | str | None) -> dict[str, str]:
+    """Absolute file:// links for the four terminal artifacts."""
+    if run_dir is None:
+        return {}
+    rd = Path(run_dir)
+    return {
+        name: Path(rd / name).as_uri()
+        for name in ("report.md", "summary.csv", "summary.json", "analysis.json")
+    }
+
+
+def render_markdown(payload: dict[str, Any], run_dir: Path | str | None = None) -> str:
     """Human-readable analysis.md. Pure rendering, no model judgment."""
     if payload.get("status") != "ok":
         return (
@@ -230,6 +314,16 @@ def render_markdown(payload: dict[str, Any]) -> str:
         )
     lines = ["# Analysis", ""]
     lines.append("Deterministic summary of summary.json; no model judgment.")
+    lines.append("")
+    links = artifact_links(run_dir)
+    lines.append("## Artifacts")
+    lines.append("")
+    if links:
+        for name in ("report.md", "summary.csv", "summary.json", "analysis.json"):
+            lines.append(f"- [{name}]({links[name]})")
+    else:
+        for name in ("report.md", "summary.csv", "summary.json", "analysis.json"):
+            lines.append(f"- {name}")
     lines.append("")
     hypothesis = payload.get("hypothesis") or ""
     if hypothesis.strip():
@@ -311,27 +405,128 @@ def render_markdown(payload: dict[str, Any]) -> str:
         lines.append("No shared tasks to pair across arms.")
         lines.append("")
 
-    cost = payload.get("cost", [])
-    if cost:
-        lines.append("## Efficiency")
+    tokens = payload.get("tokens", [])
+    if tokens:
+        lines.append("## Token usage — mean per valid task")
         lines.append("")
         lines.append(
-            "| variant | mean output tokens | mean wall | mean cost | delta tokens |"
+            "cache read accumulates cache-read (cached-prefix) traffic across turns; "
+            "cache write is the cache-write side."
         )
+        lines.append("| arm | input | cache read | cache write | output | reasoning |")
+        lines.append("|---|---|---|---|---|---|")
+        for entry in tokens:
+            if not isinstance(entry, dict):
+                continue
+            lines.append(
+                f"| {entry.get('variant')} | {_fmt_tokens(entry.get('input_mean'))} | "
+                f"{_fmt_tokens(entry.get('cache_read_mean'))} | "
+                f"{_fmt_tokens(entry.get('cache_write_mean'))} | "
+                f"{_fmt_tokens(entry.get('output_mean'))} | "
+                f"{_fmt_tokens(entry.get('reasoning_mean'))} |"
+            )
+        lines.append("")
+        lines.append("Difference vs control")
+        lines.append("")
+        lines.append("| arm | input | cache read | cache write | output | reasoning |")
+        lines.append("|---|---|---|---|---|---|")
+        for entry in tokens:
+            if not isinstance(entry, dict) or entry.get("variant") == "control":
+                continue
+            lines.append(
+                f"| {entry.get('variant')} | "
+                f"{_fmt_pct_delta(entry.get('input_delta_pct'))} | "
+                f"{_fmt_pct_delta(entry.get('cache_read_delta_pct'))} | "
+                f"{_fmt_pct_delta(entry.get('cache_write_delta_pct'))} | "
+                f"{_fmt_pct_delta(entry.get('output_delta_pct'))} | "
+                f"{_fmt_pct_delta(entry.get('reasoning_delta_pct'))} |"
+            )
+        lines.append("")
+        lines.append("Token totals")
+        lines.append("")
+        lines.append("| arm | input | cache read | cache write | output |")
         lines.append("|---|---|---|---|---|")
+        for entry in tokens:
+            if not isinstance(entry, dict):
+                continue
+            lines.append(
+                f"| {entry.get('variant')} | {_fmt_tokens(entry.get('input_total'))} | "
+                f"{_fmt_tokens(entry.get('cache_read_total'))} | "
+                f"{_fmt_tokens(entry.get('cache_write_total'))} | "
+                f"{_fmt_tokens(entry.get('output_total'))} |"
+            )
+        lines.append("")
+
+    tools = payload.get("tools", [])
+    if tools:
+        lines.append("## Tool and read behavior — mean per valid task")
+        lines.append("")
+        lines.append(
+            "| arm | tools | reads | rereads | overlap rereads | files | reads/file | "
+            "tool failures |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for entry in tools:
+            if not isinstance(entry, dict):
+                continue
+            lines.append(
+                f"| {entry.get('variant')} | "
+                f"{_fmt_signed(entry.get('mean_tool_calls'))[1:]} | "
+                f"{_fmt_signed(entry.get('mean_read_calls'))[1:]} | "
+                f"{_fmt_signed(entry.get('mean_rereads'))[1:]} | "
+                f"{_fmt_signed(entry.get('mean_overlap_rereads'))[1:]} | "
+                f"{_fmt_signed(entry.get('mean_distinct_files'))[1:]} | "
+                f"{_fmt_signed(entry.get('mean_reads_per_file'))[1:]} | "
+                f"{_fmt_signed(entry.get('mean_tool_failures'))[1:]} |"
+            )
+        lines.append("")
+        lines.append("Difference vs control (calls/task)")
+        lines.append("")
+        for entry in tools:
+            if not isinstance(entry, dict) or entry.get("variant") == "control":
+                continue
+            lines.append(
+                f"{entry.get('variant')}: tools {_fmt_signed(entry.get('tool_calls_delta_vs_control'))} "
+                f"· reads {_fmt_signed(entry.get('read_calls_delta_vs_control'))} "
+                f"· rereads {_fmt_signed(entry.get('rereads_delta_vs_control'))} "
+                f"· overlap rereads {_fmt_signed(entry.get('overlap_rereads_delta_vs_control'))} "
+                f"· files {_fmt_signed(entry.get('distinct_files_delta_vs_control'))} "
+                f"· tool failures {_fmt_signed(entry.get('tool_failures_delta_vs_control'))}"
+            )
+        lines.append("")
+
+    cost = payload.get("cost", [])
+    if cost:
+        lines.append("## Runtime / cost — mean per valid task")
+        lines.append("")
+        lines.append("| arm | wall/task | LLM calls | cost/task | cost/resolve |")
+        lines.append("|---|---|---|---|---|")
+        llm_by_variant = {}
+        for entry in tokens if isinstance(tokens, list) else []:
+            if isinstance(entry, dict):
+                llm_by_variant[entry.get("variant")] = entry.get("llm_calls_mean")
         for entry in cost:
             if not isinstance(entry, dict):
                 continue
             variant = entry.get("variant")
             try:
-                out = float(entry.get("mean_output_tokens", 0.0))
                 wall = float(entry.get("mean_wall_sec", 0.0))
                 usd = float(entry.get("mean_cost_usd", 0.0))
             except (TypeError, ValueError):
                 continue
+            llm = llm_by_variant.get(variant)
+            try:
+                llm_disp = f"{float(llm):.1f}" if llm is not None else "n/a"
+            except (TypeError, ValueError):
+                llm_disp = "n/a"
+            per_resolve = entry.get("cost_per_resolve")
+            try:
+                resolve_disp = f"${float(per_resolve):.2f}" if per_resolve is not None else "n/a"
+            except (TypeError, ValueError):
+                resolve_disp = "n/a"
             lines.append(
-                f"| {variant} | {out / 1000:.1f}k | {wall / 60:.1f}m | "
-                f"${usd:.2f} | {_fmt_pct_delta(entry.get('mean_output_tokens_pct_vs_control'))} |"
+                f"| {variant} | {wall / 60:.1f}m | {llm_disp} | "
+                f"${usd:.2f} | {resolve_disp} |"
             )
         lines.append("")
 
@@ -359,11 +554,22 @@ def render_markdown(payload: dict[str, Any]) -> str:
     best = payload.get("best_arm")
     if best:
         sep = best.get("separated_from_control")
-        sep_text = (
-            "separated"
-            if sep is True
-            else ("overlapping" if sep is False else "no control baseline")
-        )
+        if sep is True:
+            small = _small_n(payload)
+            if small is not None and small < SMALL_N_THRESHOLD:
+                rescued, broken = _paired_totals(payload)
+                sep_text = (
+                    "observed task-bootstrap intervals do not overlap, but "
+                    f"n={small} per arm is insufficient for a meaningful "
+                    "uncertainty estimate. The paired result for this run is "
+                    f"{rescued} rescued and {broken} broken"
+                )
+            else:
+                sep_text = "separated"
+        elif sep is False:
+            sep_text = "overlapping"
+        else:
+            sep_text = "no control baseline"
         lines.append(
             f"Highest observed resolve rate: {best['variant']} "
             f"({100 * best['score']:.1f}%)."
@@ -394,13 +600,6 @@ def render_markdown(payload: dict[str, Any]) -> str:
     lines.append("## Interpretation")
     lines.append("")
     lines.append(_interpretation(payload))
-    lines.append("")
-    lines.append("## Artifacts")
-    lines.append("")
-    lines.append("report.md")
-    lines.append("summary.csv")
-    lines.append("summary.json")
-    lines.append("analysis.json")
     lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -436,16 +635,8 @@ def _interpretation(payload: dict[str, Any]) -> str:
     ]
     if leaders:
         parts.append("Stratum leaders: " + ", ".join(leaders) + ".")
-    separated = (best.get("separated_from_control") is True) if best else False
-    if separated:
-        parts.append(
-            "The 95% intervals do not overlap, so the separation is visible at this scale."
-        )
-    else:
-        parts.append(
-            "The confidence intervals overlap (or no control baseline exists), "
-            "so this run is evidence worth confirming rather than a strong separation."
-        )
+    separated = best.get("separated_from_control") if best else None
+    parts.append(_sep_sentence(payload, separated))
     if len(arms) <= 2 and all(a.get("total", 0) and a["total"] < 30 for a in arms.values()):
         parts.append("At small task counts, paired flips carry more weight than headline rates.")
     return " ".join(parts)
@@ -456,5 +647,7 @@ def write_analysis(run_dir: Path) -> Path:
     payload = analyze_run(Path(run_dir))
     out = Path(run_dir) / "analysis.json"
     atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
-    atomic_write_text(Path(run_dir) / "analysis.md", render_markdown(payload))
+    atomic_write_text(
+        Path(run_dir) / "analysis.md", render_markdown(payload, Path(run_dir))
+    )
     return out

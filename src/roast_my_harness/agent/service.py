@@ -699,6 +699,12 @@ class AgentService:
                 rd / "jobs", fold_cache
             )
         aggregates = aggregate_by_variant(rows)
+        artifacts = {
+            "report_md": str(rd / "report.md"),
+            "summary_csv": str(rd / "summary.csv"),
+            "summary_json": str(rd / "summary.json"),
+            "analysis_json": str(rd / "analysis.json"),
+        }
         report: dict[str, str] | None = None
         if (rd / "report.md").is_file():
             report = {
@@ -718,6 +724,7 @@ class AgentService:
             "state": state,
             "final": state in FINAL_STATES,
             "aggregates": aggregates,
+            "artifacts": artifacts,
             "report": report,
             "run_dir": str(rd),
         }
