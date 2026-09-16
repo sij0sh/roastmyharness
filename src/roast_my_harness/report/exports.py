@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from roast_my_harness.files import atomic_write_text
-from roast_my_harness.report.charts import chart_series
 from roast_my_harness.report.collect import collect_rows
 from roast_my_harness.report.dimensions import dimension_summary, has_dimensions
 from roast_my_harness.report.markdown import task_labels
+from roast_my_harness.report.metrics import analysis_series
 from roast_my_harness.report.statistics import deterministic_seed, stratify, variant_type
 from roast_my_harness.telemetry.result import COLUMNS
 
@@ -49,7 +49,7 @@ def write_summary_json(
         "provenance": provenance,
         "row_count": len(rows),
         "trials": rows,
-        "charts": chart_series(rows, str(provenance.get("experiment_id") or "")),
+        "analysis": analysis_series(rows, str(provenance.get("experiment_id") or "")),
         "variant_types": {
             variant: variant_type(variant, spec_variants)
             for variant in sorted({str(row.get("variant")) for row in rows})

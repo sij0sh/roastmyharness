@@ -1,5 +1,5 @@
-from roast_my_harness.report.charts import (
-    chart_series,
+from roast_my_harness.report.metrics import (
+    analysis_series,
     near_miss_series,
     outcome_label,
     partial_delta_series,
@@ -80,13 +80,13 @@ def test_partial_delta_surfaces_quiet_moves():
     assert abs(deltas[0]["delta"] - 0.4) < 1e-9
 
 
-def test_chart_series_stable_and_degrading():
+def test_analysis_series_stable_and_degrading():
     rows = [
         _row("control", "t1", 1),
         _row("variant", "t1", 0),
     ]
-    first = chart_series(rows, "exp-1")
-    second = chart_series(rows, "exp-1")
+    first = analysis_series(rows, "exp-1")
+    second = analysis_series(rows, "exp-1")
     assert first == second
     assert first["arms"]["control"]["near_miss"] == 0
     assert first["arms"]["control"]["mean_partial"] is None

@@ -45,38 +45,6 @@ def doctor() -> None:
 
 
 @app.command()
-def charts(run: Path = typer.Argument(..., help="Run dir or experiment id.")) -> None:
-    from roast_my_harness.paths import run_dir as resolve_run_dir
-
-    target = resolve_run_dir(str(run)) if not run.is_dir() else run
-    summary_path = target / "summary.json"
-    try:
-        payload = json.loads(summary_path.read_text())
-    except (json.JSONDecodeError, OSError) as error:
-        typer.echo(f"cannot read {summary_path}: {error}", err=True)
-        raise typer.Exit(1) from error
-    rows = payload.get("trials", [])
-    provenance = payload.get("provenance", {})
-    experiment_id = str(provenance.get("experiment_id") or target.name)
-    try:
-        from roast_my_harness.report import render_charts as report_charts
-
-        series = payload.get("charts") or report_charts.chart_series_for_run(
-            target, rows, experiment_id
-        )
-        if not series.get("tokens"):
-            from roast_my_harness.report.charts import token_series
-
-            series["tokens"] = token_series(rows)
-        written = report_charts.render_all_charts(target, series)
-    except ImportError:
-        typer.echo("chart rendering needs matplotlib", err=True)
-        raise typer.Exit(1) from None
-    for path in written:
-        typer.echo(str(path))
-
-
-@app.command()
 def norms(
     runs: Path | None = typer.Argument(None, help="Runs root (default: configured home)."),
     out: Path | None = typer.Option(None, help="Output JSON path."),

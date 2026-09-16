@@ -671,15 +671,13 @@ class AgentService:
                 "markdown": str(rd / "report.md"),
                 "csv": str(rd / "summary.csv"),
             }
-        charts: dict[str, Any] | None = None
+        analysis_markdown: str | None = None
         try:
-            charts_dir = rd / "charts"
-            if charts_dir.is_dir():
-                files = sorted(p.name for p in charts_dir.glob("*.png") if p.is_file())
-                if files:
-                    charts = {"run_dir": str(rd), "files": files}
+            analysis_path = rd / "analysis.md"
+            if analysis_path.is_file():
+                analysis_markdown = analysis_path.read_text()
         except OSError:
-            charts = None
+            analysis_markdown = None
         event: dict[str, Any] = {
             "event": "final",
             "experiment_id": experiment_id,
@@ -689,8 +687,8 @@ class AgentService:
             "report": report,
             "run_dir": str(rd),
         }
-        if charts is not None:
-            event["charts"] = charts
+        if analysis_markdown is not None:
+            event["analysis_markdown"] = analysis_markdown
         if note:
             event["note"] = note
         return event
@@ -786,19 +784,18 @@ class AgentService:
                 provenance["secret_scan_hits"] = staging.scan_for_secrets(rd)
                 csv = report_exports.write_summary_csv(rd, rows)
                 report_exports.write_summary_json(rd, rows, provenance)
-                try:
-                    from roast_my_harness.report import render_charts as report_charts
-
-                    series = report_charts.chart_series_for_run(rd, rows, experiment_id)
-                    report_charts.render_all_charts(rd, series)
-                except Exception:
-                    pass
                 out = report_markdown.generate_report(
                     rd,
                     experiment_id=experiment_id,
                     provenance=provenance,
                     rows=rows,
                 )
+                try:
+                    from roast_my_harness.report import analyst as report_analyst
+
+                    report_analyst.write_analysis(rd)
+                except Exception:
+                    pass
         finally:
             repo.close()
         return models.ReportResult(

@@ -213,12 +213,13 @@ def p2p_regressions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(out, key=lambda d: (d["variant"], d["task"]))
 
 
-def chart_series(
+def analysis_series(
     rows: list[dict[str, Any]],
     experiment_id: str,
     spec_variants: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     del spec_variants
+    # Salt keeps the pre-removal value so regenerated CIs stay byte-identical.
     seed = deterministic_seed(f"{experiment_id}\0charts")
     grouped = by_variant(rows)
     arms = {}

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from roast_my_harness.report.charts import outcome_label
+from roast_my_harness.report.metrics import outcome_label
 from roast_my_harness.runner.reconcile import _attempt_seq, is_newer, replicate_of
 from roast_my_harness.telemetry.result import fnum_or_none, is_trial_dir, trial_row
 

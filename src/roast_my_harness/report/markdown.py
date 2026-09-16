@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from roast_my_harness.files import atomic_write_text
-from roast_my_harness.report.charts import NEAR_MISS_THRESHOLD, outcome_label
 from roast_my_harness.report.collect import collect_rows
 from roast_my_harness.report.dimensions import dimension_summary, has_dimensions
+from roast_my_harness.report.metrics import NEAR_MISS_THRESHOLD, outcome_label
 from roast_my_harness.report.statistics import (
     by_variant,
     deterministic_seed,
@@ -201,22 +201,6 @@ def generate_report(
                 regs += 1
         lines.append(f"| {v} | {near} | {mean_disp} | {regs} |")
     lines.append("")
-
-    charts_dir = run_dir / "charts"
-    chart_files = [
-        "resolve-rate.png",
-        "flips.png",
-        "near-miss.png",
-        "partial-delta.png",
-        "cost.png",
-        "tokens.png",
-    ]
-    if any((charts_dir / name).is_file() for name in chart_files):
-        lines.append("## Charts\n")
-        for name in chart_files:
-            if (charts_dir / name).is_file():
-                lines.append(f"![{name}](charts/{name})\n")
-        lines.append("")
 
     labels = task_labels(provenance)
     strata = stratify(

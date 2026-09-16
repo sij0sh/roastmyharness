@@ -1,6 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { Type } from "typebox";
 import {
 	AWAIT_TOOL,
@@ -13,13 +12,6 @@ import {
 } from "./core.ts";
 import { Container, Text, type Component } from "@earendil-works/pi-tui";
 import { RUN_CARD_TYPE } from "./cards.ts";
-import {
-	CHARTS_CARD_TYPE,
-	chartsRunDir,
-	loadChartsDetails,
-	renderChartsCard,
-	type ChartsDetails,
-} from "./charts.ts";
 import { renderRunCard, streamBridgeRun } from "./watch.ts";
 import { checkEngine, type EngineStatus } from "./versions.ts";
 import { collectWizard } from "./wizard.ts";
@@ -111,6 +103,7 @@ function postRunText(watched: {
 	note?: string;
 	aggregates?: unknown;
 	report?: { markdown: string; csv: string } | null;
+	analysis_markdown?: string;
 }): string {
 	const head = `experiment ${watched.experiment_id}: ${watched.state}`;
 	if (!watched.final) {
@@ -122,36 +115,25 @@ function postRunText(watched: {
 	const lines = [head];
 	if (watched.report) {
 		lines.push(`report: ${watched.report.markdown} and ${watched.report.csv}`);
-		lines.push(`charts: ${dirname(watched.report.markdown)}/charts/ (charts render in the tool card below)`);
 	}
 	if (watched.aggregates) lines.push(`aggregates: ${JSON.stringify(watched.aggregates)}`);
+	if (watched.analysis_markdown?.trim()) {
+		lines.push("");
+		lines.push(watched.analysis_markdown.trim());
+		lines.push("");
+		lines.push("Present the analysis above faithfully as the final experiment report. " +
+			"Explain notable differences only when supported by the supplied evidence. " +
+			"Do not claim statistical separation where the analysis says intervals overlap.");
+		return lines.join("\n");
+	}
 	lines.push(ANALYSIS_GUIDE);
 	return lines.join("\n");
 }
 
-type WatchedWithCharts = WatchDetails & { charts?: ChartsDetails };
-
-async function attachCharts(watched: WatchDetails): Promise<WatchedWithCharts> {
-	if (!watched.final) return watched;
-	const runDir = chartsRunDir(watched);
-	if (!runDir) return watched;
-	const reportPath = watched.report?.markdown ?? `${runDir}/report.md`;
-	try {
-		const charts = await loadChartsDetails(runDir, reportPath);
-		if (!charts.images.length && !charts.summary.length) return watched;
-		return { ...watched, charts };
-	} catch {
-		return watched;
-	}
-}
-
 function renderToolResult(details: unknown, expanded: boolean, theme: never): Component {
-	const watched = details as WatchedWithCharts;
+	const watched = details as WatchDetails;
 	const card = new Container();
 	card.addChild(renderRunCard(watched as never, expanded, theme as never));
-	if (watched.charts) {
-		card.addChild(renderChartsCard(watched.charts, expanded, theme as never));
-	}
 	return card;
 }
 
@@ -253,9 +235,8 @@ export default function (pi: ExtensionAPI) {
 				const watched = await streamBridgeRun(["_bridge", "run", planId], planId, signal, (text, details) => {
 					onUpdate?.({ content: [{ type: "text", text }], details });
 				});
-				const withCharts = await attachCharts(watched);
-				launchedFinal = withCharts.final;
-				return { content: [{ type: "text", text: postRunText(withCharts) }], details: withCharts };
+				launchedFinal = watched.final;
+				return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
 			} finally {
 				ctx.ui.setStatus(WIDGET_ID, undefined);
 				if (launchedFinal) {
@@ -302,10 +283,9 @@ export default function (pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: `wait failed: ${error instanceof Error ? error.message : String(error)}` }], details: {} };
 			}
 			if (watched.final) {
-				const withCharts = await attachCharts(watched);
 				wizardState = "idle";
 				hideRoastTools();
-				return { content: [{ type: "text", text: postRunText(withCharts) }], details: withCharts };
+				return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
 			}
 			if (watched.note?.includes("worker not running")) {
 				wizardState = "idle";
@@ -367,7 +347,4 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerMessageRenderer(RUN_CARD_TYPE, (message, options, theme) =>
 		renderRunCard(message.details as never, options.expanded, theme as never));
-
-	pi.registerMessageRenderer(CHARTS_CARD_TYPE, (message, options, theme) =>
-		renderChartsCard(message.details as never, options.expanded, theme as never));
 }
