@@ -8,6 +8,7 @@ export const CHART_FILES = [
 	"near-miss.png",
 	"partial-delta.png",
 	"cost.png",
+	"tokens.png",
 ];
 
 export const DEFAULT_RECENT_TRIALS = 20;

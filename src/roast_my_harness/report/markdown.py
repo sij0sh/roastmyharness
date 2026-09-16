@@ -209,6 +209,7 @@ def generate_report(
         "near-miss.png",
         "partial-delta.png",
         "cost.png",
+        "tokens.png",
     ]
     if any((charts_dir / name).is_file() for name in chart_files):
         lines.append("## Charts\n")

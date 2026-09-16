@@ -64,6 +64,10 @@ def charts(run: Path = typer.Argument(..., help="Run dir or experiment id.")) ->
         series = payload.get("charts") or report_charts.chart_series_for_run(
             target, rows, experiment_id
         )
+        if not series.get("tokens"):
+            from roast_my_harness.report.charts import token_series
+
+            series["tokens"] = token_series(rows)
         written = report_charts.render_all_charts(target, series)
     except ImportError:
         typer.echo("chart rendering needs matplotlib", err=True)

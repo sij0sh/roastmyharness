@@ -8,16 +8,18 @@ from typing import Any
 def chart_series_for_run(
     run_dir: Path, rows: list[dict[str, Any]], experiment_id: str
 ) -> dict[str, Any]:
+    from roast_my_harness.report.charts import chart_series, token_series
+
     summary_path = Path(run_dir) / "summary.json"
     try:
         payload = json.loads(summary_path.read_text())
         series = payload.get("charts")
         if isinstance(series, dict) and series:
+            if not series.get("tokens"):
+                series["tokens"] = token_series(rows)
             return series
     except (json.JSONDecodeError, OSError):
         pass
-    from roast_my_harness.report.charts import chart_series
-
     return chart_series(rows, experiment_id)
 
 
@@ -120,12 +122,39 @@ def render_cost(path: Path, cost: list[dict[str, Any]]) -> None:
     plt.close(fig)
 
 
+def render_tokens(path: Path, tokens: list[dict[str, Any]]) -> None:
+    plt = _plt()
+    cats = [
+        ("mean_input", "input"),
+        ("mean_output", "output"),
+        ("mean_cache_read", "cache read"),
+        ("mean_cache_write", "cache write"),
+        ("mean_reasoning", "reasoning"),
+    ]
+    names = [c["variant"] for c in tokens]
+    x = list(range(len(cats)))
+    width = 0.8 / max(len(names), 1)
+    fig, ax = plt.subplots(figsize=(10, 3.2))
+    for i, entry in enumerate(tokens):
+        vals = [entry.get(key, 0) / 1000 for key, _ in cats]
+        pos = [v + (i - (len(names) - 1) / 2) * width for v in x]
+        ax.bar(pos, vals, width=width, label=entry["variant"])
+    ax.set_xticks(x, [label for _, label in cats])
+    ax.set_ylabel("mean tokens (k, log scale)")
+    ax.set_yscale("log")
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+
+
 CHART_FILES = (
     "resolve-rate.png",
     "flips.png",
     "near-miss.png",
     "partial-delta.png",
     "cost.png",
+    "tokens.png",
 )
 
 
@@ -138,6 +167,7 @@ def render_all_charts(run_dir: Path, series: dict[str, Any]) -> list[Path]:
         (render_near_miss, "near-miss.png", series.get("near_miss", {})),
         (render_partial_deltas, "partial-delta.png", series.get("partial_deltas", [])),
         (render_cost, "cost.png", series.get("cost", [])),
+        (render_tokens, "tokens.png", series.get("tokens", [])),
     ]
     written = []
     for fn, name, data in jobs:

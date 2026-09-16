@@ -171,6 +171,26 @@ def cost_series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def token_series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped = by_variant(rows)
+    out = []
+    for variant in sorted(grouped):
+        tasks = list(grouped[variant].values())
+        valid = resolved_rows(tasks)
+        n = len(valid) or 1
+        out.append(
+            {
+                "variant": variant,
+                "mean_input": sum(fnum(t.get("input_tokens", "")) for t in valid) / n,
+                "mean_output": sum(fnum(t.get("output_tokens", "")) for t in valid) / n,
+                "mean_cache_read": sum(fnum(t.get("cache_tokens", "")) for t in valid) / n,
+                "mean_cache_write": sum(fnum(t.get("cache_write_tokens", "")) for t in valid) / n,
+                "mean_reasoning": sum(fnum(t.get("reasoning_tokens", "")) for t in valid) / n,
+            }
+        )
+    return out
+
+
 def p2p_regressions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for row in resolved_rows(rows):
@@ -218,6 +238,7 @@ def chart_series(
         "near_miss": near_miss_series(rows),
         "partial_deltas": partial_delta_series(rows),
         "cost": cost_series(rows),
+        "tokens": token_series(rows),
         "p2p_regressions": p2p_regressions(rows),
         "arms": arms,
     }
