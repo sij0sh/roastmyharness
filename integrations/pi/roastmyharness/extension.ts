@@ -98,6 +98,35 @@ const ANALYSIS_BODY = "Read the report.md and summary.csv paths quoted above wit
 
 const ANALYSIS_GUIDE = `Analyze the run and report back: ${ANALYSIS_BODY}`;
 
+export const FINAL_REPORT_CONTRACT = `The RoastMyHarness experiment is complete.
+
+Present the supplied deterministic analysis as the final experiment report.
+
+Required order:
+1. Experiment ID and final state.
+2. The four artifact links exactly as provided:
+   report.md, summary.csv, summary.json, analysis.json.
+3. Overall outcome table: resolved, resolve rate, mean partial, near misses.
+4. Paired outcome/rescue-regression summary.
+5. Token-usage table containing input, cache-read, cache-write,
+   output, and reasoning tokens.
+6. Token differences for every non-control arm versus control.
+7. Tool/read table containing tool calls, reads, rereads,
+   overlapping rereads, distinct files, and reads/file.
+8. Tool/read differences versus control.
+9. Runtime/cost table.
+10. A concise interpretation of what changed and the strength of
+    the evidence.
+
+Do not omit required tables.
+Do not recalculate supplied values.
+Do not describe a difference as statistically established merely
+because point estimates differ.
+For small task counts, explicitly identify the sample size and emphasize
+paired outcomes over headline percentages.
+Do not repeat spec-validation implementation details unless they affected
+the run.`;
+
 function postRunText(watched: {
 	experiment_id: string;
 	state: string;
@@ -105,6 +134,12 @@ function postRunText(watched: {
 	note?: string;
 	aggregates?: unknown;
 	report?: { markdown: string; csv: string } | null;
+	artifacts?: {
+		report_md: string;
+		summary_csv: string;
+		summary_json: string;
+		analysis_json: string;
+	} | null;
 	analysis_markdown?: string;
 }): string {
 	const head = `experiment ${watched.experiment_id}: ${watched.state}`;
@@ -115,7 +150,12 @@ function postRunText(watched: {
 			`Do not poll status in a sleep loop. Then analyze the run: ${ANALYSIS_BODY}`;
 	}
 	const lines = [head];
-	if (watched.report) {
+	if (watched.artifacts) {
+		lines.push(
+			`artifacts: ${watched.artifacts.report_md}, ${watched.artifacts.summary_csv}, ` +
+			`${watched.artifacts.summary_json}, ${watched.artifacts.analysis_json}`,
+		);
+	} else if (watched.report) {
 		lines.push(`report: ${watched.report.markdown} and ${watched.report.csv}`);
 	}
 	if (watched.aggregates) lines.push(`aggregates: ${JSON.stringify(watched.aggregates)}`);
@@ -123,9 +163,7 @@ function postRunText(watched: {
 		lines.push("");
 		lines.push(watched.analysis_markdown.trim());
 		lines.push("");
-		lines.push("Present the analysis above faithfully as the final experiment report. " +
-			"Explain notable differences only when supported by the supplied evidence. " +
-			"Do not claim statistical separation where the analysis says intervals overlap.");
+		lines.push(FINAL_REPORT_CONTRACT);
 		return lines.join("\n");
 	}
 	lines.push(ANALYSIS_GUIDE);

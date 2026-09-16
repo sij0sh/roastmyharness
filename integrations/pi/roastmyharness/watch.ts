@@ -152,6 +152,7 @@ function applyEvent(details: WatchDetails, evt: Record<string, unknown>): void {
 		if (evt.totals && typeof evt.totals === "object") details.totals = evt.totals as WatchDetails["totals"];
 		if (evt.aggregates && typeof evt.aggregates === "object") details.aggregates = evt.aggregates as WatchDetails["aggregates"];
 		if (evt.report && typeof evt.report === "object") details.report = evt.report as WatchDetails["report"];
+		if (evt.artifacts && typeof evt.artifacts === "object") details.artifacts = evt.artifacts as WatchDetails["artifacts"];
 		if (typeof evt.run_dir === "string" && evt.run_dir) details.run_dir = evt.run_dir;
 		if (typeof evt.analysis_markdown === "string" && evt.analysis_markdown) details.analysis_markdown = evt.analysis_markdown;
 		if (typeof evt.note === "string") details.note = evt.note;

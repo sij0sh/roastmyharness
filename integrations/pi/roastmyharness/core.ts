@@ -79,6 +79,12 @@ export interface WatchDetails {
 	summaries: TrialEvent[];
 	aggregates?: Record<string, Record<string, number>>;
 	report?: { markdown: string; csv: string } | null;
+	artifacts?: {
+		report_md: string;
+		summary_csv: string;
+		summary_json: string;
+		analysis_json: string;
+	} | null;
 	run_dir?: string;
 	analysis_markdown?: string;
 	elapsed_sec?: number;
@@ -240,7 +246,14 @@ export function oneLineStatus(details: WatchDetails): string {
 
 export function finalText(details: WatchDetails): string {
 	const lines = [`experiment ${details.experiment_id}: ${details.state}`];
-	if (details.report?.markdown) lines.push(`report: ${details.report.markdown}`);
+	if (details.artifacts) {
+		lines.push(
+			`artifacts: ${details.artifacts.report_md}, ${details.artifacts.summary_csv}, ` +
+			`${details.artifacts.summary_json}, ${details.artifacts.analysis_json}`,
+		);
+	} else if (details.report?.markdown) {
+		lines.push(`report: ${details.report.markdown}`);
+	}
 	if (details.note) lines.push(`note: ${details.note}`);
 	return lines.join("\n");
 }
