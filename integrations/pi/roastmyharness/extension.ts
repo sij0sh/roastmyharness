@@ -353,7 +353,7 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 				const { answers, stagedNote } = collected;
-				const specPath = `${ctx.cwd}/.pi-files/roastmyharness/${answers.experimentName}.toml`;
+				const specPath = `${ctx.cwd}/agents/roastmyharness/${answers.experimentName}.toml`;
 				ctx.ui.notify("Wizard answers collected. Write the TOML, then submit it.", "info");
 				wizardState = "awaiting-submit";
 				await pi.sendUserMessage(requestText(answers, stagedNote, specPath));
