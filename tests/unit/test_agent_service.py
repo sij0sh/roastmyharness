@@ -599,3 +599,28 @@ def test_run_experiment_rejects_drifted_experiment_id(tmp_path, green_preflight,
         svc.run_experiment(
             Path(plan["spec_path"]), resolved=resolved, experiment_id="other-id"
         )
+
+
+def test_watch_final_includes_four_artifacts(tmp_path):
+    rd = tmp_path / "run"
+    (rd / "jobs").mkdir(parents=True)
+    (rd / "report.md").write_text("# report\n")
+    (rd / "analysis.md").write_text("# Analysis\n")
+    service = svc.AgentService(
+        plans_dir=tmp_path / "plans", db_path=tmp_path / "db.sqlite"
+    )
+    event = service._watch_final("exp-1", rd, "COMPLETE")
+    assert event["event"] == "final"
+    assert event["artifacts"] == {
+        "report_md": str(rd / "report.md"),
+        "summary_csv": str(rd / "summary.csv"),
+        "summary_json": str(rd / "summary.json"),
+        "analysis_json": str(rd / "analysis.json"),
+    }
+    # Legacy report field retained for compatibility.
+    assert event["report"] == {
+        "markdown": str(rd / "report.md"),
+        "csv": str(rd / "summary.csv"),
+    }
+    assert event["analysis_markdown"] == "# Analysis\n"
+    assert event["run_dir"] == str(rd)

@@ -119,3 +119,47 @@ def test_norms_flag_runaway_output():
         norms,
     )
     assert quiet == []
+
+
+def test_token_series_totals_and_deltas():
+    from roast_my_harness.report.metrics import token_series
+
+    rows = [
+        _row("control", "t1", 1, input_tokens=100, output_tokens=200,
+             cache_tokens=50, cache_write_tokens=10, reasoning_tokens=5,
+             llm_calls=4),
+        _row("control", "t2", 0, input_tokens=300, output_tokens=400,
+             cache_tokens=150, cache_write_tokens=30, reasoning_tokens=15,
+             llm_calls=6),
+        _row("variant", "t1", 1, input_tokens=200, output_tokens=200,
+             cache_tokens=100, cache_write_tokens=20, reasoning_tokens=10,
+             llm_calls=5),
+        _row("variant", "t2", 0, input_tokens=200, output_tokens=200,
+             cache_tokens=100, cache_write_tokens=20, reasoning_tokens=10,
+             llm_calls=5),
+    ]
+    by_variant = {entry["variant"]: entry for entry in token_series(rows)}
+    assert by_variant["control"]["input_total"] == 400
+    assert by_variant["control"]["input_mean"] == 200
+    assert by_variant["variant"]["input_mean"] == 200
+    assert by_variant["variant"]["input_delta_pct"] == 0.0
+    assert by_variant["control"]["input_delta_pct"] is None
+    # Legacy keys survive.
+    assert by_variant["control"]["mean_input"] == 200
+    assert by_variant["control"]["mean_cache_read"] == 100
+
+
+def test_tool_series_absolute_deltas():
+    from roast_my_harness.report.metrics import tool_series
+
+    rows = [
+        _row("control", "t1", 1, tool_calls=10, read_calls=6, read_rereads=2,
+             read_overlap_rereads=1, distinct_read_files=3, tool_failures=1),
+        _row("variant", "t1", 1, tool_calls=6, read_calls=4, read_rereads=1,
+             read_overlap_rereads=0, distinct_read_files=2, tool_failures=0),
+    ]
+    by_variant = {entry["variant"]: entry for entry in tool_series(rows)}
+    assert by_variant["variant"]["tool_calls_delta_vs_control"] == -4.0
+    assert by_variant["variant"]["read_calls_delta_vs_control"] == -2.0
+    assert by_variant["control"]["tool_calls_delta_vs_control"] is None
+    assert by_variant["variant"]["mean_reads_per_file"] == 2.0
