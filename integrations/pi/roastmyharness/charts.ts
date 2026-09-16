@@ -18,6 +18,43 @@ export interface ChartsDetails {
 	summary: string[];
 }
 
+type FgTheme = { fg(color: string, text: string): string };
+
+class SafeImage implements Component {
+	constructor(
+		private image: Component,
+		private fallback: Component,
+	) {}
+
+	render(width: number): string[] {
+		try {
+			return this.image.render(width);
+		} catch {
+			return this.fallback.render(width);
+		}
+	}
+
+	invalidate(): void {
+		this.image.invalidate();
+		this.fallback.invalidate();
+	}
+}
+
+function makeChartImage(base64: string, name: string, theme: FgTheme): Component {
+	const fallback = new Text(theme.fg("muted", `[Chart: ${name}]`), 0, 0);
+	try {
+		const image = new Image(
+			base64,
+			"image/png",
+			{ fallbackColor: (text: string) => theme.fg("muted", text) },
+			{ maxWidthCells: 80, maxHeightCells: 24 },
+		);
+		return new SafeImage(image, fallback);
+	} catch {
+		return fallback;
+	}
+}
+
 function sortedEntries<T>(record: Record<string, T> | undefined): [string, T][] {
 	return Object.entries(record ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 }
@@ -74,7 +111,7 @@ export async function postChartsCard(pi: ExtensionAPI, watched: WatchDetails): P
 export function renderChartsCard(
 	details: ChartsDetails,
 	expanded: boolean,
-	theme: { fg(color: string, text: string): string },
+	theme: FgTheme,
 ): Component {
 	const lines = [...(details.summary ?? [])];
 	if (details.reportPath) lines.push(`report: ${details.reportPath}`);
@@ -85,13 +122,8 @@ export function renderChartsCard(
 	const shown = expanded ? details.images : details.images.slice(0, 1);
 	const card = new Container();
 	card.addChild(new Text(lines.join("\n"), 0, 0));
-	// Image expects ImageTheme { fallbackColor }, not the full Pi Theme.
-	// Pi core adapts it as { fallbackColor: (s) => theme.fg("muted", s) };
-	// passing the Theme through directly crashes on terminals without image
-	// support when Image.render takes the fallback path.
-	const imageTheme = { fallbackColor: (text: string) => theme.fg("muted", text) };
 	for (const image of shown) {
-		card.addChild(new Image(image.base64, "image/png", imageTheme, { maxWidthCells: 80, maxHeightCells: 24 }));
+		card.addChild(makeChartImage(image.base64, image.name, theme));
 	}
 	return card;
 }
