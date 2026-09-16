@@ -117,12 +117,20 @@ def manifest_model_patch_status(trial_dir: Path) -> str | None:
 
     Returns the entry status ("ok", "failed", "empty") or None when the
     manifest or its model.patch entry is absent (unknown, not failure).
+    Accepts the bare-list shape producers write and the dict envelope.
     """
     try:
         manifest = json.loads(_artifact_beside(trial_dir, MANIFEST_FILENAME).read_text())
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return None
-    entries = manifest.get("entries") if isinstance(manifest, dict) else None
+    if isinstance(manifest, list):
+        entries = manifest
+    elif isinstance(manifest, dict):
+        entries = manifest.get("entries")
+    else:
+        import logging as _lg
+        _lg.getLogger(__name__).debug("unexpected manifest top-level %s", type(manifest).__name__)
+        return None
     if not isinstance(entries, list):
         return None
     for entry in entries:
