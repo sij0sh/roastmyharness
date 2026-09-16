@@ -257,6 +257,15 @@ def _fmt_signed(value: Any, digits: int = 1) -> str:
         return "n/a"
 
 
+def _fmt_mean(value: Any, digits: int = 1) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
 def _bar(frac: float, width: int = 20) -> str:
     """Restrained ASCII bar for 0..1 fractions; used only for resolve/flips."""
     try:
@@ -471,13 +480,13 @@ def render_markdown(payload: dict[str, Any], run_dir: Path | str | None = None) 
                 continue
             lines.append(
                 f"| {entry.get('variant')} | "
-                f"{_fmt_signed(entry.get('mean_tool_calls'))[1:]} | "
-                f"{_fmt_signed(entry.get('mean_read_calls'))[1:]} | "
-                f"{_fmt_signed(entry.get('mean_rereads'))[1:]} | "
-                f"{_fmt_signed(entry.get('mean_overlap_rereads'))[1:]} | "
-                f"{_fmt_signed(entry.get('mean_distinct_files'))[1:]} | "
-                f"{_fmt_signed(entry.get('mean_reads_per_file'))[1:]} | "
-                f"{_fmt_signed(entry.get('mean_tool_failures'))[1:]} |"
+                f"{_fmt_mean(entry.get('mean_tool_calls'))} | "
+                f"{_fmt_mean(entry.get('mean_read_calls'))} | "
+                f"{_fmt_mean(entry.get('mean_rereads'))} | "
+                f"{_fmt_mean(entry.get('mean_overlap_rereads'))} | "
+                f"{_fmt_mean(entry.get('mean_distinct_files'))} | "
+                f"{_fmt_mean(entry.get('mean_reads_per_file'))} | "
+                f"{_fmt_mean(entry.get('mean_tool_failures'))} |"
             )
         lines.append("")
         lines.append("Difference vs control (calls/task)")
@@ -485,14 +494,15 @@ def render_markdown(payload: dict[str, Any], run_dir: Path | str | None = None) 
         for entry in tools:
             if not isinstance(entry, dict) or entry.get("variant") == "control":
                 continue
-            lines.append(
-                f"{entry.get('variant')}: tools {_fmt_signed(entry.get('tool_calls_delta_vs_control'))} "
+            deltas = (
+                f"tools {_fmt_signed(entry.get('tool_calls_delta_vs_control'))} "
                 f"· reads {_fmt_signed(entry.get('read_calls_delta_vs_control'))} "
                 f"· rereads {_fmt_signed(entry.get('rereads_delta_vs_control'))} "
-                f"· overlap rereads {_fmt_signed(entry.get('overlap_rereads_delta_vs_control'))} "
+                f"· overlap {_fmt_signed(entry.get('overlap_rereads_delta_vs_control'))} "
                 f"· files {_fmt_signed(entry.get('distinct_files_delta_vs_control'))} "
-                f"· tool failures {_fmt_signed(entry.get('tool_failures_delta_vs_control'))}"
+                f"· failures {_fmt_signed(entry.get('tool_failures_delta_vs_control'))}"
             )
+            lines.append(f"{entry.get('variant')}: {deltas}")
         lines.append("")
 
     cost = payload.get("cost", [])
