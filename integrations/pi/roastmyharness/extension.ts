@@ -11,8 +11,15 @@ import {
 	type RoastResponse,
 	type WatchDetails,
 } from "./core.ts";
-import { RUN_CARD_TYPE, postRunCard } from "./cards.ts";
-import { CHARTS_CARD_TYPE, postChartsCard, renderChartsCard } from "./charts.ts";
+import { Container, Text, type Component } from "@earendil-works/pi-tui";
+import { RUN_CARD_TYPE } from "./cards.ts";
+import {
+	CHARTS_CARD_TYPE,
+	chartsRunDir,
+	loadChartsDetails,
+	renderChartsCard,
+	type ChartsDetails,
+} from "./charts.ts";
 import { renderRunCard, streamBridgeRun } from "./watch.ts";
 import { checkEngine, type EngineStatus } from "./versions.ts";
 import { collectWizard } from "./wizard.ts";
@@ -115,18 +122,37 @@ function postRunText(watched: {
 	const lines = [head];
 	if (watched.report) {
 		lines.push(`report: ${watched.report.markdown} and ${watched.report.csv}`);
-		lines.push(`charts: ${dirname(watched.report.markdown)}/charts/ (posted automatically below)`);
+		lines.push(`charts: ${dirname(watched.report.markdown)}/charts/ (charts render in the tool card below)`);
 	}
 	if (watched.aggregates) lines.push(`aggregates: ${JSON.stringify(watched.aggregates)}`);
 	lines.push(ANALYSIS_GUIDE);
 	return lines.join("\n");
 }
 
-async function postFinalCards(pi: ExtensionAPI, watched: WatchDetails): Promise<void> {
-	postRunCard(pi, watched);
+type WatchedWithCharts = WatchDetails & { charts?: ChartsDetails };
+
+async function attachCharts(watched: WatchDetails): Promise<WatchedWithCharts> {
+	if (!watched.final) return watched;
+	const runDir = chartsRunDir(watched);
+	if (!runDir) return watched;
+	const reportPath = watched.report?.markdown ?? `${runDir}/report.md`;
 	try {
-		await postChartsCard(pi, watched);
-	} catch {}
+		const charts = await loadChartsDetails(runDir, reportPath);
+		if (!charts.images.length && !charts.summary.length) return watched;
+		return { ...watched, charts };
+	} catch {
+		return watched;
+	}
+}
+
+function renderToolResult(details: unknown, expanded: boolean, theme: never): Component {
+	const watched = details as WatchedWithCharts;
+	const card = new Container();
+	card.addChild(renderRunCard(watched as never, expanded, theme as never));
+	if (watched.charts) {
+		card.addChild(renderChartsCard(watched.charts, expanded, theme as never));
+	}
+	return card;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -167,6 +193,22 @@ export default function (pi: ExtensionAPI) {
 		label: "Submit roast experiment",
 		description: "Validate a wizard-authored experiment TOML and launch it with live progress. Only valid during the active /roastmyharness wizard.",
 		parameters: Type.Object({ spec_path: Type.String({ description: "Experiment TOML path the session wrote." }) }),
+		renderCall(args, theme) {
+			return new Text(
+				theme.fg("toolTitle", theme.bold("roastmyharness ")) + theme.fg("muted", String((args as { spec_path?: string }).spec_path ?? "")),
+				0,
+				0,
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("warning", "Running roast..."), 0, 0);
+			try {
+				return renderToolResult((result as { details?: unknown }).details, expanded, theme as never);
+			} catch {
+				const first = (result as { content?: Array<{ type?: string; text?: string }> }).content?.[0];
+				return new Text(first?.type === "text" ? first.text.slice(0, 500) : "roast finished", 0, 0);
+			}
+		},
 		execute: async (_id, params, signal, onUpdate, ctx) => {
 			if (wizardState === "idle") {
 				throw new Error(`${SUBMIT_TOOL} is only valid during the active /roastmyharness wizard`);
@@ -211,9 +253,9 @@ export default function (pi: ExtensionAPI) {
 				const watched = await streamBridgeRun(["_bridge", "run", planId], planId, signal, (text, details) => {
 					onUpdate?.({ content: [{ type: "text", text }], details });
 				});
-				await postFinalCards(pi, watched);
-				launchedFinal = watched.final;
-				return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
+				const withCharts = await attachCharts(watched);
+				launchedFinal = withCharts.final;
+				return { content: [{ type: "text", text: postRunText(withCharts) }], details: withCharts };
 			} finally {
 				ctx.ui.setStatus(WIDGET_ID, undefined);
 				if (launchedFinal) {
@@ -229,6 +271,22 @@ export default function (pi: ExtensionAPI) {
 		label: "Wait for roast experiment",
 		description: "Block until a roast experiment reaches a final state, with live progress. Use instead of polling status in a sleep loop.",
 		parameters: Type.Object({ experiment_id: Type.String({ description: "Experiment id from the submit step." }) }),
+		renderCall(args, theme) {
+			return new Text(
+				theme.fg("toolTitle", theme.bold("roastmyharness ")) + theme.fg("muted", String((args as { experiment_id?: string }).experiment_id ?? "")),
+				0,
+				0,
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("warning", "Waiting on roast..."), 0, 0);
+			try {
+				return renderToolResult((result as { details?: unknown }).details, expanded, theme as never);
+			} catch {
+				const first = (result as { content?: Array<{ type?: string; text?: string }> }).content?.[0];
+				return new Text(first?.type === "text" ? first.text.slice(0, 500) : "roast finished", 0, 0);
+			}
+		},
 		execute: async (_id, params, signal, onUpdate, _ctx) => {
 			if (wizardState === "idle") {
 				throw new Error(`${AWAIT_TOOL} is only valid during the active /roastmyharness wizard`);
@@ -243,11 +301,11 @@ export default function (pi: ExtensionAPI) {
 			} catch (error) {
 				return { content: [{ type: "text", text: `wait failed: ${error instanceof Error ? error.message : String(error)}` }], details: {} };
 			}
-			await postFinalCards(pi, watched);
 			if (watched.final) {
+				const withCharts = await attachCharts(watched);
 				wizardState = "idle";
 				hideRoastTools();
-				return { content: [{ type: "text", text: postRunText(watched) }], details: watched };
+				return { content: [{ type: "text", text: postRunText(withCharts) }], details: withCharts };
 			}
 			if (watched.note?.includes("worker not running")) {
 				wizardState = "idle";
