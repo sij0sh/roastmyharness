@@ -34,7 +34,7 @@ def make_spec(tmp_path: Path) -> Path:
     (dataset / "task.toml").write_text('schema_version = "1.3"\n')
     (dataset / "instruction.md").write_text("do it\n")
     path = tmp_path / "exp.toml"
-    path.write_text(SPEC.format(tasks=tmp_path / "dataset"))
+    path.write_text(SPEC.format(tasks=(tmp_path / "dataset").as_posix()))
     return path
 
 

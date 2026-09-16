@@ -39,7 +39,7 @@ def _make_db(tmp_path: Path) -> tuple[Path, Path]:
         (dataset / task).mkdir(parents=True)
         (dataset / task / "task.toml").write_text('schema_version = "1.3"\n')
     spec_path = tmp_path / "exp.toml"
-    spec_path.write_text(SPEC.format(tasks=dataset))
+    spec_path.write_text(SPEC.format(tasks=dataset.as_posix()))
     spec = json.loads(json.dumps(load_experiment(spec_path).model_dump(mode="json")))
     db_path = tmp_path / "db.sqlite"
     run_dir = tmp_path / "runs" / EXPERIMENT_ID

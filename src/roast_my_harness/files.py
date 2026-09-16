@@ -18,7 +18,11 @@ def atomic_write_text(path: Path, text: str, *, mode: int | None = None) -> None
     open_fd: int | None = fd
     try:
         if mode is not None:
-            os.fchmod(fd, mode)
+            try:
+                os.fchmod(fd, mode)
+            except AttributeError:
+                # Windows has no os.fchmod; best-effort chmod after replace below.
+                pass
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             open_fd = None
             handle.write(text)

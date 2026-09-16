@@ -71,7 +71,7 @@ def test_prepare_reports_excluded_control(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr("roast_my_harness.runner.pier.pier_version", lambda: "0.3.0")
     root = make_task_root(tmp_path, "t1")
     spec_path = write(tmp_path / "exp.toml", MINIMAL.replace(
-        "/tmp/does-not-need-to-exist", str(root)).replace(
+        "/tmp/does-not-need-to-exist", root.as_posix()).replace(
         'name = "demo"', 'name = "demo"\ncontrol = false'))
     result = svc.AgentService(plans_dir=tmp_path / "plans",
                               db_path=tmp_path / "db.sqlite").prepare(spec_path)

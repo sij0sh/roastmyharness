@@ -147,7 +147,7 @@ name = "drift"
 id = "glm-5.3"
 provider = "z-ai-openai"
 [tasks]
-path = "{tmp_path}"
+path = "{tmp_path.as_posix()}"
 [[variants]]
 id = "a"
 """
@@ -227,7 +227,7 @@ id = "glm-5.3"
 provider = "z-ai-openai"
 
 [tasks]
-path = "{tmp_path}"
+path = "{tmp_path.as_posix()}"
 
 [[variants]]
 id = "a"
@@ -250,7 +250,7 @@ pi_version = "0.84.3"
 thinking = "high"
 
 [tasks]
-path = "{tmp_path}"
+path = "{tmp_path.as_posix()}"
 
 [[variants]]
 id = "a"

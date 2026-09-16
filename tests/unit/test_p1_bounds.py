@@ -30,7 +30,7 @@ id = "a"
 
 def spec_text(tmp_path: Path, extra: str = "") -> Path:
     path = tmp_path / "exp.toml"
-    path.write_text(BASE.format(tasks=tmp_path / "dataset", extra=extra))
+    path.write_text(BASE.format(tasks=(tmp_path / "dataset").as_posix(), extra=extra))
     return path
 
 

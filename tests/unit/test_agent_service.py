@@ -37,7 +37,7 @@ def make_spec(tmp_path: Path) -> Path:
     dataset.mkdir(parents=True)
     (dataset / "task.toml").write_text('schema_version = "1.3"\n')
     path = tmp_path / "exp.toml"
-    path.write_text(SPEC.format(tasks=tmp_path / "dataset"))
+    path.write_text(SPEC.format(tasks=(tmp_path / "dataset").as_posix()))
     return path
 
 
@@ -96,7 +96,7 @@ def test_prepare_ready_for_confirmation(tmp_path, green_preflight):
 def test_prepare_reports_repetitions_in_trial_math(tmp_path, green_preflight):
     spec_path = make_spec(tmp_path)
     spec_path.write_text(
-        SPEC.format(tasks=tmp_path / "dataset").replace(
+        SPEC.format(tasks=(tmp_path / "dataset").as_posix()).replace(
             'name = "svc"', 'name = "svc"\nhypothesis = "bare is enough"'
         )
         + "\n[execution]\nrepetitions = 3\n"
@@ -186,7 +186,7 @@ def test_start_rejects_stale_spec_edit(tmp_path, green_preflight, monkeypatch):
     )
     prepared = service.prepare(spec_path)
     spec_path.write_text(
-        SPEC.format(tasks=tmp_path / "dataset").replace(
+        SPEC.format(tasks=(tmp_path / "dataset").as_posix()).replace(
             'id = "bare"', 'id = "renamed"'
         )
     )

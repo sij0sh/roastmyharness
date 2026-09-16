@@ -207,6 +207,10 @@ def _validate_sources(variant) -> None:
         paths.append(variant.agents_md.parent)
     if variant.settings is not None:
         paths.append(variant.settings.parent)
+    if os.name == "nt":
+        # Windows ACLs are not represented in st_mode permission bits;
+        # the 0o002 check false-positives on temp dirs, so skip it there.
+        return
     for path in paths:
         if path.exists() and (path.stat().st_mode & 0o002):
             raise HomeBuildError(f"source directory is world-writable: {path}")

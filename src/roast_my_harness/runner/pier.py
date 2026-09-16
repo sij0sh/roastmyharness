@@ -84,7 +84,7 @@ def build_run_args(
         pier_executable(),
         "run",
         "--path",
-        str(task_root),
+        task_root.as_posix(),
     ]
     for task in include_tasks or []:
         args += ["--include-task-name", task]
@@ -92,7 +92,7 @@ def build_run_args(
         "--agent-import-path",
         PI_IMPORT_PATH,
         "--ak",
-        f"variant_manifest={manifest_path}",
+        f"variant_manifest={manifest_path.as_posix()}",
         "--ak",
         f"thinking={thinking}",
         "--ak",
@@ -102,7 +102,7 @@ def build_run_args(
         "--n-concurrent",
         str(n_concurrent),
         "--jobs-dir",
-        str(jobs_dir),
+        jobs_dir.as_posix(),
         "--job-name",
         job_name,
         "--yes",
