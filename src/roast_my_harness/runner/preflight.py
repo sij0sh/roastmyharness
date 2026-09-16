@@ -308,16 +308,9 @@ def _model_auth(model, label: str) -> list[CheckResult]:
         )
         return results
     import json as _json
-    import tempfile
 
     block_text = _json.dumps({"providers": {model.provider: block}})
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
-        tf.write(block_text)
-        block_path = Path(tf.name)
-    try:
-        missing = auth_service.missing_env_vars(block_path)
-    finally:
-        block_path.unlink(missing_ok=True)
+    missing = auth_service.missing_env_vars_from_text(block_text)
     if missing:
         results.append(_fail(label, f"unset env vars: {', '.join(missing)}"))
     else:

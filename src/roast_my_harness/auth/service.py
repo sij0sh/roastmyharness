@@ -155,6 +155,16 @@ def has_command_keys(block: dict[str, Any]) -> bool:
     return False
 
 
+def missing_env_vars_from_text(text: str) -> list[str]:
+    """Env var names referenced as $VAR / ${VAR} in text that are unset.
+
+    Names only; values are never read for reporting. Scans in memory so
+    provider secrets never touch disk.
+    """
+    names = sorted(set(re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", text)))
+    return [n for n in names if not os.environ.get(n)]
+
+
 def missing_env_vars(models_json: Path) -> list[str]:
     """Env var names referenced as $VAR / ${VAR} in models.json that are unset.
 
@@ -164,5 +174,4 @@ def missing_env_vars(models_json: Path) -> list[str]:
         text = models_json.read_text()
     except OSError as e:
         raise AuthError(f"cannot read models.json {models_json}: {e}") from e
-    names = sorted(set(re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", text)))
-    return [n for n in names if not os.environ.get(n)]
+    return missing_env_vars_from_text(text)
